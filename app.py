@@ -142,11 +142,12 @@ def page(title: str, body: str) -> web.Response:
     :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui,
              -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center;
+    body {{ margin: 0; min-height: 100vh; display: flex; justify-content: center;
+            align-items: flex-start;
             padding: 24px; background:
             radial-gradient(circle at 50% 0%, #1c2941 0, #0d1422 42%, #090e18 100%);
             color: #f8fafc; }}
-    main {{ width: min(560px, 100%); padding: 36px;
+    main {{ width: min(560px, 100%); min-width: 0; margin-block: auto; padding: 36px;
             border: 1px solid #2b3a50; border-radius: 22px;
             background: rgba(23, 33, 49, .96);
             box-shadow: 0 24px 70px rgba(0, 0, 0, .38); }}
@@ -196,12 +197,16 @@ def page(title: str, body: str) -> web.Response:
     #status {{ min-height: 22px; margin: 9px 0 0; font-size: 14px; }}
     .session-note {{ display: flex; justify-content: space-between; gap: 12px;
                      margin: 10px 2px 20px; color: #8290a4; font-size: 12px; }}
-    .file-list {{ display: grid; gap: 10px; margin: 16px 0; }}
-    .file-card {{ padding: 13px 14px; border: 1px solid #354258;
+    .file-list {{ display: grid; grid-template-columns: minmax(0, 1fr);
+                  min-width: 0; gap: 10px; margin: 16px 0; }}
+    .file-card {{ width: 100%; min-width: 0; padding: 13px 14px;
+                  border: 1px solid #354258;
                   border-radius: 12px; background: #131d2d; }}
     .file-head, .file-meta, .run-meta {{ display: flex; align-items: center;
                                         justify-content: space-between; gap: 12px; }}
-    .file-name {{ min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    .file-head {{ min-width: 0; }}
+    .file-name {{ display: block; flex: 1 1 auto; min-width: 0;
+                  overflow: hidden; text-overflow: ellipsis;
                   white-space: nowrap; font-size: 14px; font-weight: 700; }}
     .file-status {{ flex: 0 0 auto; color: #aab5c5; font-size: 12px; }}
     .file-card progress {{ height: 7px; margin-top: 10px; }}

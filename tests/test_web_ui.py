@@ -1,5 +1,6 @@
 import unittest
 
+from app import page
 from web_ui import browser_compressor
 
 
@@ -27,6 +28,14 @@ class BrowserPageTests(unittest.TestCase):
     def test_hides_encoder_implementation_loading_messages(self) -> None:
         self.assertNotIn("Loading the faster multithreaded compressor", self.page)
         self.assertNotIn("Loading the compatible compressor", self.page)
+
+    def test_large_batches_stay_inside_the_viewport(self) -> None:
+        document = page("Test", self.page).text
+        self.assertIn("align-items: flex-start", document)
+        self.assertIn("margin-block: auto", document)
+        self.assertIn("grid-template-columns: minmax(0, 1fr)", document)
+        self.assertIn(".file-card { width: 100%; min-width: 0", document)
+        self.assertIn("flex: 1 1 auto; min-width: 0", document)
 
 
 if __name__ == "__main__":
