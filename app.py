@@ -112,6 +112,11 @@ effective_allowed_guild_ids: frozenset[int] = ALLOWED_GUILD_IDS
 metrics = RuntimeMetrics()
 
 
+def compression_target(discord_limit: int) -> int:
+    """Reserve two percent for delivery while preserving output quality."""
+    return max(1 * MIB, int(discord_limit * 0.98))
+
+
 @web.middleware
 async def browser_security_headers(
     request: web.Request,
@@ -386,7 +391,9 @@ async def upload_form(request: web.Request) -> web.Response:
     job.expires_at = time.time() + ACTIVE_SESSION_TTL_SECONDS
     job.state = "claimed"
     metrics.increment("sessions_opened")
-    safe_target = max(1 * MIB, int(job.discord_limit * 0.94))
+    # Keep a small delivery reserve while letting the browser use nearly all of
+    # the attachment allowance. The encoder applies its own muxing reserve.
+    safe_target = compression_target(job.discord_limit)
     return page(
         "Professor Compressor",
         browser_compressor(

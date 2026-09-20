@@ -23,7 +23,16 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("Cancel", self.page)
         self.assertIn("Retrying automatically", self.page)
         self.assertIn("% smaller", self.page)
-        self.assertIn("Estimating time remaining", self.page)
+        self.assertIn("Video ", self.page)
+        self.assertIn("Sending ", self.page)
+        self.assertNotIn("Estimating time remaining", self.page)
+
+    def test_targets_most_of_discords_safe_upload_size(self) -> None:
+        self.assertIn("const OUTPUT_TARGET_RATIO = 0.97;", self.page)
+        self.assertIn(
+            "TARGET_BYTES * 8 * OUTPUT_TARGET_RATIO",
+            self.page,
+        )
 
     def test_hides_encoder_implementation_loading_messages(self) -> None:
         self.assertNotIn("Loading the faster multithreaded compressor", self.page)

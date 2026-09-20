@@ -42,7 +42,7 @@ def browser_compressor(
       <p id="phase-copy" class="phase-copy">Nothing has been uploaded yet.</p>
       <progress id="overall-progress" max="100" value="0"></progress>
       <div class="run-meta">
-        <span id="elapsed">Elapsed 0:00</span><span id="eta">Estimating time remaining...</span>
+        <span id="elapsed">Elapsed 0:00</span><span id="run-detail">Preparing files</span>
       </div>
     </div>
     <div id="message" class="message" hidden aria-live="assertive"></div>
@@ -59,6 +59,7 @@ const MAX_CLIPS = __MAX_CLIPS__;
 const TARGET_BYTES = __TARGET_BYTES__;
 const SESSION_SECRET = "__SESSION_SECRET__";
 const SESSION_EXPIRES_SECONDS = __EXPIRES_SECONDS__;
+const OUTPUT_TARGET_RATIO = 0.97;
 const SINGLE_CORE_BASE = "/assets/core-esm";
 const MULTI_CORE_BASE = "/assets/core-mt-esm";
 
@@ -76,7 +77,7 @@ const phaseCopy = document.getElementById("phase-copy");
 const compressStep = document.getElementById("compress-step");
 const sendStep = document.getElementById("send-step");
 const elapsedElement = document.getElementById("elapsed");
-const etaElement = document.getElementById("eta");
+const runDetailElement = document.getElementById("run-detail");
 const expiresElement = document.getElementById("expires");
 
 let ffmpeg = null;
@@ -86,7 +87,6 @@ let currentState = null;
 let currentAttempt = 1;
 let lastFfmpegMessage = "";
 let startedAt = 0;
-let attemptStartedAt = 0;
 let timer = null;
 let expiryTimer = null;
 let uploadRequest = null;
@@ -216,15 +216,8 @@ function createEncoder() {
     const completed = selectedFiles.filter((state) => state.finalSize > 0).length;
     const overall = ((completed + fraction) / selectedFiles.length) * 80;
     overallProgress.value = Math.max(0, Math.min(80, overall));
-    const attemptElapsed = (performance.now() - attemptStartedAt) / 1000;
-    if (fraction > 0.03) {
-      const currentRemaining = attemptElapsed * (1 - fraction) / fraction;
-      const averageCompleted = completed > 0
-        ? ((performance.now() - startedAt) / 1000 - attemptElapsed) / completed
-        : attemptElapsed / Math.max(fraction, 0.03);
-      const laterRemaining = Math.max(0, selectedFiles.length - completed - 1) * averageCompleted;
-      etaElement.textContent = "About " + readableTime(currentRemaining + laterRemaining) + " remaining";
-    }
+    runDetailElement.textContent = "Video " + currentState.index + " of " +
+      selectedFiles.length + " · " + percent + "%";
   });
   return encoder;
 }
@@ -327,7 +320,7 @@ async function compressOne(state) {
   }
   const duration = await durationOf(file);
   const audioKbps = 96;
-  const usableBits = TARGET_BYTES * 8 * 0.85;
+  const usableBits = TARGET_BYTES * 8 * OUTPUT_TARGET_RATIO;
   let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
   if (videoKbps < 100) {
     throw new Error(file.name + " is too long to fit at a usable quality. " +
@@ -340,7 +333,6 @@ async function compressOne(state) {
     "scale=trunc(iw/2)*2:trunc(ih/2)*2";
   async function encode(bitrate) {
     lastFfmpegMessage = "";
-    attemptStartedAt = performance.now();
     return ffmpeg.exec([
       "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
       "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
@@ -359,7 +351,9 @@ async function compressOne(state) {
     let output = await ffmpeg.readFile(outputName);
     if (output.byteLength > TARGET_BYTES) {
       const correction = TARGET_BYTES / output.byteLength;
-      videoKbps = Math.max(100, Math.floor(videoKbps * correction * 0.92));
+      videoKbps = Math.max(100, Math.floor(
+        videoKbps * correction * OUTPUT_TARGET_RATIO
+      ));
       await removeVirtualFile(outputName);
       currentAttempt = 2;
       updateFile(state, "Adjusting final size", 0);
@@ -413,7 +407,6 @@ function xhrUpload(results) {
     request.open("POST", window.location.href);
     request.responseType = "json";
     request.setRequestHeader("X-Upload-Session", SESSION_SECRET);
-    attemptStartedAt = performance.now();
     request.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) return;
       const fraction = event.loaded / event.total;
@@ -432,16 +425,12 @@ function xhrUpload(results) {
       }
       phaseCopy.textContent = "Uploading finished files through the secure relay: " +
         Math.round(fraction * 100) + "%";
-      if (fraction > 0.03) {
-        const uploadElapsed = (performance.now() - attemptStartedAt) / 1000;
-        etaElement.textContent = "About " +
-          readableTime(uploadElapsed * (1 - fraction) / fraction) + " remaining";
-      }
+      runDetailElement.textContent = "Sending " + Math.round(fraction * 100) + "%";
     });
     request.upload.addEventListener("load", () => {
       overallProgress.value = 98;
       phaseCopy.textContent = "Finished files reached the relay. Waiting for Discord to accept them.";
-      etaElement.textContent = "Waiting for Discord delivery";
+      runDetailElement.textContent = "Waiting for Discord";
       for (const result of results) updateFile(result.state, "Waiting for Discord", 100);
     });
     request.addEventListener("load", () => {
@@ -529,6 +518,7 @@ cancelButton.addEventListener("click", () => {
     if (!state.finalSize) updateFile(state, "Cancelled", 0);
   }
   setPhase("compress", "Cancelled", "No additional files will be sent. You can start again on this page.");
+  runDetailElement.textContent = "Cancelled";
   showMessage("Cancelled. Your original videos were not changed.", "error");
   finishRun();
 });
@@ -548,7 +538,7 @@ form.addEventListener("submit", async (event) => {
   hideMessage();
   startedAt = performance.now();
   overallProgress.value = 0;
-  etaElement.textContent = "Estimating time remaining...";
+  runDetailElement.textContent = "Checking files";
   startClock();
   for (const state of selectedFiles) {
     state.finalSize = 0;
@@ -574,7 +564,7 @@ form.addEventListener("submit", async (event) => {
     const response = await uploadWithRetry(results);
     for (const result of results) updateFile(result.state, "Delivered", 100);
     overallProgress.value = 100;
-    etaElement.textContent = "Complete";
+    runDetailElement.textContent = "Complete";
     setPhase("done", "Delivered to Discord", response.message);
     showMessage("Compression complete. You can close this page and return to Discord.", "success");
     clips.disabled = true;
@@ -586,6 +576,7 @@ form.addEventListener("submit", async (event) => {
     if (cancelled || error.name === "AbortError") return;
     console.error(error);
     setPhase("compress", "Action needed", "The process stopped before delivery completed.");
+    runDetailElement.textContent = "Stopped";
     showMessage(friendlyError(error));
     finishRun();
   }

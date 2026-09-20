@@ -44,7 +44,7 @@ security boundaries, and scaling model.
 3. The browser loads the self-hosted FFmpeg WebAssembly encoder.
 4. The page validates each file's binary signature before videos are processed
    one at a time at up to 720p and 30 FPS.
-5. Per-file progress, elapsed time, estimated time remaining, output size, and
+5. Per-file progress, current-file position, elapsed time, output size, and
    reduction percentage remain visible throughout the run.
 6. Finished MP4 files are sent to the relay over HTTPS with automatic retries.
 7. The bounded relay queue posts the files to the original Discord channel and

@@ -4,10 +4,18 @@ from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
-from app import BrowserResult, UploadJob, deliver_browser_results
+from app import (
+    BrowserResult,
+    UploadJob,
+    compression_target,
+    deliver_browser_results,
+)
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
+    def test_compression_target_keeps_small_delivery_reserve(self) -> None:
+        self.assertEqual(compression_target(20_000_000), 19_600_000)
+
     async def test_results_are_sent_as_a_new_channel_message(self) -> None:
         interaction = Mock()
         job = UploadJob(
