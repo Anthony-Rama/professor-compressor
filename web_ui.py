@@ -16,6 +16,14 @@ def browser_compressor(
   <span><strong>Keep this page open and active until it finishes.</strong><br>
   This helps compression run at full speed.</span>
 </div>
+<details class="performance-help">
+  <summary>Keep compression running quickly</summary>
+  <p>For maximum speed, move this tab into a separate window and keep part of
+    the window visible while compression runs.</p>
+  <p>In Chrome, open <code>chrome://settings/performance</code>, add
+    <code>professor-compressor.duckdns.org</code> under <strong>Always keep these
+    sites active</strong>, and turn off <strong>Energy Saver</strong> while processing.</p>
+</details>
 <form id="upload">
   <input class="file-input" id="clips" name="clips" type="file"
     accept="video/*,.mkv,.avi,.ts,.m2ts" multiple required>
@@ -33,6 +41,10 @@ def browser_compressor(
     <button id="cancel" class="secondary" type="button" hidden>Cancel</button>
   </div>
   <div id="work" class="work" hidden>
+    <div id="background-warning" class="background-warning" hidden role="status">
+      Compression may slow down or pause while this tab is hidden. Keep this
+      window visible for full speed.
+    </div>
     <div class="phase-panel">
       <div class="phase-track" aria-label="Processing steps">
         <div id="compress-step" class="phase-step">1. Compressing on this device</div>
@@ -79,6 +91,8 @@ const sendStep = document.getElementById("send-step");
 const elapsedElement = document.getElementById("elapsed");
 const runDetailElement = document.getElementById("run-detail");
 const expiresElement = document.getElementById("expires");
+const backgroundWarning = document.getElementById("background-warning");
+const ORIGINAL_TITLE = document.title;
 
 let ffmpeg = null;
 let encoderMode = "single-threaded";
@@ -90,8 +104,10 @@ let startedAt = 0;
 let timer = null;
 let expiryTimer = null;
 let uploadRequest = null;
+let wakeLock = null;
 let cancelled = false;
 let running = false;
+let tabProgress = "Preparing files";
 
 function readableSize(bytes) {
   if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
@@ -141,6 +157,58 @@ function hideMessage() {
   message.hidden = true;
   message.textContent = "";
 }
+
+function renderDocumentTitle() {
+  if (!running) {
+    document.title = ORIGINAL_TITLE;
+    return;
+  }
+  const returnPrompt = document.hidden ? "Return to compressor · " : "";
+  document.title = returnPrompt + tabProgress + " · Professor Compressor";
+}
+
+function setRunDetail(text) {
+  runDetailElement.textContent = text;
+  tabProgress = text;
+  renderDocumentTitle();
+}
+
+async function requestWakeLock() {
+  if (!running || document.hidden || !("wakeLock" in navigator)) return;
+  if (wakeLock && !wakeLock.released) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+    });
+  } catch (error) {
+    console.debug("Screen wake lock was unavailable.", error);
+  }
+}
+
+async function releaseWakeLock() {
+  if (!wakeLock || wakeLock.released) {
+    wakeLock = null;
+    return;
+  }
+  try {
+    await wakeLock.release();
+  } catch (error) {
+    console.debug("Screen wake lock release failed.", error);
+  }
+  wakeLock = null;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!running) return;
+  if (document.hidden) {
+    backgroundWarning.hidden = false;
+    renderDocumentTitle();
+    return;
+  }
+  renderDocumentTitle();
+  void requestWakeLock();
+});
 
 function updateFile(state, status, percent = null) {
   state.status.textContent = status;
@@ -216,8 +284,8 @@ function createEncoder() {
     const completed = selectedFiles.filter((state) => state.finalSize > 0).length;
     const overall = ((completed + fraction) / selectedFiles.length) * 80;
     overallProgress.value = Math.max(0, Math.min(80, overall));
-    runDetailElement.textContent = "Video " + currentState.index + " of " +
-      selectedFiles.length + " · " + percent + "%";
+    setRunDetail("Video " + currentState.index + " of " +
+      selectedFiles.length + " · " + percent + "%");
   });
   return encoder;
 }
@@ -425,12 +493,12 @@ function xhrUpload(results) {
       }
       phaseCopy.textContent = "Uploading finished files through the secure relay: " +
         Math.round(fraction * 100) + "%";
-      runDetailElement.textContent = "Sending " + Math.round(fraction * 100) + "%";
+      setRunDetail("Sending " + Math.round(fraction * 100) + "%");
     });
     request.upload.addEventListener("load", () => {
       overallProgress.value = 98;
       phaseCopy.textContent = "Finished files reached the relay. Waiting for Discord to accept them.";
-      runDetailElement.textContent = "Waiting for Discord";
+      setRunDetail("Waiting for Discord");
       for (const result of results) updateFile(result.state, "Waiting for Discord", 100);
     });
     request.addEventListener("load", () => {
@@ -499,6 +567,9 @@ function stopClock() {
 
 function finishRun() {
   running = false;
+  backgroundWarning.hidden = true;
+  void releaseWakeLock();
+  renderDocumentTitle();
   cancelButton.hidden = true;
   clips.disabled = false;
   submit.disabled = false;
@@ -518,7 +589,7 @@ cancelButton.addEventListener("click", () => {
     if (!state.finalSize) updateFile(state, "Cancelled", 0);
   }
   setPhase("compress", "Cancelled", "No additional files will be sent. You can start again on this page.");
-  runDetailElement.textContent = "Cancelled";
+  setRunDetail("Cancelled");
   showMessage("Cancelled. Your original videos were not changed.", "error");
   finishRun();
 });
@@ -538,7 +609,9 @@ form.addEventListener("submit", async (event) => {
   hideMessage();
   startedAt = performance.now();
   overallProgress.value = 0;
-  runDetailElement.textContent = "Checking files";
+  backgroundWarning.hidden = true;
+  setRunDetail("Checking files");
+  await requestWakeLock();
   startClock();
   for (const state of selectedFiles) {
     state.finalSize = 0;
@@ -564,19 +637,22 @@ form.addEventListener("submit", async (event) => {
     const response = await uploadWithRetry(results);
     for (const result of results) updateFile(result.state, "Delivered", 100);
     overallProgress.value = 100;
-    runDetailElement.textContent = "Complete";
+    setRunDetail("Complete");
     setPhase("done", "Delivered to Discord", response.message);
     showMessage("Compression complete. You can close this page and return to Discord.", "success");
     clips.disabled = true;
     submit.hidden = true;
     cancelButton.hidden = true;
     running = false;
+    backgroundWarning.hidden = true;
+    void releaseWakeLock();
+    renderDocumentTitle();
     stopClock();
   } catch (error) {
     if (cancelled || error.name === "AbortError") return;
     console.error(error);
     setPhase("compress", "Action needed", "The process stopped before delivery completed.");
-    runDetailElement.textContent = "Stopped";
+    setRunDetail("Stopped");
     showMessage(friendlyError(error));
     finishRun();
   }

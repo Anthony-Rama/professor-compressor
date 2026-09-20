@@ -34,6 +34,15 @@ class BrowserPageTests(unittest.TestCase):
             self.page,
         )
 
+    def test_protects_active_compression_from_sleep_and_hidden_tabs(self) -> None:
+        self.assertIn('navigator.wakeLock.request("screen")', self.page)
+        self.assertIn('document.addEventListener("visibilitychange"', self.page)
+        self.assertIn("Compression may slow down or pause", self.page)
+        self.assertIn("Return to compressor", self.page)
+        self.assertIn("chrome://settings/performance", self.page)
+        self.assertIn("Always keep these", self.page)
+        self.assertIn("Energy Saver", self.page)
+
     def test_hides_encoder_implementation_loading_messages(self) -> None:
         self.assertNotIn("Loading the faster multithreaded compressor", self.page)
         self.assertNotIn("Loading the compatible compressor", self.page)

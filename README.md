@@ -46,6 +46,8 @@ security boundaries, and scaling model.
    one at a time at up to 720p and 30 FPS.
 5. Per-file progress, current-file position, elapsed time, output size, and
    reduction percentage remain visible throughout the run.
+   The page requests a screen wake lock and warns when browser background
+   throttling may slow active compression.
 6. Finished MP4 files are sent to the relay over HTTPS with automatic retries.
 7. The bounded relay queue posts the files to the original Discord channel and
    discards them from memory.

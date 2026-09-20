@@ -130,7 +130,8 @@ async def browser_security_headers(
     response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = (
-        "camera=(), microphone=(), geolocation=(), payment=()"
+        "camera=(), microphone=(), geolocation=(), payment=(), "
+        "screen-wake-lock=(self)"
     )
     response.headers["X-Frame-Options"] = "DENY"
     return response
@@ -171,6 +172,12 @@ def page(title: str, body: str) -> web.Response:
                   line-height: 1.45; }}
     .stay-open > span:first-child {{ font-size: 20px; line-height: 1.2; }}
     .stay-open strong {{ color: #f8fafc; }}
+    .performance-help {{ margin: -10px 0 24px; padding: 12px 14px;
+                         border: 1px solid #344158; border-radius: 12px;
+                         background: #151f30; color: #aeb9c9; font-size: 13px; }}
+    .performance-help summary {{ color: #dbe2ed; font-weight: 700; cursor: pointer; }}
+    .performance-help p {{ margin: 10px 0 0; font-size: 13px; }}
+    .performance-help code {{ color: #cbd2ff; overflow-wrap: anywhere; }}
     .file-input {{ position: absolute; width: 1px; height: 1px; padding: 0;
                    margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
                    white-space: nowrap; border: 0; }}
@@ -218,6 +225,10 @@ def page(title: str, body: str) -> web.Response:
     .file-meta {{ margin-top: 7px; color: #7f8da1; font-size: 11px; }}
     .phase-panel {{ padding: 16px; border: 1px solid #3a4861; border-radius: 14px;
                     background: #111a2a; }}
+    .background-warning {{ margin-bottom: 12px; padding: 12px 14px;
+                           border: 1px solid #8a652c; border-radius: 11px;
+                           background: #332714; color: #f5d58f; font-size: 13px;
+                           line-height: 1.45; }}
     .phase-title {{ margin: 0; color: #f8fafc; font-size: 16px; }}
     .phase-copy {{ margin: 5px 0 12px; color: #93a0b2; font-size: 13px; }}
     .phase-track {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
