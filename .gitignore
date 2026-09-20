@@ -11,3 +11,6 @@ node_modules/
 htmlcov/
 dist/
 build/
+
+# Local source artwork. Production-ready assets belong in static/.
+private-assets/
