@@ -617,19 +617,9 @@ async def deliver_browser_results(
         message = (
             f"✅ **Compression complete!** <@{job.user_id}>, {result_summary}"
         )
-        if not job.interaction.is_expired():
-            try:
-                await send_result_batch(
-                    job.interaction.followup.send,
-                    results,
-                    message,
-                )
-                return "Your compressed videos were delivered to Discord."
-            except (discord.HTTPException, discord.NotFound):
-                pass
         if channel is None:
             raise RuntimeError(
-                "The interaction expired and the bot cannot access the channel."
+                "The bot cannot access the channel where compression started."
             )
         await send_result_batch(channel.send, results, message)
         return "Your compressed videos were delivered to Discord."
