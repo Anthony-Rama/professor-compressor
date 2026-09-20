@@ -234,7 +234,6 @@ async function loadEncoder() {
   const supportsThreads = self.crossOriginIsolated &&
     typeof SharedArrayBuffer !== "undefined";
   if (supportsThreads) {
-    phaseCopy.textContent = "Loading the faster multithreaded compressor. Nothing is being uploaded.";
     ffmpeg = createEncoder();
     try {
       await ffmpeg.load({
@@ -250,7 +249,6 @@ async function loadEncoder() {
       ffmpeg.terminate();
     }
   }
-  phaseCopy.textContent = "Loading the compatible compressor. Nothing is being uploaded.";
   ffmpeg = createEncoder();
   await ffmpeg.load({
     coreURL: await toBlobURL(SINGLE_CORE_BASE + "/ffmpeg-core.js", "text/javascript"),

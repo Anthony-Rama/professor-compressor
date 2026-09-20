@@ -24,6 +24,10 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("% smaller", self.page)
         self.assertIn("Estimating time remaining", self.page)
 
+    def test_hides_encoder_implementation_loading_messages(self) -> None:
+        self.assertNotIn("Loading the faster multithreaded compressor", self.page)
+        self.assertNotIn("Loading the compatible compressor", self.page)
+
 
 if __name__ == "__main__":
     unittest.main()
