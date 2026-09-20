@@ -17,18 +17,26 @@ Run `/compress` in a Discord server, open the private link, and choose up to 10 
 - Compressed results are held briefly in server memory and relayed to Discord.
 - Files are never written to disk by Professor Compressor.
 - HTTPS is handled automatically by Caddy in the included Docker setup.
-- Upload links are random, single-use, and expire automatically.
+- Upload links are random, single-use, and expire after 10 minutes by default.
+- A bounded Discord delivery queue, per-address rate limits, and relay
+  concurrency limits protect the service from traffic spikes. Compression
+  processing remains on the user's device.
 
 Professor Compressor currently accepts video files and produces Discord-compatible MP4 files. It does not compress images, GIFs, PDFs, or other document types.
 
 ## How it works
 
 1. A member runs `/compress` in a server channel.
-2. The bot creates a private, single-use browser link.
+2. The bot creates a private, single-use browser link. Opening it consumes the
+   link and creates a browser-bound upload session.
 3. The browser loads the self-hosted FFmpeg WebAssembly encoder.
-4. Videos are processed one at a time at up to 720p and 30 FPS.
-5. Finished MP4 files are sent to the relay over HTTPS.
-6. The relay posts the files to the original Discord channel and discards them from memory.
+4. The page validates each file's binary signature before videos are processed
+   one at a time at up to 720p and 30 FPS.
+5. Per-file progress, elapsed time, estimated time remaining, output size, and
+   reduction percentage remain visible throughout the run.
+6. Finished MP4 files are sent to the relay over HTTPS with automatic retries.
+7. The bounded relay queue posts the files to the original Discord channel and
+   discards them from memory.
 
 The Discord bot token is never exposed to the browser. Discord receives and stores the final attachments so server members can view them.
 
@@ -122,10 +130,16 @@ Check the service health at `https://your-domain.example/healthz`.
 | `WEB_PORT` | `8080` | Port used by the Python web service |
 | `PUBLIC_BASE_URL` | `http://127.0.0.1:8080` | Base URL placed in private upload links |
 | `ALLOWED_GUILD_IDS` | Empty | Optional comma-separated allowlist of Discord server IDs |
-| `JOB_TTL_MINUTES` | `30` | Lifetime of a private upload link |
+| `JOB_TTL_MINUTES` | `10` | Time allowed to open a private link |
+| `ACTIVE_SESSION_TTL_MINUTES` | `30` | Time allowed to finish after opening it |
 | `USER_COOLDOWN_SECONDS` | `15` | Delay before one user can create another link |
 | `MAX_ACTIVE_JOBS` | `250` | Maximum number of active upload links |
 | `MAX_RESULT_TOTAL_MIB` | `220` | Maximum combined in-memory result size per request |
+| `UPLOAD_RATE_LIMIT_PER_MINUTE` | `8` | Open/upload attempts allowed per address per minute |
+| `MAX_CONCURRENT_UPLOADS` | `2` | Result uploads accepted by the relay simultaneously |
+| `DELIVERY_QUEUE_SIZE` | `8` | Maximum completed batches waiting for Discord |
+| `DELIVERY_WORKERS` | `2` | Concurrent Discord delivery workers |
+| `MAX_DELIVERY_BUFFER_MIB` | `400` | Maximum queued and delivering result bytes in memory |
 
 When `ALLOWED_GUILD_IDS` is empty, commands are available in every server that installs the bot. Set one or more server IDs to run a private instance:
 
@@ -139,7 +153,12 @@ ALLOWED_GUILD_IDS=123456789012345678,987654321098765432
 - Reset the Discord bot token immediately if it is exposed.
 - Original videos are processed locally in the browser.
 - Finished videos travel through the relay in memory because the bot must attach them to Discord.
-- Upload links contain high-entropy tokens, expire, and can be used only once.
+- Upload links contain high-entropy tokens, expire quickly, and can be opened
+  only once. The claimed page receives a separate secret used for safe retries.
+- Uploaded MP4 results must contain a structurally valid `ftyp`, `moov`, and
+  `mdat` box sequence. Names and reported MIME types are not trusted.
+- Per-address request limits, concurrent upload limits, and a bounded delivery
+  queue prevent unbounded memory growth during traffic spikes.
 - Security headers enable cross-origin isolation for multithreaded browser encoding and block framing, camera, microphone, location, and payment access.
 
 This design does not provide end-to-end encryption. The operator of a modified deployment and Discord can access the finished files. Review the code and host your own instance if that trust boundary does not meet your needs.
@@ -150,7 +169,10 @@ Browser FFmpeg is slower than native FFmpeg. Compression speed depends mainly on
 
 The practical input limit is the memory available to the browser tab. Videos are processed sequentially to reduce memory pressure. Very large files, older computers, and mobile browsers may fail or take a long time.
 
-The included single-process relay is suitable for personal use and small communities. A large public deployment should add a durable queue, shared state, rate limiting, monitoring, and multiple workers before advertising high concurrency.
+The included single-process relay is suitable for personal use and small
+communities. Its queue and rate limits intentionally reject excess traffic
+instead of exhausting memory. A large public deployment still needs a durable
+external queue, shared state, monitoring, and multiple instances.
 
 ## Updating
 
@@ -164,12 +186,14 @@ docker compose ps
 
 ```text
 app.py          Discord commands, upload relay, and HTTP server
+media_validation.py  Dependency-free MP4 structural validation
 web_ui.py       Browser interface and FFmpeg compression workflow
 bot.py          Application entry point
 compose.yaml    Bot and Caddy services
 Caddyfile       HTTPS reverse proxy configuration
 Dockerfile      Reproducible production image
 static/         Branding assets
+tests/          Unit tests for security-critical validation and page generation
 ```
 
 ## License
