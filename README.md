@@ -66,7 +66,7 @@ No privileged gateway intents are required.
 ### Local development
 
 ```bash
-git clone https://github.com/Anthony-Rama/professor-compressor.git
+git clone https://github.com/Anthony-Rama/discord-bot.git
 cd professor-compressor
 
 python3 -m venv .venv
