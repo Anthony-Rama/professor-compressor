@@ -22,6 +22,7 @@ import discord
 from discord import app_commands
 
 from media_validation import valid_mp4_signature
+from metrics import RuntimeMetrics
 from web_ui import browser_compressor
 
 
@@ -108,6 +109,7 @@ active_relay_uploads = 0
 delivery_bytes_held = 0
 commands_synced = False
 effective_allowed_guild_ids: frozenset[int] = ALLOWED_GUILD_IDS
+metrics = RuntimeMetrics()
 
 
 @web.middleware
@@ -279,6 +281,7 @@ def rate_limit_retry_after(request: web.Request, bucket: str) -> int | None:
     while timestamps and now - timestamps[0] >= 60:
         timestamps.popleft()
     if len(timestamps) >= UPLOAD_RATE_LIMIT_PER_MINUTE:
+        metrics.increment("rate_limited_requests")
         return max(1, int(60 - (now - timestamps[0])))
     timestamps.append(now)
     return None
@@ -344,6 +347,17 @@ async def health(request: web.Request) -> web.Response:
     )
 
 
+async def aggregate_metrics(request: web.Request) -> web.Response:
+    del request
+    return web.json_response(
+        {
+            "privacy": "aggregate_process_counters_only",
+            **metrics.snapshot(),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 async def upload_form(request: web.Request) -> web.Response:
     retry_after = rate_limit_retry_after(request, "open")
     if retry_after is not None:
@@ -366,6 +380,7 @@ async def upload_form(request: web.Request) -> web.Response:
     job.claimed_at = time.time()
     job.expires_at = time.time() + ACTIVE_SESSION_TTL_SECONDS
     job.state = "claimed"
+    metrics.increment("sessions_opened")
     safe_target = max(1 * MIB, int(job.discord_limit * 0.94))
     return page(
         "Professor Compressor",
@@ -514,6 +529,9 @@ async def receive_results(request: web.Request) -> web.Response:
                 retry_after=5,
             )
         delivery_bytes_held += total_size
+        metrics.increment("batches_queued")
+        metrics.increment("files_queued", len(results))
+        metrics.increment("bytes_queued", total_size)
         active_relay_uploads -= 1
         upload_slot_held = False
         job.state = "queued"
@@ -638,9 +656,16 @@ async def delivery_worker(worker_number: int) -> None:
         delivery = await delivery_queue.get()
         try:
             message = await deliver_browser_results(delivery.job, delivery.results)
+            metrics.increment("deliveries_succeeded")
+            metrics.increment("files_delivered", len(delivery.results))
+            metrics.increment(
+                "bytes_delivered",
+                sum(len(result.data) for result in delivery.results),
+            )
             if not delivery.completed.done():
                 delivery.completed.set_result(message)
         except Exception as error:
+            metrics.increment("deliveries_failed")
             if not delivery.completed.done():
                 delivery.completed.set_exception(error)
         finally:
@@ -714,6 +739,7 @@ async def compress(interaction: discord.Interaction) -> None:
         discord_limit=interaction.filesize_limit,
         interaction=interaction,
     )
+    metrics.increment("sessions_created")
     upload_url = f"{PUBLIC_BASE_URL}/upload/{quote(token)}"
     view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label="Open compressor", url=upload_url))
@@ -735,6 +761,7 @@ async def start_upload_server() -> None:
         middlewares=[browser_security_headers],
     )
     application.router.add_get("/healthz", health)
+    application.router.add_get("/metricsz", aggregate_metrics)
     application.router.add_get("/upload/{token}", upload_form)
     application.router.add_post("/upload/{token}", receive_results)
     project_root = Path(__file__).resolve().parent

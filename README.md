@@ -26,6 +26,18 @@ Professor Compressor currently accepts video files and produces Discord-compatib
 
 ## How it works
 
+```mermaid
+flowchart LR
+    Discord[Discord command] --> Bot[Python bot and relay]
+    Bot --> Browser[Private browser session]
+    Browser --> FFmpeg[Local FFmpeg WebAssembly]
+    FFmpeg --> Queue[Validated in-memory delivery queue]
+    Queue --> DiscordAPI[Discord attachments]
+```
+
+See [Architecture](docs/architecture.md) for the full request lifecycle,
+security boundaries, and scaling model.
+
 1. A member runs `/compress` in a server channel.
 2. The bot creates a private, single-use browser link. Opening it consumes the
    link and creates a browser-bound upload session.
@@ -118,7 +130,9 @@ docker compose ps
 docker compose logs -f bot
 ```
 
-Check the service health at `https://your-domain.example/healthz`.
+Check the service health at `https://your-domain.example/healthz`. Aggregate,
+privacy-safe usage counters are available at
+`https://your-domain.example/metricsz`.
 
 ## Configuration
 
@@ -160,6 +174,24 @@ ALLOWED_GUILD_IDS=123456789012345678,987654321098765432
 - Per-address request limits, concurrent upload limits, and a bounded delivery
   queue prevent unbounded memory growth during traffic spikes.
 - Security headers enable cross-origin isolation for multithreaded browser encoding and block framing, camera, microphone, location, and payment access.
+- Runtime metrics are aggregate process counters only. They do not contain
+  user IDs, server IDs, channel IDs, filenames, IP addresses, or file contents,
+  and they reset whenever the process restarts.
+
+## Quality checks
+
+Every pull request and push to `main` runs GitHub Actions checks for the Python
+unit tests, Python compilation, dependency installation, and a production
+Docker image build.
+
+Run the same core checks locally:
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q app.py bot.py media_validation.py metrics.py web_ui.py tests
+npm ci
+docker build --tag professor-compressor:local .
+```
 
 This design does not provide end-to-end encryption. The operator of a modified deployment and Discord can access the finished files. Review the code and host your own instance if that trust boundary does not meet your needs.
 
@@ -187,6 +219,7 @@ docker compose ps
 ```text
 app.py          Discord commands, upload relay, and HTTP server
 media_validation.py  Dependency-free MP4 structural validation
+metrics.py      Privacy-safe aggregate process metrics
 web_ui.py       Browser interface and FFmpeg compression workflow
 bot.py          Application entry point
 compose.yaml    Bot and Caddy services
@@ -194,6 +227,8 @@ Caddyfile       HTTPS reverse proxy configuration
 Dockerfile      Reproducible production image
 static/         Branding assets
 tests/          Unit tests for security-critical validation and page generation
+docs/           Architecture and engineering documentation
+.github/        Continuous integration workflow
 ```
 
 ## License
