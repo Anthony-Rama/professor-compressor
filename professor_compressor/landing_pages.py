@@ -8,7 +8,9 @@ BOT_INVITE_URL = (
     "&permissions=277025426432&integration_type=0&scope=bot+applications.commands"
 )
 PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
-TOP_GG_URL = "https://top.gg/discord/bots/1550752400271351839"
+DSC_LISTING_URL = "https://dsc.sh/bot/1550752400271351839"
+DISCORD_BOT_LIST_URL = "https://discordbotlist.com/bots/professor-compressor"
+DISCORD_BOTS_URL = "https://discord.bots.gg/bots/1550752400271351839"
 GUIDE_PATH = "/guide/compress-video-for-discord"
 
 
@@ -120,9 +122,9 @@ def _document(base_url: str, title: str, description: str, body: str, path: str)
     <a class="wordmark" href="/"><img src="/brand/professor-compressor.png"
       alt="" width="44" height="44">Professor Compressor</a>
     <nav aria-label="Main navigation">
-      <a href="{GUIDE_PATH}">Written instructions</a>
+      <a href="{GUIDE_PATH}">Written Guide</a>
       <a href="{PROJECT_URL}">GitHub</a>
-      <a href="{TOP_GG_URL}">Top.gg</a>
+      <a href="/#listings">Bot listings</a>
     </nav>
   </div></header>
   <main class="wrap">{body}</main>
@@ -223,6 +225,15 @@ def home_html(base_url: str) -> str:
     <p>Add Professor Compressor to a server where you can manage apps, then
       run <strong>/compress</strong> in a channel.</p>
     <a class="button primary" href="{invite_url}">Add to Discord</a>
+  </section>
+  <section id="listings" aria-labelledby="listings-title">
+    <h2 id="listings-title">Find Professor Compressor</h2>
+    <p>Professor Compressor is listed in these Discord bot directories:</p>
+    <div class="footer-links">
+      <a href="{DSC_LISTING_URL}">dsc.sh</a>
+      <a href="{DISCORD_BOT_LIST_URL}">Discord Bot List</a>
+      <a href="{DISCORD_BOTS_URL}">discord.bots.gg</a>
+    </div>
   </section>"""
     return _document(
         base_url,
