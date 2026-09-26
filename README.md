@@ -51,7 +51,7 @@ The selection limit is 10 videos. Browser memory, CPU, and background-tab thrott
 
 The repository includes Python tests for configuration, session and delivery behavior, HTTP routes, MP4 validation, and notifications. Browser tests run real FFmpeg WebAssembly against sample videos and cover conversion, the single-thread fallback, 10-file batches, drag and drop, invalid inputs, retries, and narrow layouts. GitHub Actions runs these checks, Python lint and formatting, dependency audits, and a production-container smoke test.
 
-For maintainers, the test commands and development workflow are in [CONTRIBUTING.md](CONTRIBUTING.md). Local integration uses a separate development Discord application and a private `.env` with `DISCORD_TOKEN`. Browser tests simulate Discord delivery; a live `/compress` test is still needed to check deployed Discord permissions and delivery.
+For maintainers, the test commands and development workflow are in [DEVELOPMENT.md](DEVELOPMENT.md). Local integration uses a separate development Discord application and a private `.env` with `DISCORD_TOKEN`. Browser tests simulate Discord delivery; a live `/compress` test is still needed to check deployed Discord permissions and delivery.
 
 ## Code map
 

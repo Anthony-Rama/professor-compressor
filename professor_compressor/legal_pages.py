@@ -3,7 +3,7 @@
 from html import escape
 
 EFFECTIVE_DATE = "September 26, 2026"
-PROJECT_URL = "https://github.com/Anthony-Rama/discord-bot"
+PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
 def _document(title: str, content: str) -> str:

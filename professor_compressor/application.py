@@ -90,7 +90,7 @@ async def send_owner_alert(message: str) -> None:
                 headers={
                     "User-Agent": (
                         "ProfessorCompressor/1.0 "
-                        "(+https://github.com/Anthony-Rama/discord-bot)"
+                        "(+https://github.com/Anthony-Rama/professor-compressor)"
                     )
                 },
                 json={
@@ -126,7 +126,7 @@ async def report_dsc_stats() -> bool:
                     "Content-Type": "application/json",
                     "User-Agent": (
                         "ProfessorCompressor/1.0 "
-                        "(+https://github.com/Anthony-Rama/discord-bot)"
+                        "(+https://github.com/Anthony-Rama/professor-compressor)"
                     ),
                 },
                 json={"server_count": len(client.guilds)},

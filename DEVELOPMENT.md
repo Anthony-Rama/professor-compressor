@@ -1,10 +1,8 @@
-# Contributing
+# Development
 
-Bug reports and feature suggestions are welcome. Please read the README's
-license section first: this project does not currently grant a reuse license
-for its original code. Outside code contributions are not being accepted until
-contribution and licensing terms are established. Contact the maintainer before
-preparing a code contribution.
+This is the maintainer's development and test workflow. Bug reports and feature
+suggestions are welcome, but outside code contributions are not currently
+accepted. See the README for the original code's reuse terms.
 
 ## Maintainer development workflow
 
