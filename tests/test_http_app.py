@@ -44,6 +44,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             "/guide/compress-video-for-discord": "text/html",
             "/robots.txt": "text/plain",
             "/sitemap.xml": "application/xml",
+            "/googlec910ef324dae35ac.html": "text/html",
             "/healthz": "application/json",
             "/metricsz": "application/json",
             "/privacy": "text/html",
@@ -86,6 +87,12 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         locs = [node.text for node in urls.iter() if node.tag.endswith("loc")]
         self.assertEqual(len(locs), 4)
         self.assertTrue(all("/upload/" not in url for url in locs))
+
+        verification = await self.client.get("/googlec910ef324dae35ac.html")
+        self.assertEqual(
+            await verification.text(),
+            "google-site-verification: googlec910ef324dae35ac.html",
+        )
 
         for path in ("/upload/not-a-real-token", "/healthz", "/metricsz"):
             with self.subTest(path=path):

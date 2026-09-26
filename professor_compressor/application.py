@@ -45,6 +45,7 @@ BOTSTATS_GUILD_ID = settings.botstats_guild_id
 WEB_HOST = settings.web_host
 WEB_PORT = settings.web_port
 PUBLIC_BASE_URL = settings.public_base_url
+GOOGLE_VERIFICATION_FILENAME = "googlec910ef324dae35ac.html"
 JOB_TTL_SECONDS = settings.job_ttl_seconds
 ACTIVE_SESSION_TTL_SECONDS = settings.active_session_ttl_seconds
 USER_COOLDOWN_SECONDS = settings.user_cooldown_seconds
@@ -502,6 +503,15 @@ async def sitemap(request: web.Request) -> web.Response:
     return web.Response(
         text=sitemap_xml(PUBLIC_BASE_URL),
         content_type="application/xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+async def google_site_verification(request: web.Request) -> web.Response:
+    del request
+    return web.Response(
+        text=f"google-site-verification: {GOOGLE_VERIFICATION_FILENAME}",
+        content_type="text/html",
         headers={"Cache-Control": "public, max-age=3600"},
     )
 
@@ -1035,6 +1045,9 @@ def create_web_application() -> web.Application:
     application.router.add_get("/guide/compress-video-for-discord", video_guide)
     application.router.add_get("/robots.txt", robots)
     application.router.add_get("/sitemap.xml", sitemap)
+    application.router.add_get(
+        f"/{GOOGLE_VERIFICATION_FILENAME}", google_site_verification
+    )
     application.router.add_get("/healthz", health)
     application.router.add_get("/metricsz", aggregate_metrics)
     application.router.add_get("/privacy", privacy_policy)
