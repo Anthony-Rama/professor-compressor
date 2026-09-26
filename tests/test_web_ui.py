@@ -1,7 +1,11 @@
+import asyncio
 import unittest
+from unittest.mock import AsyncMock, Mock
 
-from app import page
-from web_ui import browser_compressor
+from aiohttp import web
+
+from professor_compressor.application import browser_security_headers, page
+from professor_compressor.web_ui import browser_compressor
 
 
 class BrowserPageTests(unittest.TestCase):
@@ -9,10 +13,16 @@ class BrowserPageTests(unittest.TestCase):
         self.page = browser_compressor(10, 19_000_000, "session_secret-123", 600)
 
     def test_replaces_private_page_values(self) -> None:
-        self.assertIn('const MAX_CLIPS = 10;', self.page)
-        self.assertIn('const TARGET_BYTES = 19000000;', self.page)
+        self.assertIn("const MAX_CLIPS = 10;", self.page)
+        self.assertIn("const TARGET_BYTES = 19000000;", self.page)
         self.assertIn('const SESSION_SECRET = "session_secret-123";', self.page)
         self.assertNotIn("__SESSION_SECRET__", self.page)
+
+    def test_escapes_session_secret_as_javascript_data(self) -> None:
+        page = browser_compressor(1, 100, '</script><script>alert("x")</script>', 60)
+
+        self.assertIn(r"\u003c/script\u003e\u003cscript\u003ealert(\"x\")", page)
+        self.assertNotIn('</script><script>alert("x")</script>', page)
 
     def test_explains_local_and_remote_phases(self) -> None:
         self.assertIn("Compressing on this device", self.page)
@@ -63,6 +73,19 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("grid-template-columns: minmax(0, 1fr)", document)
         self.assertIn(".file-card { width: 100%; min-width: 0", document)
         self.assertIn("flex: 1 1 auto; min-width: 0", document)
+
+    def test_page_has_no_store_and_browser_security_headers(self) -> None:
+        response = page("Test", self.page)
+
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+
+        handler = AsyncMock(return_value=web.Response())
+        secured = asyncio.run(browser_security_headers(Mock(), handler))
+        policy = secured.headers["Content-Security-Policy"]
+        self.assertIn("frame-ancestors 'none'", policy)
+        self.assertIn("object-src 'none'", policy)
 
 
 if __name__ == "__main__":

@@ -24,13 +24,13 @@ def valid_mp4_signature(data: bytes) -> bool:
     box_count = 0
     recognized_brand = False
     while position + 8 <= len(data) and box_count < 10_000:
-        size = int.from_bytes(data[position:position + 4], "big")
-        kind = data[position + 4:position + 8]
+        size = int.from_bytes(data[position : position + 4], "big")
+        kind = data[position + 4 : position + 8]
         header_size = 8
         if size == 1:
             if position + 16 > len(data):
                 return False
-            size = int.from_bytes(data[position + 8:position + 16], "big")
+            size = int.from_bytes(data[position + 8 : position + 16], "big")
             header_size = 16
         elif size == 0:
             size = len(data) - position
@@ -40,8 +40,8 @@ def valid_mp4_signature(data: bytes) -> bool:
         if position == 0:
             if kind != b"ftyp" or size < header_size + 8:
                 return False
-            payload = data[position + header_size:position + size]
-            brands = {payload[index:index + 4] for index in range(0, len(payload), 4)}
+            payload = data[position + header_size : position + size]
+            brands = {payload[index : index + 4] for index in range(0, len(payload), 4)}
             recognized_brand = bool(brands & MP4_BRANDS)
 
         boxes.add(kind)

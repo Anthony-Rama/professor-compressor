@@ -54,3 +54,35 @@ require shared session storage and a durable external queue.
 `/healthz` reports readiness and current queue pressure. `/metricsz` reports
 process-lifetime aggregate usage counters. Metrics never include user IDs,
 guild IDs, channel IDs, filenames, IP addresses, or file contents.
+
+## Code boundaries
+
+The runtime is organized as a Python package with intentionally narrow module
+responsibilities:
+
+- `config.py` is the only environment parsing boundary. It validates numbers,
+  URLs, and Discord IDs, and prevents secret values from appearing in object
+  representations.
+- `domain.py` defines upload jobs, delivery requests, browser results, and the
+  explicit job-state machine.
+- `application.py` integrates Discord and aiohttp and owns process lifecycle.
+- `web_ui.py` renders the browser compression client and serializes dynamic
+  values safely into JavaScript.
+- `media_validation.py` validates untrusted MP4 structure without trusting
+  filenames or MIME headers.
+- `notifications.py` formats operator messages without usernames, channel
+  names, filenames, IP addresses, session tokens, or file content.
+- `metrics.py` provides locked, aggregate, process-lifetime counters.
+
+The package root has no import-time startup behavior. The runtime token is
+required only when the entry point starts the Discord client, so individual
+components can be imported and tested without production credentials.
+
+## Failure and overload behavior
+
+The relay uses bounded concurrency, queue depth, and in-memory byte limits.
+When any limit is reached, it returns a retryable response instead of accepting
+unbounded work. A delivery request has one terminal success or failure result;
+the worker releases its accounted bytes in a `finally` block. Browser failures
+are authenticated with the claimed session secret before they affect state or
+generate an operator alert.

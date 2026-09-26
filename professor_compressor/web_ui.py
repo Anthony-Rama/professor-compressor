@@ -1,3 +1,18 @@
+import json
+
+
+def _json_script_value(value: object) -> str:
+    """Serialize data without allowing it to terminate an inline script."""
+    return (
+        json.dumps(value)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 def browser_compressor(
     max_clips: int,
     target_bytes: int,
@@ -5,7 +20,7 @@ def browser_compressor(
     expires_in_seconds: int,
 ) -> str:
     """Return the one-use page that encodes videos locally in the browser."""
-    template = r'''
+    template = r"""
 <img class="brand" src="/brand/professor-compressor.png"
   alt="Professor Compressor mascot">
 <h1>Compress videos for Discord</h1>
@@ -20,9 +35,9 @@ def browser_compressor(
   <summary>Keep compression running quickly</summary>
   <p>For maximum speed, move this tab into a separate window and keep part of
     the window visible while compression runs.</p>
-  <p>In Chrome, open <code>chrome://settings/performance</code>, add
-    <code>professor-compressor.duckdns.org</code> under <strong>Always keep these
-    sites active</strong>, and turn off <strong>Energy Saver</strong> while processing.</p>
+  <p>In Chrome, open <code>chrome://settings/performance</code>, add this site
+    under <strong>Always keep these sites active</strong>, and turn off
+    <strong>Energy Saver</strong> while processing.</p>
 </details>
 <form id="upload">
   <input class="file-input" id="clips" name="clips" type="file"
@@ -72,7 +87,7 @@ import { fetchFile, toBlobURL } from "/assets/util-esm/index.js";
 
 const MAX_CLIPS = __MAX_CLIPS__;
 const TARGET_BYTES = __TARGET_BYTES__;
-const SESSION_SECRET = "__SESSION_SECRET__";
+const SESSION_SECRET = __SESSION_SECRET__;
 const SESSION_EXPIRES_SECONDS = __EXPIRES_SECONDS__;
 const OUTPUT_TARGET_RATIO = 0.97;
 const SINGLE_CORE_BASE = "/assets/core-esm";
@@ -695,10 +710,10 @@ function updateExpiry() {
 updateExpiry();
 expiryTimer = setInterval(updateExpiry, 1000);
 </script>
-'''
+"""
     return (
-        template.replace("__MAX_CLIPS__", str(max_clips))
-        .replace("__TARGET_BYTES__", str(target_bytes))
-        .replace("__SESSION_SECRET__", session_secret)
-        .replace("__EXPIRES_SECONDS__", str(expires_in_seconds))
+        template.replace("__MAX_CLIPS__", _json_script_value(max_clips))
+        .replace("__TARGET_BYTES__", _json_script_value(target_bytes))
+        .replace("__SESSION_SECRET__", _json_script_value(session_secret))
+        .replace("__EXPIRES_SECONDS__", _json_script_value(expires_in_seconds))
     )

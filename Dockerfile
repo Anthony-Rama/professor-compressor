@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir --requirement requirements.txt \
     && useradd --create-home --uid 10001 compressor
 
 COPY --from=web-assets /build/node_modules ./node_modules
-COPY bot.py app.py legal_pages.py media_validation.py metrics.py web_ui.py ./
-COPY static ./static
+COPY bot.py ./
+COPY professor_compressor ./professor_compressor
 
 USER compressor
 EXPOSE 8080

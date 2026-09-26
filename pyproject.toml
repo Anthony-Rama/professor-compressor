@@ -1,0 +1,22 @@
+[project]
+name = "professor-compressor"
+version = "1.0.0"
+description = "Privacy-focused Discord video compression using FFmpeg WebAssembly"
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+extend-exclude = ["node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"professor_compressor/application.py" = ["E501"]
+"professor_compressor/legal_pages.py" = ["RUF001"]
+"professor_compressor/web_ui.py" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

@@ -2,7 +2,6 @@
 
 from html import escape
 
-
 EFFECTIVE_DATE = "September 25, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/discord-bot"
 

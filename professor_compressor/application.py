@@ -2,115 +2,60 @@ import asyncio
 import html
 import io
 import ipaddress
+import logging
 import os
 import secrets
 import time
 from collections import deque
-from collections.abc import Iterable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import certifi
-from dotenv import load_dotenv
 
-load_dotenv()
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
-from aiohttp import ClientSession, ClientTimeout, web
 import discord
+from aiohttp import ClientSession, ClientTimeout, web
 from discord import app_commands
 
-from media_validation import valid_mp4_signature
-from metrics import RuntimeMetrics
-from legal_pages import privacy_policy_html, terms_of_service_html
-from web_ui import browser_compressor
-
-
-MIB = 1024 * 1024
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
-DSC_API_TOKEN = os.getenv("DSC_API_TOKEN", "").strip()
-DSC_STATS_INTERVAL_SECONDS = max(
-    30 * 60,
-    int(os.getenv("DSC_STATS_INTERVAL_MINUTES", "60")) * 60,
+from .config import MIB, Settings
+from .domain import BrowserResult, DeliveryRequest, JobState, UploadJob
+from .legal_pages import privacy_policy_html, terms_of_service_html
+from .media_validation import valid_mp4_signature
+from .metrics import RuntimeMetrics
+from .notifications import (
+    botstats_report,
+    compression_outcome_alert,
+    guild_alert_message,
+    safe_alert_text,
 )
-BOTSTATS_GUILD_ID_TEXT = os.getenv("BOTSTATS_GUILD_ID", "").strip()
-WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
-WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
-PUBLIC_BASE_URL = os.getenv(
-    "PUBLIC_BASE_URL", f"http://127.0.0.1:{WEB_PORT}"
-).rstrip("/")
-JOB_TTL_SECONDS = int(os.getenv("JOB_TTL_MINUTES", "10")) * 60
-ACTIVE_SESSION_TTL_SECONDS = int(
-    os.getenv("ACTIVE_SESSION_TTL_MINUTES", "30")
-) * 60
-USER_COOLDOWN_SECONDS = int(os.getenv("USER_COOLDOWN_SECONDS", "15"))
-MAX_ACTIVE_JOBS = int(os.getenv("MAX_ACTIVE_JOBS", "250"))
-MAX_CLIPS = 10
-MAX_RESULT_TOTAL_BYTES = int(os.getenv("MAX_RESULT_TOTAL_MIB", "220")) * MIB
-UPLOAD_RATE_LIMIT_PER_MINUTE = int(
-    os.getenv("UPLOAD_RATE_LIMIT_PER_MINUTE", "8")
-)
-MAX_CONCURRENT_UPLOADS = int(os.getenv("MAX_CONCURRENT_UPLOADS", "2"))
-DELIVERY_QUEUE_SIZE = int(os.getenv("DELIVERY_QUEUE_SIZE", "8"))
-DELIVERY_WORKERS = int(os.getenv("DELIVERY_WORKERS", "2"))
-MAX_DELIVERY_BUFFER_BYTES = int(
-    os.getenv("MAX_DELIVERY_BUFFER_MIB", "400")
-) * MIB
-ALLOWED_GUILD_IDS_TEXT = os.getenv(
-    "ALLOWED_GUILD_IDS", os.getenv("ALLOWED_GUILD_ID", "")
-).strip()
-try:
-    ALLOWED_GUILD_IDS = frozenset(
-        int(guild_id.strip())
-        for guild_id in ALLOWED_GUILD_IDS_TEXT.split(",")
-        if guild_id.strip()
-    )
-except ValueError as error:
-    raise RuntimeError(
-        "ALLOWED_GUILD_IDS must contain comma-separated Discord server IDs."
-    ) from error
+from .web_ui import browser_compressor
 
-try:
-    BOTSTATS_GUILD_ID = (
-        int(BOTSTATS_GUILD_ID_TEXT) if BOTSTATS_GUILD_ID_TEXT else None
-    )
-except ValueError as error:
-    raise RuntimeError("BOTSTATS_GUILD_ID must be a Discord server ID.") from error
+logger = logging.getLogger(__name__)
+settings = Settings.from_environment(require_token=False)
 
-if not DISCORD_TOKEN:
-    raise RuntimeError("DISCORD_TOKEN is missing from .env")
-
-
-@dataclass
-class UploadJob:
-    token: str
-    user_id: int
-    channel_id: int
-    expires_at: float
-    discord_limit: int
-    interaction: discord.Interaction
-    state: str = "open"
-    claim_secret: str | None = None
-    claimed_at: float | None = None
-    guild_id: int | None = None
-    guild_name: str = "Unknown server"
-    created_at: float = field(default_factory=time.time)
-
-
-@dataclass(frozen=True)
-class BrowserResult:
-    name: str
-    data: bytes
-
-
-@dataclass
-class DeliveryRequest:
-    job: UploadJob
-    results: list[BrowserResult]
-    completed: asyncio.Future[str]
+# Local aliases keep the request-handling code concise. Configuration parsing,
+# validation, defaults, and secret handling live exclusively in config.py.
+ALERT_WEBHOOK_URL = settings.alert_webhook_url
+DSC_API_TOKEN = settings.dsc_api_token
+DSC_STATS_INTERVAL_SECONDS = settings.dsc_stats_interval_seconds
+BOTSTATS_GUILD_ID = settings.botstats_guild_id
+WEB_HOST = settings.web_host
+WEB_PORT = settings.web_port
+PUBLIC_BASE_URL = settings.public_base_url
+JOB_TTL_SECONDS = settings.job_ttl_seconds
+ACTIVE_SESSION_TTL_SECONDS = settings.active_session_ttl_seconds
+USER_COOLDOWN_SECONDS = settings.user_cooldown_seconds
+MAX_ACTIVE_JOBS = settings.max_active_jobs
+MAX_CLIPS = settings.max_clips
+MAX_RESULT_TOTAL_BYTES = settings.max_result_total_bytes
+UPLOAD_RATE_LIMIT_PER_MINUTE = settings.upload_rate_limit_per_minute
+MAX_CONCURRENT_UPLOADS = settings.max_concurrent_uploads
+DELIVERY_QUEUE_SIZE = settings.delivery_queue_size
+DELIVERY_WORKERS = settings.delivery_workers
+MAX_DELIVERY_BUFFER_BYTES = settings.max_delivery_buffer_bytes
+ALLOWED_GUILD_IDS = settings.allowed_guild_ids
 
 
 intents = discord.Intents.default()
@@ -131,11 +76,6 @@ commands_synced = False
 application_operator_ids: frozenset[int] | None = None
 effective_allowed_guild_ids: frozenset[int] = ALLOWED_GUILD_IDS
 metrics = RuntimeMetrics()
-
-
-def safe_alert_text(value: str, limit: int = 100) -> str:
-    """Make external Discord names safe to include in notification Markdown."""
-    return discord.utils.escape_markdown(value.replace("`", "'"))[:limit]
 
 
 async def send_owner_alert(message: str) -> None:
@@ -160,7 +100,7 @@ async def send_owner_alert(message: str) -> None:
             ) as response:
                 response.raise_for_status()
     except Exception as error:
-        print(f"Owner notification failed: {type(error).__name__}")
+        logger.warning("Owner notification failed (%s)", type(error).__name__)
 
 
 def schedule_owner_alert(message: str) -> None:
@@ -192,10 +132,10 @@ async def report_dsc_stats() -> bool:
                 json={"server_count": len(client.guilds)},
             ) as response:
                 response.raise_for_status()
-        print(f"Published dsc.sh server count: {len(client.guilds)}")
+        logger.info("Published dsc.sh server count: %d", len(client.guilds))
         return True
     except Exception as error:
-        print(f"dsc.sh statistics update failed: {type(error).__name__}")
+        logger.warning("dsc.sh statistics update failed (%s)", type(error).__name__)
         return False
 
 
@@ -215,22 +155,6 @@ async def dsc_stats_loop() -> None:
         await asyncio.sleep(DSC_STATS_INTERVAL_SECONDS)
 
 
-def guild_alert_message(
-    action: str,
-    guild: discord.Guild,
-    server_count: int | None = None,
-) -> str:
-    member_count = guild.member_count if guild.member_count is not None else "Unknown"
-    connected_servers = len(client.guilds) if server_count is None else server_count
-    return (
-        f"{action}\n"
-        f"Server: **{safe_alert_text(guild.name)}**\n"
-        f"Server ID: `{guild.id}`\n"
-        f"Members: `{member_count}`\n"
-        f"Connected servers: `{connected_servers}`"
-    )
-
-
 def interaction_guild_name(interaction: discord.Interaction) -> str:
     """Return a usable guild name even when Discord sends partial guild data."""
     guild = interaction.guild
@@ -238,60 +162,6 @@ def interaction_guild_name(interaction: discord.Interaction) -> str:
         guild = client.get_guild(interaction.guild_id)
     guild_name = getattr(guild, "name", "").strip()
     return guild_name or "Unknown server"
-
-
-def compression_outcome_alert(
-    job: UploadJob,
-    *,
-    succeeded: bool,
-    file_count: int = 0,
-    total_bytes: int = 0,
-    stage: str | None = None,
-    elapsed_seconds: int | None = None,
-) -> str:
-    """Build a privacy-safe terminal outcome alert for a compression session."""
-    if elapsed_seconds is None:
-        started_at = job.claimed_at or job.created_at
-        elapsed_seconds = max(0, int(time.time() - started_at))
-    outcome = (
-        "✅ **Compression delivered successfully**"
-        if succeeded
-        else "❌ **Compression failed**"
-    )
-    lines = [
-        outcome,
-        f"Server: **{safe_alert_text(job.guild_name or 'Unknown server')}**",
-        f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
-        f"Files: `{file_count}`",
-    ]
-    if total_bytes:
-        lines.append(f"Finished size: `{total_bytes / MIB:.1f} MiB`")
-    if stage:
-        lines.append(f"Stage: `{safe_alert_text(stage, limit=60)}`")
-    lines.append(f"Elapsed: `{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}`")
-    return "\n".join(lines)
-
-
-def botstats_report(
-    guilds: Iterable[discord.Guild],
-    snapshot: dict[str, int],
-) -> str:
-    sorted_guilds = sorted(guilds, key=lambda guild: guild.name.casefold())
-    lines = [
-        "**Professor Compressor status**",
-        f"Connected servers: **{len(sorted_guilds)}**",
-        f"Sessions since restart: **{snapshot['sessions_created']}**",
-        f"Successful deliveries since restart: **{snapshot['deliveries_succeeded']}**",
-        "",
-        "**Live server list**",
-    ]
-    for guild in sorted_guilds:
-        member_count = guild.member_count if guild.member_count is not None else "Unknown"
-        lines.append(
-            f"- {safe_alert_text(guild.name)} | ID: `{guild.id}` | "
-            f"Members: `{member_count}`"
-        )
-    return "\n".join(lines)
 
 
 async def get_application_operator_ids() -> frozenset[int]:
@@ -324,8 +194,21 @@ async def browser_security_headers(
     response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = (
-        "camera=(), microphone=(), geolocation=(), payment=(), "
-        "screen-wake-lock=(self)"
+        "camera=(), microphone=(), geolocation=(), payment=(), screen-wake-lock=(self)"
+    )
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "base-uri 'none'; "
+        "connect-src 'self' blob:; "
+        "font-src 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'; "
+        "img-src 'self' data:; "
+        "media-src 'self' blob:; "
+        "object-src 'none'; "
+        "script-src 'self' 'unsafe-inline' blob:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "worker-src 'self' blob:"
     )
     response.headers["X-Frame-Options"] = "DENY"
     return response
@@ -468,7 +351,7 @@ def page(title: str, body: str) -> web.Response:
 
 def active_job(token: str) -> UploadJob | None:
     job = jobs.get(token)
-    if job is None or job.state == "done" or time.time() > job.expires_at:
+    if job is None or job.state is JobState.DONE or time.time() > job.expires_at:
         jobs.pop(token, None)
         return None
     return job
@@ -516,7 +399,7 @@ def discard_expired_jobs() -> None:
     expired_tokens = [
         token
         for token, job in jobs.items()
-        if job.state == "done" or now > job.expires_at
+        if job.state is JobState.DONE or now > job.expires_at
     ]
     for token in expired_tokens:
         jobs.pop(token, None)
@@ -606,7 +489,7 @@ async def upload_form(request: web.Request) -> web.Response:
             "<strong>/compress</strong> again.</p>",
         )
     job = active_job(request.match_info["token"])
-    if job is None or job.state != "open":
+    if job is None or job.state is not JobState.OPEN:
         return page(
             "Link expired",
             "<h1>Upload link unavailable</h1>"
@@ -617,7 +500,7 @@ async def upload_form(request: web.Request) -> web.Response:
     job.claim_secret = secrets.token_urlsafe(32)
     job.claimed_at = time.time()
     job.expires_at = time.time() + ACTIVE_SESSION_TTL_SECONDS
-    job.state = "claimed"
+    job.state = JobState.CLAIMED
     metrics.increment("sessions_opened")
     # Keep a small delivery reserve while letting the browser use nearly all of
     # the attachment allowance. The encoder applies its own muxing reserve.
@@ -636,9 +519,7 @@ async def upload_form(request: web.Request) -> web.Response:
 def safe_result_name(name: str | None, number: int) -> str:
     raw = (name or f"clip-{number}.mp4").replace("\\", "/").split("/")[-1]
     cleaned = "".join(
-        character
-        for character in raw
-        if character.isalnum() or character in " ._-"
+        character for character in raw if character.isalnum() or character in " ._-"
     ).strip(" .")
     if not cleaned.lower().endswith(".mp4"):
         cleaned += ".mp4"
@@ -664,13 +545,13 @@ async def receive_results(request: web.Request) -> web.Response:
             403,
             "session_invalid",
         )
-    if job.state == "uploading" or job.state == "queued":
+    if job.state in {JobState.UPLOADING, JobState.QUEUED}:
         return json_error(
             "This session already has an upload in progress.",
             409,
             "upload_in_progress",
         )
-    if job.state != "claimed":
+    if job.state is not JobState.CLAIMED:
         return json_error(
             "This one-use session is no longer available.",
             410,
@@ -703,7 +584,7 @@ async def receive_results(request: web.Request) -> web.Response:
     results: list[BrowserResult] = []
     total_size = 0
     upload_slot_held = True
-    job.state = "uploading"
+    job.state = JobState.UPLOADING
     active_relay_uploads += 1
     try:
         if not request.content_type.startswith("multipart/"):
@@ -747,7 +628,7 @@ async def receive_results(request: web.Request) -> web.Response:
         if not results:
             raise ValueError("No compressed MP4 results were received.")
         if delivery_bytes_held + total_size > MAX_DELIVERY_BUFFER_BYTES:
-            job.state = "claimed"
+            job.state = JobState.CLAIMED
             return json_error(
                 "The in-memory delivery buffer is full. It will retry automatically.",
                 503,
@@ -761,7 +642,7 @@ async def receive_results(request: web.Request) -> web.Response:
         try:
             delivery_queue.put_nowait(delivery)
         except asyncio.QueueFull:
-            job.state = "claimed"
+            job.state = JobState.CLAIMED
             return json_error(
                 "The Discord delivery queue filled up. It will retry automatically.",
                 503,
@@ -774,11 +655,11 @@ async def receive_results(request: web.Request) -> web.Response:
         metrics.increment("bytes_queued", total_size)
         active_relay_uploads -= 1
         upload_slot_held = False
-        job.state = "queued"
+        job.state = JobState.QUEUED
         try:
             message = await asyncio.wait_for(completion, timeout=180)
         except TimeoutError:
-            job.state = "done"
+            job.state = JobState.DONE
             return json_error(
                 "Discord took too long to accept the files. Check the channel "
                 "before starting a new compression session.",
@@ -786,9 +667,9 @@ async def receive_results(request: web.Request) -> web.Response:
                 "discord_timeout",
             )
         except RuntimeError as error:
-            job.state = "done"
+            job.state = JobState.DONE
             return json_error(str(error), 502, "discord_delivery_failed")
-        job.state = "done"
+        job.state = JobState.DONE
         return web.json_response(
             {
                 "ok": True,
@@ -798,11 +679,11 @@ async def receive_results(request: web.Request) -> web.Response:
             headers={"Cache-Control": "no-store"},
         )
     except (ValueError, web.HTTPException) as error:
-        job.state = "claimed"
+        job.state = JobState.CLAIMED
         return json_error(str(error), 400, "invalid_upload")
     except Exception as error:
-        job.state = "claimed"
-        print(f"Upload relay failed: {error!r}")
+        job.state = JobState.CLAIMED
+        logger.warning("Upload relay failed (%s)", type(error).__name__)
         return json_error(
             "The relay could not read the compressed files. "
             "Check your connection and try again.",
@@ -829,7 +710,7 @@ async def receive_browser_failure(request: web.Request) -> web.Response:
             403,
             "session_invalid",
         )
-    if job.state != "claimed":
+    if job.state is not JobState.CLAIMED:
         return json_error(
             "This session is still being processed or already reached delivery.",
             409,
@@ -852,7 +733,7 @@ async def receive_browser_failure(request: web.Request) -> web.Response:
             stage=stage or "Browser processing",
         )
     )
-    job.state = "done"
+    job.state = JobState.DONE
     jobs.pop(job.token, None)
     return web.json_response(
         {"ok": True},
@@ -900,9 +781,7 @@ async def deliver_browser_results(
             result_summary = "your compressed video is ready."
         else:
             result_summary = f"your {result_count} compressed videos are ready."
-        message = (
-            f"✅ **Compression complete!** <@{job.user_id}>, {result_summary}"
-        )
+        message = f"✅ **Compression complete!** <@{job.user_id}>, {result_summary}"
         if channel is None:
             raise RuntimeError(
                 "The bot cannot access the channel where compression started."
@@ -910,7 +789,7 @@ async def deliver_browser_results(
         await send_result_batch(channel.send, results, message)
         return "Your compressed videos were delivered to Discord."
     except Exception as error:
-        print(f"Result delivery failed: {error!r}")
+        logger.warning("Result delivery failed (%s)", type(error).__name__)
         if channel is not None:
             try:
                 await channel.send(
@@ -965,13 +844,10 @@ async def delivery_worker(worker_number: int) -> None:
                 delivery_bytes_held
                 - sum(len(result.data) for result in delivery.results),
             )
-            delivery.job.state = "done"
+            delivery.job.state = JobState.DONE
             jobs.pop(delivery.job.token, None)
             delivery_queue.task_done()
-            print(
-                f"Delivery worker {worker_number} completed session "
-                f"{delivery.job.token[:8]}."
-            )
+            logger.info("Delivery worker %d completed a session", worker_number)
 
 
 @tree.command(
@@ -1113,8 +989,9 @@ async def start_upload_server() -> None:
         "/upload/{token}/failure",
         receive_browser_failure,
     )
-    project_root = Path(__file__).resolve().parent
-    application.router.add_static("/brand/", project_root / "static")
+    package_root = Path(__file__).resolve().parent
+    project_root = package_root.parent
+    application.router.add_static("/brand/", package_root / "static")
     application.router.add_static(
         "/assets/ffmpeg-esm/",
         project_root / "node_modules/@ffmpeg/ffmpeg/dist/esm",
@@ -1144,18 +1021,30 @@ async def start_upload_server() -> None:
     cleanup_task = asyncio.create_task(expire_jobs_loop())
     background_tasks.add(cleanup_task)
     cleanup_task.add_done_callback(background_tasks.discard)
-    print(f"Private browser compressor listening at {PUBLIC_BASE_URL}")
+    logger.info("Private browser compressor listening at %s", PUBLIC_BASE_URL)
 
 
 @client.event
 async def on_guild_join(guild: discord.Guild) -> None:
-    schedule_owner_alert(guild_alert_message("🟢 **Professor Compressor installed**", guild))
+    schedule_owner_alert(
+        guild_alert_message(
+            "🟢 **Professor Compressor installed**",
+            guild,
+            server_count=len(client.guilds),
+        )
+    )
     schedule_dsc_stats_update()
 
 
 @client.event
 async def on_guild_remove(guild: discord.Guild) -> None:
-    schedule_owner_alert(guild_alert_message("🔴 **Professor Compressor removed**", guild))
+    schedule_owner_alert(
+        guild_alert_message(
+            "🔴 **Professor Compressor removed**",
+            guild,
+            server_count=len(client.guilds),
+        )
+    )
     schedule_dsc_stats_update()
 
 
@@ -1164,38 +1053,45 @@ async def on_ready() -> None:
     global commands_synced, dsc_stats_task
     if not commands_synced:
         synced_commands = await tree.sync()
-        print(
+        logger.info(
             "Synced global commands: "
             + ", ".join(command.name for command in synced_commands)
         )
         if BOTSTATS_GUILD_ID is not None:
             owner_guild = discord.Object(id=BOTSTATS_GUILD_ID)
             owner_commands = await tree.sync(guild=owner_guild)
-            print(
+            logger.info(
                 f"Synced private commands to server {BOTSTATS_GUILD_ID}: "
                 + ", ".join(command.name for command in owner_commands)
             )
         if not client.guilds:
-            print(
+            logger.warning(
                 "Warning: the bot is not installed as a member of any server. "
                 "Install it to your server so long compression jobs can fall "
                 "back to normal channel messages after interactions expire."
             )
         if effective_allowed_guild_ids:
-            print(
+            logger.info(
                 "Commands restricted to Discord servers "
-                + ", ".join(str(guild_id) for guild_id in sorted(effective_allowed_guild_ids))
+                + ", ".join(
+                    str(guild_id) for guild_id in sorted(effective_allowed_guild_ids)
+                )
             )
         else:
-            print("Commands are available in all Discord servers.")
+            logger.info("Commands are available in all Discord servers.")
         commands_synced = True
     await start_upload_server()
     if DSC_API_TOKEN and (dsc_stats_task is None or dsc_stats_task.done()):
         dsc_stats_task = asyncio.create_task(dsc_stats_loop())
         background_tasks.add(dsc_stats_task)
         dsc_stats_task.add_done_callback(background_tasks.discard)
-    print(f"Logged in as {client.user} in {len(client.guilds)} server(s)")
+    logger.info("Logged in as %s in %d server(s)", client.user, len(client.guilds))
 
 
 def run() -> None:
-    client.run(DISCORD_TOKEN)
+    runtime_settings = Settings.from_environment(require_token=True)
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    client.run(runtime_settings.discord_token, log_handler=None)

@@ -1,6 +1,6 @@
 import unittest
 
-from media_validation import valid_mp4_signature
+from professor_compressor.media_validation import valid_mp4_signature
 
 
 def box(kind: bytes, payload: bytes = b"") -> bytes:

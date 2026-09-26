@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
-from app import (
+from professor_compressor.application import (
+    JobState,
     UploadJob,
     botstats_report,
     compression_outcome_alert,
@@ -77,7 +78,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             expires_at=9999999999,
             discord_limit=20_000_000,
             interaction=Mock(),
-            state="claimed",
+            state=JobState.CLAIMED,
             claim_secret="claim-secret",
             guild_id=789,
             guild_name="Test Server",
@@ -86,17 +87,17 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         request = Mock()
         request.match_info = {"token": job.token}
         request.headers = {"X-Upload-Session": "claim-secret"}
-        request.json = AsyncMock(
-            return_value={"stage": "Browser compression<script>"}
-        )
+        request.json = AsyncMock(return_value={"stage": "Browser compression<script>"})
         try:
-            with patch("app.schedule_owner_alert") as schedule_alert:
+            with patch(
+                "professor_compressor.application.schedule_owner_alert"
+            ) as schedule_alert:
                 response = await receive_browser_failure(request)
         finally:
             jobs.pop(job.token, None)
 
         self.assertEqual(response.status, 200)
-        self.assertEqual(job.state, "done")
+        self.assertIs(job.state, JobState.DONE)
         alert = schedule_alert.call_args.args[0]
         self.assertIn("Compression failed", alert)
         self.assertIn("Browser compressionscript", alert)
@@ -109,8 +110,12 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         guild.member_count = 42
 
         with (
-            patch("app.schedule_owner_alert") as schedule_alert,
-            patch("app.schedule_dsc_stats_update") as schedule_stats,
+            patch(
+                "professor_compressor.application.schedule_owner_alert"
+            ) as schedule_alert,
+            patch(
+                "professor_compressor.application.schedule_dsc_stats_update"
+            ) as schedule_stats,
         ):
             await on_guild_join(guild)
 
@@ -133,9 +138,12 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         session_context.__aenter__.return_value = session
 
         with (
-            patch("app.client", mock_client),
-            patch("app.DSC_API_TOKEN", "test-api-token"),
-            patch("app.ClientSession", return_value=session_context),
+            patch("professor_compressor.application.client", mock_client),
+            patch("professor_compressor.application.DSC_API_TOKEN", "test-api-token"),
+            patch(
+                "professor_compressor.application.ClientSession",
+                return_value=session_context,
+            ),
         ):
             self.assertTrue(await report_dsc_stats())
 

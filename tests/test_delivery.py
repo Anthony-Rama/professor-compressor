@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
-from app import (
+from professor_compressor.application import (
     BrowserResult,
     UploadJob,
     compression_target,
@@ -31,8 +31,14 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         channel.send = AsyncMock()
 
         with (
-            patch("app.get_channel", AsyncMock(return_value=channel)),
-            patch("app.send_result_batch", AsyncMock()) as send_batch,
+            patch(
+                "professor_compressor.application.get_channel",
+                AsyncMock(return_value=channel),
+            ),
+            patch(
+                "professor_compressor.application.send_result_batch",
+                AsyncMock(),
+            ) as send_batch,
         ):
             response = await deliver_browser_results(job, results)
 

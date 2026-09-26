@@ -1,11 +1,14 @@
 import unittest
 from unittest.mock import patch
 
-from metrics import RuntimeMetrics
+from professor_compressor.metrics import RuntimeMetrics
 
 
 class RuntimeMetricsTests(unittest.TestCase):
-    @patch("metrics.time.monotonic", side_effect=[100.0, 112.9])
+    @patch(
+        "professor_compressor.metrics.time.monotonic",
+        side_effect=[100.0, 112.9],
+    )
     def test_snapshot_contains_aggregate_counters_and_uptime(self, _clock) -> None:
         metrics = RuntimeMetrics()
         metrics.increment("sessions_created")

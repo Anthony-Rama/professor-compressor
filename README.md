@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="static/professor-compressor.png" alt="Professor Compressor mascot" width="180">
+  <img src="professor_compressor/static/professor-compressor.png" alt="Professor Compressor mascot" width="180">
 
   # Professor Compressor
 
@@ -94,7 +94,7 @@ No privileged gateway intents are required.
 
 ```bash
 git clone https://github.com/Anthony-Rama/discord-bot.git
-cd professor-compressor
+cd discord-bot
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -108,7 +108,7 @@ cp .env.example .env
 Set `DISCORD_TOKEN` in `.env`, then start the bot:
 
 ```bash
-python bot.py
+python -m professor_compressor
 ```
 
 For local testing, keep these defaults:
@@ -150,6 +150,7 @@ available at `https://your-domain.example/privacy` and
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DISCORD_TOKEN` | Required | Secret token from the Discord Developer Portal |
+| `LOG_LEVEL` | `INFO` | Application log level |
 | `ALERT_WEBHOOK_URL` | Empty | Optional private Discord webhook for install, removal, and `/compress` usage alerts |
 | `DSC_API_TOKEN` | Empty | Optional secret token used to publish the current server count to dsc.sh |
 | `DSC_STATS_INTERVAL_MINUTES` | `60` | Minutes between dsc.sh server-count updates; values below 30 are raised to 30 |
@@ -215,7 +216,10 @@ Run the same core checks locally:
 
 ```bash
 python -m unittest discover -s tests -v
-python -m compileall -q app.py bot.py media_validation.py metrics.py web_ui.py tests
+python -m ruff check .
+python -m ruff format --check .
+python -m pip_audit --requirement requirements.txt
+python -m compileall -q bot.py professor_compressor tests
 npm ci
 docker build --tag professor-compressor:local .
 ```
@@ -244,19 +248,23 @@ docker compose ps
 ## Project structure
 
 ```text
-app.py          Discord commands, upload relay, and HTTP server
-legal_pages.py  Public Privacy Policy and Terms of Service pages
-media_validation.py  Dependency-free MP4 structural validation
-metrics.py      Privacy-safe aggregate process metrics
-web_ui.py       Browser interface and FFmpeg compression workflow
-bot.py          Application entry point
-compose.yaml    Bot and Caddy services
-Caddyfile       HTTPS reverse proxy configuration
-Dockerfile      Reproducible production image
-static/         Branding assets
-tests/          Unit tests for security-critical validation and page generation
-docs/           Architecture and engineering documentation
-.github/        Continuous integration workflow
+professor_compressor/
+  application.py      Discord commands, HTTP relay, and lifecycle wiring
+  config.py           Typed environment parsing and validation
+  domain.py           Upload state machine and delivery models
+  notifications.py    Privacy-safe operator message formatting
+  media_validation.py Dependency-free MP4 structural validation
+  metrics.py          Aggregate process metrics without user identifiers
+  web_ui.py           Browser FFmpeg workflow
+  legal_pages.py      Privacy Policy and Terms of Service pages
+  static/             Production branding assets
+tests/                Unit tests for configuration and critical workflows
+docs/                 Architecture and engineering documentation
+.github/              CI and dependency-update configuration
+bot.py                Compatibility entry point
+compose.yaml          Production service definition
+Caddyfile             HTTPS reverse proxy configuration
+Dockerfile            Reproducible non-root production image
 ```
 
 ## License
