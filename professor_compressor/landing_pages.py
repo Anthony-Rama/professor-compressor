@@ -31,9 +31,17 @@ def _document(base_url: str, title: str, description: str, body: str, path: str)
         "image": image,
         "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
     }
-    structured_data = json.dumps(app_data, separators=(",", ":")).replace(
-        "<", "\\u003c"
-    )
+    if path == "/":
+        website_data = {
+            "@type": "WebSite",
+            "name": "Professor Compressor",
+            "url": f"{base_url}/",
+        }
+        app_data.pop("@context")
+        schema = {"@context": "https://schema.org", "@graph": [website_data, app_data]}
+    else:
+        schema = app_data
+    structured_data = json.dumps(schema, separators=(",", ":")).replace("<", "\\u003c")
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -290,6 +298,20 @@ def guide_html(base_url: str) -> str:
     <p>Use a modern desktop browser, keep the page open and visible, and try a
       shorter clip or fewer files at once. Large and long videos use more
       memory and processing time. The page shows progress for each file.</p>
+    <h2>When something does not work</h2>
+    <h3>The private link says it expired</h3>
+    <p>Each link is short-lived and can only be opened once. Return to Discord
+      and run <strong>/compress</strong> again to get a new one.</p>
+    <h3>A video cannot be converted</h3>
+    <p>A file extension does not guarantee that its video codec is supported.
+      Try an MP4 with a common video codec, or test one shorter clip first.
+      Damaged, encrypted, and AV1 sources may not work with the current
+      browser encoder.</p>
+    <h3>The finished file does not arrive in Discord</h3>
+    <p>Wait until the page reports delivery complete. If it reports a failure,
+      check that the bot is still in the server and can access the original
+      channel, then start a new session. A completed upload is not the same as
+      a delivered Discord message.</p>
     <div class="callout"><h3>Start with one command</h3>
       <p>No separate compressor installation or manual upload of the result is
         needed after adding the bot.</p>
