@@ -21,6 +21,7 @@ from discord import app_commands
 
 from .config import MIB, Settings
 from .domain import BrowserResult, DeliveryRequest, JobState, UploadJob
+from .landing_pages import guide_html, home_html, robots_txt, sitemap_xml
 from .legal_pages import privacy_policy_html, terms_of_service_html
 from .media_validation import valid_mp4_signature
 from .metrics import RuntimeMetrics
@@ -211,6 +212,11 @@ async def browser_security_headers(
         "worker-src 'self' blob:"
     )
     response.headers["X-Frame-Options"] = "DENY"
+    if request.path.startswith("/upload/") or request.path in {
+        "/healthz",
+        "/metricsz",
+    }:
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
     return response
 
 
@@ -469,6 +475,34 @@ def legal_response(document: str) -> web.Response:
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
         },
+    )
+
+
+async def home(request: web.Request) -> web.Response:
+    del request
+    return legal_response(home_html(PUBLIC_BASE_URL))
+
+
+async def video_guide(request: web.Request) -> web.Response:
+    del request
+    return legal_response(guide_html(PUBLIC_BASE_URL))
+
+
+async def robots(request: web.Request) -> web.Response:
+    del request
+    return web.Response(
+        text=robots_txt(PUBLIC_BASE_URL),
+        content_type="text/plain",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+async def sitemap(request: web.Request) -> web.Response:
+    del request
+    return web.Response(
+        text=sitemap_xml(PUBLIC_BASE_URL),
+        content_type="application/xml",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 
@@ -997,6 +1031,10 @@ def create_web_application() -> web.Application:
         client_max_size=MAX_RESULT_TOTAL_BYTES + 2 * MIB,
         middlewares=[browser_security_headers],
     )
+    application.router.add_get("/", home)
+    application.router.add_get("/guide/compress-video-for-discord", video_guide)
+    application.router.add_get("/robots.txt", robots)
+    application.router.add_get("/sitemap.xml", sitemap)
     application.router.add_get("/healthz", health)
     application.router.add_get("/metricsz", aggregate_metrics)
     application.router.add_get("/privacy", privacy_policy)

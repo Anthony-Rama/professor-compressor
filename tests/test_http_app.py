@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 from unittest.mock import Mock, patch
+from xml.etree import ElementTree
 
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
@@ -39,6 +40,10 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_public_routes_and_security_headers(self) -> None:
         expected_types = {
+            "/": "text/html",
+            "/guide/compress-video-for-discord": "text/html",
+            "/robots.txt": "text/plain",
+            "/sitemap.xml": "application/xml",
             "/healthz": "application/json",
             "/metricsz": "application/json",
             "/privacy": "text/html",
@@ -54,6 +59,35 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                     response.headers["Cross-Origin-Embedder-Policy"],
                     "require-corp",
                 )
+
+    async def test_public_pages_are_indexable_and_session_pages_are_not(self) -> None:
+        home = await self.client.get("/")
+        home_html = await home.text()
+        self.assertEqual(home.status, 200)
+        self.assertNotIn("X-Robots-Tag", home.headers)
+        self.assertIn("Discord Video Compressor Bot", home_html)
+        self.assertIn('rel="canonical"', home_html)
+        self.assertIn('type="application/ld+json"', home_html)
+        self.assertIn("Add to Discord", home_html)
+        self.assertIn("may be sent unchanged", home_html)
+
+        guide = await self.client.get("/guide/compress-video-for-discord")
+        self.assertEqual(guide.status, 200)
+        self.assertNotIn("X-Robots-Tag", guide.headers)
+        self.assertIn("How to compress a video", await guide.text())
+
+        robots = await self.client.get("/robots.txt")
+        self.assertIn("Sitemap:", await robots.text())
+        sitemap = await self.client.get("/sitemap.xml")
+        urls = ElementTree.fromstring(await sitemap.text())
+        locs = [node.text for node in urls.iter() if node.tag.endswith("loc")]
+        self.assertEqual(len(locs), 4)
+        self.assertTrue(all("/upload/" not in url for url in locs))
+
+        for path in ("/upload/not-a-real-token", "/healthz", "/metricsz"):
+            with self.subTest(path=path):
+                response = await self.client.get(path)
+                self.assertIn("noindex", response.headers["X-Robots-Tag"])
 
     async def test_valid_result_batch_reaches_the_delivery_queue(self) -> None:
         import professor_compressor.application as application

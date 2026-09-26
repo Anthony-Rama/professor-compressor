@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://discord.com/oauth2/authorize?client_id=1550752400271351839&amp;permissions=277025426432&amp;integration_type=0&amp;scope=bot+applications.commands">Add to Discord</a>
+  · <a href="https://professor-compressor.duckdns.org/">Website</a>
   · <a href="docs/architecture.md">Architecture</a>
 </p>
 
