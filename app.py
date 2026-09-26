@@ -31,6 +31,11 @@ from web_ui import browser_compressor
 MIB = 1024 * 1024
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
+DSC_API_TOKEN = os.getenv("DSC_API_TOKEN", "").strip()
+DSC_STATS_INTERVAL_SECONDS = max(
+    30 * 60,
+    int(os.getenv("DSC_STATS_INTERVAL_MINUTES", "60")) * 60,
+)
 BOTSTATS_GUILD_ID_TEXT = os.getenv("BOTSTATS_GUILD_ID", "").strip()
 WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
@@ -113,6 +118,7 @@ background_tasks: set[asyncio.Task[Any]] = set()
 last_job_at: dict[tuple[int, int], float] = {}
 web_runner: web.AppRunner | None = None
 cleanup_task: asyncio.Task[None] | None = None
+dsc_stats_task: asyncio.Task[None] | None = None
 delivery_queue: asyncio.Queue[DeliveryRequest] | None = None
 delivery_workers: list[asyncio.Task[None]] = []
 request_times: dict[tuple[str, str], deque[float]] = {}
@@ -161,6 +167,49 @@ def schedule_owner_alert(message: str) -> None:
     task = asyncio.create_task(send_owner_alert(message))
     background_tasks.add(task)
     task.add_done_callback(background_tasks.discard)
+
+
+async def report_dsc_stats() -> bool:
+    """Publish the current server count to dsc.sh without blocking bot work."""
+    if not DSC_API_TOKEN or client.user is None:
+        return False
+    try:
+        timeout = ClientTimeout(total=10)
+        async with ClientSession(timeout=timeout) as session:
+            async with session.post(
+                f"https://dsc.sh/api/bots/{client.user.id}/stats",
+                headers={
+                    "Authorization": DSC_API_TOKEN,
+                    "Content-Type": "application/json",
+                    "User-Agent": (
+                        "ProfessorCompressor/1.0 "
+                        "(+https://github.com/Anthony-Rama/discord-bot)"
+                    ),
+                },
+                json={"server_count": len(client.guilds)},
+            ) as response:
+                response.raise_for_status()
+        print(f"Published dsc.sh server count: {len(client.guilds)}")
+        return True
+    except Exception as error:
+        print(f"dsc.sh statistics update failed: {type(error).__name__}")
+        return False
+
+
+def schedule_dsc_stats_update() -> None:
+    """Schedule a best-effort dsc.sh update after a server-count change."""
+    if not DSC_API_TOKEN:
+        return
+    task = asyncio.create_task(report_dsc_stats())
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+
+
+async def dsc_stats_loop() -> None:
+    """Refresh dsc.sh periodically so the public listing stays current."""
+    while not client.is_closed():
+        await report_dsc_stats()
+        await asyncio.sleep(DSC_STATS_INTERVAL_SECONDS)
 
 
 def guild_alert_message(
@@ -990,16 +1039,18 @@ async def start_upload_server() -> None:
 @client.event
 async def on_guild_join(guild: discord.Guild) -> None:
     schedule_owner_alert(guild_alert_message("🟢 **Professor Compressor installed**", guild))
+    schedule_dsc_stats_update()
 
 
 @client.event
 async def on_guild_remove(guild: discord.Guild) -> None:
     schedule_owner_alert(guild_alert_message("🔴 **Professor Compressor removed**", guild))
+    schedule_dsc_stats_update()
 
 
 @client.event
 async def on_ready() -> None:
-    global commands_synced
+    global commands_synced, dsc_stats_task
     if not commands_synced:
         synced_commands = await tree.sync()
         print(
@@ -1028,6 +1079,10 @@ async def on_ready() -> None:
             print("Commands are available in all Discord servers.")
         commands_synced = True
     await start_upload_server()
+    if DSC_API_TOKEN and (dsc_stats_task is None or dsc_stats_task.done()):
+        dsc_stats_task = asyncio.create_task(dsc_stats_loop())
+        background_tasks.add(dsc_stats_task)
+        dsc_stats_task.add_done_callback(background_tasks.discard)
     print(f"Logged in as {client.user} in {len(client.guilds)} server(s)")
 
 

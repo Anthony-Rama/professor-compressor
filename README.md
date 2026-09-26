@@ -151,6 +151,8 @@ available at `https://your-domain.example/privacy` and
 | --- | --- | --- |
 | `DISCORD_TOKEN` | Required | Secret token from the Discord Developer Portal |
 | `ALERT_WEBHOOK_URL` | Empty | Optional private Discord webhook for install, removal, and `/compress` usage alerts |
+| `DSC_API_TOKEN` | Empty | Optional secret token used to publish the current server count to dsc.sh |
+| `DSC_STATS_INTERVAL_MINUTES` | `60` | Minutes between dsc.sh server-count updates; values below 30 are raised to 30 |
 | `BOTSTATS_GUILD_ID` | Empty | Optional private server where the owner-only `/botstats` command is registered |
 | `DOMAIN` | `compressor.example.com` | Public DNS name used by Caddy |
 | `WEB_HOST` | `127.0.0.1` | Address used by the Python web service |
@@ -180,6 +182,11 @@ and accepted `/compress` sessions. They include the server name and ID, member
 count for installation events, and aggregate process-lifetime counts. They do
 not include usernames, channel names, filenames, IP addresses, or file content.
 The webhook URL is a secret and must never be committed.
+
+To keep the public dsc.sh listing current, set `DSC_API_TOKEN` to the private
+token from the dsc.sh developer dashboard. The bot reports its server count at
+startup, every hour by default, and after server joins or removals. The token is
+a secret and must never be committed.
 
 ## Privacy and security
 
