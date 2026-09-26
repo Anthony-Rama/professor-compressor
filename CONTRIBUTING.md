@@ -5,7 +5,7 @@ Thanks for improving Professor Compressor.
 ## Development workflow
 
 1. Create a focused branch from `main`.
-2. Copy `.env.example` to `.env` and use a development Discord application.
+2. Create a private `.env` using the README setup instructions and a separate development Discord application.
 3. Install Python and browser dependencies.
 4. Add or update tests for behavior changes.
 5. Run the complete local quality suite before opening a pull request.
@@ -19,8 +19,12 @@ python -m pip_audit --requirement requirements.txt
 python -m unittest discover -s tests -v
 python -m compileall -q bot.py professor_compressor tests
 npm audit --omit=dev
+npx playwright install chromium
+npm run test:browser
 docker build --tag professor-compressor:local .
 ```
+
+Browser tests also require `ffmpeg` on PATH and simulate Discord delivery.
 
 Keep pull requests small enough to review. Explain the user-visible behavior,
 the security or privacy impact, and how the change was verified.

@@ -102,10 +102,17 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
 npm ci
-cp .env.example .env
 ```
 
-Set `DISCORD_TOKEN` in `.env`, then start the bot:
+Create a private `.env` file in the project root using your editor:
+
+```dotenv
+DISCORD_TOKEN=your_development_bot_token
+```
+
+Use a separate development Discord application, not the token of a running
+production bot. The `.env` file is excluded from Git and Docker build context.
+Then start the bot:
 
 ```bash
 python -m professor_compressor
@@ -128,7 +135,7 @@ The included Compose configuration runs the bot behind Caddy with automatic HTTP
 1. Point a domain's DNS record to your server.
 2. Allow inbound TCP traffic on ports 80 and 443.
 3. Install Docker Engine and Docker Compose.
-4. Copy `.env.example` to `.env` and configure at least `DISCORD_TOKEN` and `DOMAIN`.
+4. Create a private `.env` file with `DISCORD_TOKEN=your_bot_token` and `DOMAIN=your-domain.example`, each on its own line. Replace both placeholders with your deployment values.
 5. Start the services.
 
 ```bash
@@ -155,7 +162,7 @@ available at `https://your-domain.example/privacy` and
 | `DSC_API_TOKEN` | Empty | Optional secret token used to publish the current server count to dsc.sh |
 | `DSC_STATS_INTERVAL_MINUTES` | `60` | Minutes between dsc.sh server-count updates; values below 30 are raised to 30 |
 | `BOTSTATS_GUILD_ID` | Empty | Optional private server where the owner-only `/botstats` command is registered |
-| `DOMAIN` | `compressor.example.com` | Public DNS name used by Caddy |
+| `DOMAIN` | Required for Compose | Public DNS name used by Caddy |
 | `WEB_HOST` | `127.0.0.1` | Address used by the Python web service |
 | `WEB_PORT` | `8080` | Port used by the Python web service |
 | `PUBLIC_BASE_URL` | `http://127.0.0.1:8080` | Base URL placed in private upload links |
