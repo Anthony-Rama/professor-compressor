@@ -111,7 +111,7 @@ cd discord-bot
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 
 npm ci
 ```
@@ -235,6 +235,7 @@ build.
 Run the same core checks locally:
 
 ```bash
+python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 python -m ruff check .
 python -m ruff format --check .
@@ -295,9 +296,23 @@ docs/                 Architecture and engineering documentation
 bot.py                Compatibility entry point
 compose.yaml          Production service definition
 Caddyfile             HTTPS reverse proxy configuration
-Dockerfile            Reproducible non-root production image
+Dockerfile            Non-root production image
 ```
 
 ## License
 
-No license has been granted yet. The source is public for inspection and personal evaluation. Add an explicit license before accepting outside contributions or redistributing modified versions.
+Copyright (c) 2026 Anthony Rama. All rights reserved in the original project
+code and documentation. This repository is published for viewing and review;
+no license to reuse, modify, distribute, or commercially exploit the original
+code is granted. Contact [Anthony Rama](mailto:anthonyhrama@gmail.com) for
+permission. This notice does not limit rights granted by applicable law or
+GitHub's terms, and does not apply to third-party components.
+
+This is not an open-source license. Setup and development instructions document
+the maintainer's workflow; they do not grant additional rights. Outside code
+contributions are not currently accepted.
+
+Third-party components retain their own licenses. In particular, FFmpeg's
+WebAssembly cores are GPL-licensed, not covered by this project's reserved-rights
+notice. See [Third-party notices](THIRD_PARTY_NOTICES.md) for package versions,
+upstream sources, and redistribution requirements.

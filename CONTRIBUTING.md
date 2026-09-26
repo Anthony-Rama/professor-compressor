@@ -1,8 +1,12 @@
 # Contributing
 
-Thanks for improving Professor Compressor.
+Bug reports and feature suggestions are welcome. Please read the README's
+license section first: this project does not currently grant a reuse license
+for its original code. Outside code contributions are not being accepted until
+contribution and licensing terms are established. Contact the maintainer before
+preparing a code contribution.
 
-## Development workflow
+## Maintainer development workflow
 
 1. Create a focused branch from `main`.
 2. Create a private `.env` using the README setup instructions and a separate development Discord application.
@@ -39,5 +43,5 @@ the security or privacy impact, and how the change was verified.
 - Pin production dependencies and explain new third-party services.
 - Treat filenames, HTTP headers, Discord names, and uploaded bytes as untrusted.
 
-Security reports belong in GitHub's private vulnerability-reporting form, not
-in public issues. See [SECURITY.md](SECURITY.md).
+Security reports must be sent privately, not in public issues. See
+[SECURITY.md](SECURITY.md) for the email address and reporting instructions.

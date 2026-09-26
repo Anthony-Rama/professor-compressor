@@ -116,6 +116,16 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200)
                 self.assertEqual(response.content_type, content_type)
 
+    async def test_third_party_notices_are_publicly_available(self) -> None:
+        for path, expected_text in (
+            ("/brand/third-party-notices.txt", "Copyright (c) 2019 Jerome Wu"),
+            ("/brand/COPYING.GPLv2", "GNU GENERAL PUBLIC LICENSE"),
+        ):
+            with self.subTest(path=path):
+                response = await self.client.get(path)
+                self.assertEqual(response.status, 200)
+                self.assertIn(expected_text, await response.text())
+
     async def test_rejected_uploads_release_resources_and_allow_retry(self) -> None:
         import professor_compressor.application as app
 
