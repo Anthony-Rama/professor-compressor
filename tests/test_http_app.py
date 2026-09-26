@@ -69,6 +69,9 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('rel="canonical"', home_html)
         self.assertIn('type="application/ld+json"', home_html)
         self.assertIn("Add to Discord", home_html)
+        self.assertIn("Written instructions", home_html)
+        self.assertIn("Read how it works", home_html)
+        self.assertNotIn("Video guide", home_html)
         self.assertIn("may be sent unchanged", home_html)
 
         guide = await self.client.get("/guide/compress-video-for-discord")

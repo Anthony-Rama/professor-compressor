@@ -120,7 +120,7 @@ def _document(base_url: str, title: str, description: str, body: str, path: str)
     <a class="wordmark" href="/"><img src="/brand/professor-compressor.png"
       alt="" width="44" height="44">Professor Compressor</a>
     <nav aria-label="Main navigation">
-      <a href="{GUIDE_PATH}">Video guide</a>
+      <a href="{GUIDE_PATH}">Written instructions</a>
       <a href="{PROJECT_URL}">GitHub</a>
       <a href="{TOP_GG_URL}">Top.gg</a>
     </nav>
@@ -153,7 +153,7 @@ def home_html(base_url: str) -> str:
         drag in up to 10 videos, and receive MP4 files in the same channel.</p>
       <div class="actions">
         <a class="button primary" href="{invite_url}">Add to Discord</a>
-        <a class="button secondary" href="{GUIDE_PATH}">See how it works</a>
+        <a class="button secondary" href="{GUIDE_PATH}">Read how it works</a>
       </div>
     </div>
     <img class="mascot" src="/brand/professor-compressor.png"
