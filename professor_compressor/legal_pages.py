@@ -60,8 +60,8 @@ def privacy_policy_html() -> str:
         "Privacy Policy",
         """
     <p class="notice"><strong>Summary:</strong> Professor Compressor processes
-      original videos locally in your browser. Only finished compressed files
-      pass through the hosted relay for delivery to Discord, and the relay does
+      videos locally in your browser. Finished files, including fitting MP4s
+      sent without recompression, pass through the relay to Discord. The relay does
       not write those files to disk.</p>
 
     <h2>1. Scope</h2>

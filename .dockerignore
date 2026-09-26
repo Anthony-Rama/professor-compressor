@@ -12,3 +12,11 @@ npm-debug.log
 .pytest_cache
 .coverage
 private-assets
+.secrets
+*.key
+*.pem
+*.p12
+id_rsa
+id_ed25519
+test-results
+playwright-report

@@ -43,6 +43,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("Compressing on this device", self.page)
         self.assertIn("Sending to Discord", self.page)
         self.assertIn("Only finished files are sent", self.page)
+        self.assertIn("MP4s that already fit may be sent unchanged", self.page)
         self.assertIn('href="/privacy"', self.page)
         self.assertIn('href="/terms"', self.page)
 

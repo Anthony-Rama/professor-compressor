@@ -18,7 +18,7 @@ server list and process-lifetime usage totals. The command is not registered in
 other servers, defaults to administrators only, and still verifies the caller.
 
 - Compression happens in the browser with FFmpeg WebAssembly.
-- Original videos stay on the user's device.
+- Videos needing compression are encoded locally; fitting MP4s may be sent unchanged.
 - Compressed results are held briefly in server memory and relayed to Discord.
 - Files are never written to disk by Professor Compressor.
 - HTTPS is handled automatically by Caddy in the included Docker setup.
@@ -169,7 +169,7 @@ available at `https://your-domain.example/privacy` and
 | `MAX_CONCURRENT_UPLOADS` | `2` | Result uploads accepted by the relay simultaneously |
 | `DELIVERY_QUEUE_SIZE` | `8` | Maximum completed batches waiting for Discord |
 | `DELIVERY_WORKERS` | `2` | Concurrent Discord delivery workers |
-| `MAX_DELIVERY_BUFFER_MIB` | `400` | Maximum queued and delivering result bytes in memory |
+| `MAX_DELIVERY_BUFFER_MIB` | `400` | Maximum receiving, queued, and delivering result bytes in memory |
 
 When `ALLOWED_GUILD_IDS` is empty, commands are available in every server that installs the bot. Set one or more server IDs to run a private instance:
 
@@ -222,8 +222,18 @@ python -m ruff format --check .
 python -m pip_audit --requirement requirements.txt
 python -m compileall -q bot.py professor_compressor tests
 npm ci
+npx playwright install chromium
+npm run test:browser
 docker build --tag professor-compressor:local .
 ```
+
+Browser tests require `ffmpeg` on PATH to generate test clips. They run a
+loopback-only relay with Discord delivery replaced by a capture stub; no bot
+token is required and no files are posted to Discord. Set `TEST_PYTHON` to your
+virtualenv Python and optionally `CHROME_EXECUTABLE` to a local Chrome executable.
+These tests exercise real WebAssembly compression, fallback, MOV conversion,
+batching, cancellation, retry, and narrow-screen layout. A live `/compress`
+smoke test is still required to verify deployed Discord permissions and delivery.
 
 This design does not provide end-to-end encryption. The operator of a modified deployment and Discord can access the finished files. Review the code and host your own instance if that trust boundary does not meet your needs.
 

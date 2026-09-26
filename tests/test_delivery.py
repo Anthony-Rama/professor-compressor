@@ -1,3 +1,4 @@
+import asyncio
 import os
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -14,6 +15,47 @@ from professor_compressor.application import (
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_releases_memory_after_success_and_failure(self) -> None:
+        from professor_compressor import application as app
+        from professor_compressor.domain import DeliveryRequest, JobState
+
+        for failure in (None, RuntimeError("Discord unavailable")):
+            job = UploadJob(
+                token="worker-test",
+                user_id=1,
+                channel_id=2,
+                expires_at=9999999999,
+                discord_limit=1000,
+                interaction=Mock(),
+            )
+            queue = asyncio.Queue(1)
+            completed = asyncio.get_running_loop().create_future()
+            queue.put_nowait(
+                DeliveryRequest(job, [BrowserResult("clip.mp4", b"video")], completed)
+            )
+            with (
+                patch.object(app, "delivery_queue", queue),
+                patch.object(app, "delivery_bytes_held", 5),
+                patch.object(app, "schedule_owner_alert"),
+                patch.object(
+                    app,
+                    "deliver_browser_results",
+                    AsyncMock(return_value="sent", side_effect=failure),
+                ),
+            ):
+                worker = asyncio.create_task(app.delivery_worker(1))
+                try:
+                    await asyncio.wait_for(queue.join(), 2)
+                    self.assertEqual(app.delivery_bytes_held, 0)
+                    self.assertIs(job.state, JobState.DONE)
+                    if failure:
+                        self.assertIs(completed.exception(), failure)
+                    else:
+                        self.assertEqual(completed.result(), "sent")
+                finally:
+                    worker.cancel()
+                    await asyncio.gather(worker, return_exceptions=True)
+
     def test_compression_target_keeps_small_delivery_reserve(self) -> None:
         self.assertEqual(compression_target(20_000_000), 19_600_000)
 

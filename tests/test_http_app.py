@@ -23,6 +23,12 @@ def valid_test_mp4() -> bytes:
 
 class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
+        import professor_compressor.application as application
+
+        for name in ("delivery_bytes_held", "active_relay_uploads"):
+            patcher = patch.object(application, name, 0)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.client = TestClient(TestServer(create_web_application()))
         await self.client.start_server()
 
@@ -109,6 +115,62 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.head(path)
                 self.assertEqual(response.status, 200)
                 self.assertEqual(response.content_type, content_type)
+
+    async def test_rejected_uploads_release_resources_and_allow_retry(self) -> None:
+        import professor_compressor.application as app
+
+        job = UploadJob(
+            token="limits",
+            user_id=1,
+            channel_id=2,
+            expires_at=9999999999,
+            discord_limit=1000,
+            interaction=Mock(),
+            state=JobState.CLAIMED,
+            claim_secret="secret",
+        )
+        jobs[job.token] = job
+        for limit, data, expected in (
+            (1, valid_test_mp4(), 503),
+            (10000, b"invalid", 400),
+        ):
+            form = FormData()
+            form.add_field("clips", data, filename="clip.mp4")
+            with (
+                patch.object(app, "delivery_queue", asyncio.Queue(1)),
+                patch.object(app, "MAX_DELIVERY_BUFFER_BYTES", limit),
+            ):
+                response = await self.client.post(
+                    "/upload/limits", data=form, headers={"X-Upload-Session": "secret"}
+                )
+            self.assertEqual(response.status, expected)
+            self.assertEqual(app.delivery_bytes_held, 0)
+            self.assertEqual(app.active_relay_uploads, 0)
+            self.assertIs(job.state, JobState.CLAIMED)
+
+    async def test_malformed_secret_and_failure_reports(self) -> None:
+        job = UploadJob(
+            token="reports",
+            user_id=1,
+            channel_id=2,
+            expires_at=9999999999,
+            discord_limit=1000,
+            interaction=Mock(),
+            state=JobState.CLAIMED,
+            claim_secret="secret",
+        )
+        jobs[job.token] = job
+        response = await self.client.post(
+            "/upload/reports", headers={"X-Upload-Session": "é"}
+        )
+        self.assertEqual(response.status, 403)
+        for payload, expected in (([], 400), ({"stage": "x" * 5000}, 413)):
+            response = await self.client.post(
+                "/upload/reports/failure",
+                json=payload,
+                headers={"X-Upload-Session": "secret"},
+            )
+            self.assertEqual(response.status, expected)
 
 
 if __name__ == "__main__":

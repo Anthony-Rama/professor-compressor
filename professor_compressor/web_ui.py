@@ -75,8 +75,9 @@ def browser_compressor(
     </div>
     <div id="message" class="message" hidden aria-live="assertive"></div>
   </div>
-  <p class="privacy"><span aria-hidden="true">🔒</span> Originals are compressed on
-    this device. Only finished files are sent through the relay to Discord.<br>
+  <p class="privacy"><span aria-hidden="true">🔒</span> Compression runs on
+    this device. Only finished files are sent through the relay to Discord.
+    MP4s that already fit may be sent unchanged.<br>
     <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
     <span aria-hidden="true"> · </span>
     <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></p>
@@ -129,6 +130,7 @@ let cancelled = false;
 let running = false;
 let tabProgress = "Preparing files";
 let runStage = "Browser compression";
+let runAbort = null;
 
 function readableSize(bytes) {
   if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
@@ -339,10 +341,16 @@ async function loadEncoder() {
     }
   }
   ffmpeg = createEncoder();
-  await ffmpeg.load({
-    coreURL: await toBlobURL(SINGLE_CORE_BASE + "/ffmpeg-core.js", "text/javascript"),
-    wasmURL: await toBlobURL(SINGLE_CORE_BASE + "/ffmpeg-core.wasm", "application/wasm")
-  });
+  try {
+    await ffmpeg.load({
+      coreURL: await toBlobURL(SINGLE_CORE_BASE + "/ffmpeg-core.js", "text/javascript"),
+      wasmURL: await toBlobURL(SINGLE_CORE_BASE + "/ffmpeg-core.wasm", "application/wasm")
+    });
+  } catch (error) {
+    if (ffmpeg) ffmpeg.terminate();
+    ffmpeg = null;
+    throw error;
+  }
   if (cancelled) throw new DOMException("Cancelled", "AbortError");
   return "single-threaded";
 }
@@ -360,11 +368,12 @@ async function videoSignature(file) {
     const boxLength = Math.min(bytes.length, new DataView(bytes.buffer).getUint32(0));
     const allowedBrands = new Set([
       "avc1", "dash", "iso2", "iso3", "iso4", "iso5", "iso6", "isom",
-      "M4V ", "mp41", "mp42", "MSNV", "qt  "
+      "M4V ", "mp41", "mp42", "MSNV"
     ]);
     for (let offset = 8; offset + 4 <= boxLength; offset += 4) {
       if (allowedBrands.has(ascii(offset, 4))) return "mp4";
     }
+    if (ascii(8, 4) === "qt  ") return "mov";
     throw new Error(file.name + " uses an unsupported media-container signature. " +
       "Choose a standard MP4, MOV, WebM, MKV, AVI, MPEG, OGG, FLV, or TS video.");
   }
@@ -384,17 +393,36 @@ function durationOf(file) {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     const url = URL.createObjectURL(file);
+    const signal = runAbort.signal;
+    let settled = false;
+    const finish = (error, duration) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+      video.onloadedmetadata = null;
+      video.onerror = null;
+      video.removeAttribute("src");
+      video.load();
+      URL.revokeObjectURL(url);
+      if (error) reject(error);
+      else resolve(duration);
+    };
+    const abort = () => finish(new DOMException("Cancelled", "AbortError"));
+    const timeout = setTimeout(() => finish(new Error(
+      "Reading video metadata timed out. Try another video."
+    )), 15000);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) { abort(); return; }
     video.preload = "metadata";
     video.onloadedmetadata = () => {
       const duration = video.duration;
-      URL.revokeObjectURL(url);
-      if (Number.isFinite(duration) && duration > 0) resolve(duration);
-      else reject(new Error("Could not determine the duration of " + file.name +
+      if (Number.isFinite(duration) && duration > 0) finish(null, duration);
+      else finish(new Error("Could not determine the duration of " + file.name +
         ". Try converting it to MP4 first."));
     };
     video.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Your browser could not read " + file.name +
+      finish(new Error("Your browser could not read " + file.name +
         ". Try converting it to MP4 first."));
     };
     video.src = url;
@@ -503,6 +531,7 @@ function xhrUpload(results) {
     uploadRequest = request;
     request.open("POST", window.location.href);
     request.responseType = "json";
+    request.timeout = 600000;
     request.setRequestHeader("X-Upload-Session", SESSION_SECRET);
     request.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) return;
@@ -541,6 +570,10 @@ function xhrUpload(results) {
       new Error("The network connection was interrupted."), { status: 0 }
     )));
     request.addEventListener("abort", () => reject(new DOMException("Cancelled", "AbortError")));
+    request.addEventListener("timeout", () => reject(Object.assign(
+      new Error("Sending timed out. Check the Discord channel before starting another session."),
+      { status: 504 }
+    )));
     request.send(data);
   });
 }
@@ -554,7 +587,7 @@ async function uploadWithRetry(results) {
     } catch (error) {
       uploadRequest = null;
       if (cancelled || error.name === "AbortError") throw error;
-      const retryable = error.status === 0 || error.status === 429 ||
+      const retryable = error.status === 0 || error.status === 408 || error.status === 429 ||
         error.status === 500 || error.status === 503;
       if (!retryable || attempt === 3) throw error;
       const waitSeconds = Number(error.retryAfter) || Math.pow(2, attempt);
@@ -627,6 +660,7 @@ function finishRun() {
 cancelButton.addEventListener("click", () => {
   if (!running) return;
   cancelled = true;
+  runAbort.abort();
   if (uploadRequest) uploadRequest.abort();
   if (ffmpeg) {
     ffmpeg.terminate();
@@ -638,20 +672,23 @@ cancelButton.addEventListener("click", () => {
   setPhase("compress", "Cancelled", "No additional files will be sent. You can start again on this page.");
   setRunDetail("Cancelled");
   showMessage("Cancelled. Your original videos were not changed.", "error");
-  finishRun();
+  cancelButton.disabled = true;
 });
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (running) return;
   if (selectedFiles.length < 1 || selectedFiles.length > MAX_CLIPS) {
     showMessage("Choose between 1 and " + MAX_CLIPS + " videos.");
     return;
   }
   cancelled = false;
+  runAbort = new AbortController();
   running = true;
   submit.disabled = true;
   clips.disabled = true;
   cancelButton.hidden = false;
+  cancelButton.disabled = false;
   work.hidden = false;
   hideMessage();
   startedAt = performance.now();
@@ -672,7 +709,7 @@ form.addEventListener("submit", async (event) => {
     const needsEncoder = selectedFiles.some((state, index) =>
       state.file.size > effectiveTargetBytes || formats[index] !== "mp4");
     setPhase("compress", "Compressing on your device",
-      "Originals remain on this device. Nothing is sent until every video is ready.");
+      "Compression runs locally. Nothing is sent until every video is ready.");
     if (needsEncoder && !ffmpeg) encoderMode = await loadEncoder();
     const results = [];
     for (const state of selectedFiles) {
@@ -681,6 +718,7 @@ form.addEventListener("submit", async (event) => {
     }
     currentState = null;
     overallProgress.value = 80;
+    cancelButton.hidden = true;
     runStage = "Relay upload or Discord delivery";
     setPhase("send", "Sending finished files",
       "Compression is complete. Finished MP4 files are now being sent through the relay to Discord.");
@@ -699,13 +737,17 @@ form.addEventListener("submit", async (event) => {
     renderDocumentTitle();
     stopClock();
   } catch (error) {
-    if (cancelled || error.name === "AbortError") return;
+    if (cancelled || error.name === "AbortError") { finishRun(); return; }
     console.error(error);
     void reportBrowserFailure(runStage);
     setPhase("compress", "Action needed", "The process stopped before delivery completed.");
     setRunDetail("Stopped");
     showMessage(friendlyError(error));
     finishRun();
+    if ([409, 410, 502, 504].includes(error.status)) {
+      submit.hidden = true;
+      clips.disabled = true;
+    }
   }
 });
 

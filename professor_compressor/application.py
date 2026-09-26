@@ -206,7 +206,7 @@ async def browser_security_headers(
         "img-src 'self' data:; "
         "media-src 'self' blob:; "
         "object-src 'none'; "
-        "script-src 'self' 'unsafe-inline' blob:; "
+        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; "
         "style-src 'self' 'unsafe-inline'; "
         "worker-src 'self' blob:"
     )
@@ -539,7 +539,7 @@ async def receive_results(request: web.Request) -> web.Response:
         )
     supplied_secret = request.headers.get("X-Upload-Session", "")
     if not job.claim_secret or not secrets.compare_digest(
-        supplied_secret, job.claim_secret
+        supplied_secret.encode(), job.claim_secret.encode()
     ):
         return json_error(
             "This browser is not authorized to use the upload session.",
@@ -592,11 +592,11 @@ async def receive_results(request: web.Request) -> web.Response:
             raise ValueError("The upload format was invalid. Please try again.")
         reader = await request.multipart()
         while True:
-            field = await reader.next()
+            field = await asyncio.wait_for(reader.next(), timeout=30)
             if field is None:
                 break
             if field.name != "clips" or not field.filename:
-                continue
+                raise ValueError("Only video file fields are accepted.")
             if len(results) >= MAX_CLIPS:
                 raise ValueError(f"You can send at most {MAX_CLIPS} results.")
 
@@ -605,9 +605,19 @@ async def receive_results(request: web.Request) -> web.Response:
                 raise ValueError(f"{name} is not an MP4 result.")
 
             file_data = bytearray()
-            while chunk := await field.read_chunk(1024 * 1024):
-                file_data.extend(chunk)
+            while chunk := await asyncio.wait_for(
+                field.read_chunk(1024 * 1024), timeout=30
+            ):
+                if delivery_bytes_held + len(chunk) > MAX_DELIVERY_BUFFER_BYTES:
+                    return json_error(
+                        "The relay memory buffer is full. Try again shortly.",
+                        503,
+                        "delivery_buffer_full",
+                        retry_after=5,
+                    )
+                delivery_bytes_held += len(chunk)
                 total_size += len(chunk)
+                file_data.extend(chunk)
                 if len(file_data) > job.discord_limit:
                     raise ValueError(
                         f"{name} exceeds Discord's current file-size limit."
@@ -619,6 +629,7 @@ async def receive_results(request: web.Request) -> web.Response:
             if not file_data:
                 raise ValueError(f"{name} is empty.")
             result_bytes = bytes(file_data)
+            del file_data
             if not valid_mp4_signature(result_bytes):
                 raise ValueError(
                     f"{name} did not contain a complete MP4 video. "
@@ -628,15 +639,7 @@ async def receive_results(request: web.Request) -> web.Response:
 
         if not results:
             raise ValueError("No compressed MP4 results were received.")
-        if delivery_bytes_held + total_size > MAX_DELIVERY_BUFFER_BYTES:
-            job.state = JobState.CLAIMED
-            return json_error(
-                "The in-memory delivery buffer is full. It will retry automatically.",
-                503,
-                "delivery_buffer_full",
-                retry_after=5,
-            )
-
+        result_count = len(results)
         loop = asyncio.get_running_loop()
         completion: asyncio.Future[str] = loop.create_future()
         delivery = DeliveryRequest(job=job, results=results, completed=completion)
@@ -650,7 +653,6 @@ async def receive_results(request: web.Request) -> web.Response:
                 "queue_full",
                 retry_after=5,
             )
-        delivery_bytes_held += total_size
         metrics.increment("batches_queued")
         metrics.increment("files_queued", len(results))
         metrics.increment("bytes_queued", total_size)
@@ -675,9 +677,13 @@ async def receive_results(request: web.Request) -> web.Response:
             {
                 "ok": True,
                 "message": message,
-                "count": len(results),
+                "count": result_count,
             },
             headers={"Cache-Control": "no-store"},
+        )
+    except TimeoutError:
+        return json_error(
+            "The upload stalled. Please try again.", 408, "upload_timeout"
         )
     except (ValueError, web.HTTPException) as error:
         job.state = JobState.CLAIMED
@@ -694,6 +700,8 @@ async def receive_results(request: web.Request) -> web.Response:
     finally:
         if upload_slot_held:
             active_relay_uploads -= 1
+            delivery_bytes_held = max(0, delivery_bytes_held - total_size)
+            job.state = JobState.CLAIMED
 
 
 async def receive_browser_failure(request: web.Request) -> web.Response:
@@ -704,7 +712,7 @@ async def receive_browser_failure(request: web.Request) -> web.Response:
         return json_error("This session is no longer active.", 410, "session_expired")
     supplied_secret = request.headers.get("X-Upload-Session", "")
     if not job.claim_secret or not secrets.compare_digest(
-        supplied_secret, job.claim_secret
+        supplied_secret.encode(), job.claim_secret.encode()
     ):
         return json_error(
             "This browser is not authorized to update the session.",
@@ -718,9 +726,13 @@ async def receive_browser_failure(request: web.Request) -> web.Response:
             "outcome_already_recorded",
         )
     try:
-        payload = await request.json()
+        payload = await request.clone(client_max_size=4096).json()
+    except web.HTTPRequestEntityTooLarge:
+        return json_error("Failure report is too large.", 413, "report_too_large")
     except (ValueError, TypeError):
         payload = {}
+    if not isinstance(payload, dict):
+        return json_error("Expected a JSON object.", 400, "invalid_failure_report")
     raw_stage = str(payload.get("stage", "Browser processing"))
     stage = "".join(
         character
@@ -811,7 +823,9 @@ async def delivery_worker(worker_number: int) -> None:
     while not client.is_closed():
         delivery = await delivery_queue.get()
         try:
-            message = await deliver_browser_results(delivery.job, delivery.results)
+            message = await asyncio.wait_for(
+                deliver_browser_results(delivery.job, delivery.results), timeout=120
+            )
             total_bytes = sum(len(result.data) for result in delivery.results)
             metrics.increment("deliveries_succeeded")
             metrics.increment("files_delivered", len(delivery.results))
@@ -849,6 +863,7 @@ async def delivery_worker(worker_number: int) -> None:
             jobs.pop(delivery.job.token, None)
             delivery_queue.task_done()
             logger.info("Delivery worker %d completed a session", worker_number)
+            del delivery
 
 
 @tree.command(
@@ -915,7 +930,8 @@ async def compress(interaction: discord.Interaction) -> None:
     view.add_item(discord.ui.Button(label="Open compressor", url=upload_url))
     await interaction.response.send_message(
         f"Choose up to {MAX_CLIPS} videos. Keep the compressor page open "
-        f"until they are sent back here. Your originals stay on your device. "
+        f"until they are sent back here. Compression runs locally; fitting MP4s "
+        f"may be sent unchanged. "
         f"The link expires in {JOB_TTL_SECONDS // 60} minutes.",
         view=view,
         ephemeral=True,
@@ -1015,7 +1031,8 @@ async def start_upload_server() -> None:
     if web_runner is not None:
         return
     application = create_web_application()
-    web_runner = web.AppRunner(application)
+    # Upload URLs contain one-use credentials; keep them out of access logs.
+    web_runner = web.AppRunner(application, access_log=None)
     try:
         await web_runner.setup()
         site = web.TCPSite(web_runner, WEB_HOST, WEB_PORT)

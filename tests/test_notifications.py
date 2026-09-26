@@ -88,6 +88,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         request.match_info = {"token": job.token}
         request.headers = {"X-Upload-Session": "claim-secret"}
         request.json = AsyncMock(return_value={"stage": "Browser compression<script>"})
+        request.clone.return_value = request
         try:
             with patch(
                 "professor_compressor.application.schedule_owner_alert"
@@ -122,6 +123,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         request.match_info = {"token": job.token}
         request.headers = {"X-Upload-Session": "claim-secret"}
         request.json = AsyncMock(return_value={"stage": "Browser compression"})
+        request.clone.return_value = request
         try:
             with patch(
                 "professor_compressor.application.schedule_owner_alert"

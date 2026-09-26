@@ -55,6 +55,15 @@ jobs:
       - name: Audit browser dependencies
         run: npm audit --omit=dev
 
+      - name: Install browser test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          npx playwright install --with-deps chromium
+
+      - name: Test browser compression and recovery
+        run: npm run test:browser
+
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -64,3 +73,19 @@ jobs:
 
       - name: Build production image
         run: docker build --tag professor-compressor:ci .
+
+      - name: Smoke-test packaged HTTP server
+        run: |
+          docker run --detach --name compressor-smoke --publish 127.0.0.1:18765:8080 \
+            --entrypoint python professor-compressor:ci -c \
+            'from aiohttp import web; from professor_compressor.application import create_web_application; web.run_app(create_web_application(), host="0.0.0.0", port=8080, access_log=None)'
+          curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:18765/healthz
+          for path in privacy terms brand/professor-compressor.png assets/core-esm/ffmpeg-core.wasm assets/core-mt-esm/ffmpeg-core.wasm; do
+            curl --fail --silent --show-error --head "http://127.0.0.1:18765/$path"
+          done
+
+      - name: Container diagnostics and cleanup
+        if: always()
+        run: |
+          docker logs compressor-smoke || true
+          docker rm --force compressor-smoke || true
