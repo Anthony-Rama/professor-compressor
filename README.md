@@ -1,10 +1,17 @@
-# Professor Compressor
+<p align="center">
+  <img src="professor_compressor/static/professor-compressor.png" alt="Professor Compressor mascot" width="140">
+</p>
 
-Professor Compressor is a Discord bot that helps people share videos that exceed a server's upload limit. A member runs `/compress`, opens a private browser link, and selects or drops up to 10 videos. The browser prepares MP4 files that fit the limit Discord reports for that server; the bot sends the results back to the original channel.
+<h1 align="center">Professor Compressor</h1>
 
-**[Add the bot to a Discord server](https://discord.com/oauth2/authorize?client_id=1550752400271351839&permissions=277025426432&integration_type=0&scope=bot+applications.commands)** · [Architecture](docs/architecture.md)
+<p align="center">Browser-based video compression with automatic delivery to Discord.</p>
 
-<img src="professor_compressor/static/professor-compressor.png" alt="Professor Compressor mascot" width="140">
+<p align="center">
+  <a href="https://discord.com/oauth2/authorize?client_id=1550752400271351839&amp;permissions=277025426432&amp;integration_type=0&amp;scope=bot+applications.commands">Add to Discord</a>
+  · <a href="docs/architecture.md">Architecture</a>
+</p>
+
+Professor Compressor helps people share videos that exceed a server's upload limit. A member runs `/compress`, opens a private browser link, and selects or drops up to 10 videos. The browser prepares MP4 files that fit the limit Discord reports for that server; the bot sends the results back to the original channel.
 
 ## How it works
 
