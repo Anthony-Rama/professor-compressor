@@ -1,4 +1,6 @@
 import asyncio
+import json
+import re
 import unittest
 from unittest.mock import Mock, patch
 from xml.etree import ElementTree
@@ -6,7 +8,12 @@ from xml.etree import ElementTree
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor.application import create_web_application, jobs, request_times
+from professor_compressor.application import (
+    PUBLIC_BASE_URL,
+    create_web_application,
+    jobs,
+    request_times,
+)
 from professor_compressor.domain import JobState, UploadJob
 
 
@@ -76,6 +83,16 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('rel="canonical"', home_html)
         self.assertIn('type="application/ld+json"', home_html)
+        home_schema = json.loads(
+            re.search(
+                r'<script type="application/ld\+json">(.*?)</script>', home_html
+            ).group(1)
+        )
+        self.assertEqual(home_schema["@graph"][0]["@type"], "WebSite")
+        self.assertEqual(
+            home_schema["@graph"][0]["url"],
+            f"{PUBLIC_BASE_URL}/",
+        )
         self.assertIn("Add to Discord", home_html)
         self.assertIn("Written Guide", home_html)
         self.assertIn("Read how it works", home_html)
@@ -92,6 +109,8 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("X-Robots-Tag", guide.headers)
         guide_html = await guide.text()
         self.assertIn("How to compress a video", guide_html)
+        self.assertIn("When something does not work", guide_html)
+        self.assertIn("The private link says it expired", guide_html)
         self.assertIn(
             "<title>Professor Compressor | How to Compress Videos for Discord</title>",
             guide_html,
