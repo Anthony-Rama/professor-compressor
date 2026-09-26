@@ -222,12 +222,17 @@ async def browser_security_headers(
 
 
 def page(title: str, body: str) -> web.Response:
+    page_title = (
+        title if title == "Professor Compressor" else f"Professor Compressor | {title}"
+    )
     document = f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{html.escape(title)}</title>
+  <title>{html.escape(page_title)}</title>
+  <link rel="icon" type="image/png" href="/brand/professor-compressor.png">
+  <link rel="apple-touch-icon" href="/brand/professor-compressor.png">
   <style>
     :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui,
              -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}

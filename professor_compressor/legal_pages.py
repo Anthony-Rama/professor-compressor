@@ -13,7 +13,9 @@ def _document(title: str, content: str) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="{escape(title)} for Professor Compressor">
-  <title>{escape(title)} | Professor Compressor</title>
+  <title>Professor Compressor | {escape(title)}</title>
+  <link rel="icon" type="image/png" href="/brand/professor-compressor.png">
+  <link rel="apple-touch-icon" href="/brand/professor-compressor.png">
   <style>
     :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui,
              -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}

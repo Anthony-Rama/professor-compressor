@@ -66,7 +66,14 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         home_html = await home.text()
         self.assertEqual(home.status, 200)
         self.assertNotIn("X-Robots-Tag", home.headers)
-        self.assertIn("Discord Video Compressor Bot", home_html)
+        self.assertIn(
+            "<title>Professor Compressor | Discord Video Compressor Bot</title>",
+            home_html,
+        )
+        self.assertIn(
+            '<link rel="icon" type="image/png" href="/brand/professor-compressor.png">',
+            home_html,
+        )
         self.assertIn('rel="canonical"', home_html)
         self.assertIn('type="application/ld+json"', home_html)
         self.assertIn("Add to Discord", home_html)
@@ -83,7 +90,23 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         guide = await self.client.get("/guide/compress-video-for-discord")
         self.assertEqual(guide.status, 200)
         self.assertNotIn("X-Robots-Tag", guide.headers)
-        self.assertIn("How to compress a video", await guide.text())
+        guide_html = await guide.text()
+        self.assertIn("How to compress a video", guide_html)
+        self.assertIn(
+            "<title>Professor Compressor | How to Compress Videos for Discord</title>",
+            guide_html,
+        )
+
+        for path, title in (
+            ("/privacy", "Professor Compressor | Privacy Policy"),
+            ("/terms", "Professor Compressor | Terms of Service"),
+            ("/upload/not-a-real-token", "Professor Compressor | Link expired"),
+        ):
+            with self.subTest(path=path):
+                response = await self.client.get(path)
+                document = await response.text()
+                self.assertIn(f"<title>{title}</title>", document)
+                self.assertIn('rel="icon" type="image/png"', document)
 
         robots = await self.client.get("/robots.txt")
         self.assertIn("Sitemap:", await robots.text())

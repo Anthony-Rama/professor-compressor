@@ -40,6 +40,8 @@ def _document(base_url: str, title: str, description: str, body: str, path: str)
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape(title)}</title>
+  <link rel="icon" type="image/png" href="/brand/professor-compressor.png">
+  <link rel="apple-touch-icon" href="/brand/professor-compressor.png">
   <meta name="description" content="{escape(description, quote=True)}">
   <link rel="canonical" href="{escape(canonical, quote=True)}">
   <meta property="og:type" content="website">
@@ -239,7 +241,7 @@ def home_html(base_url: str) -> str:
   </section>"""
     return _document(
         base_url,
-        "Discord Video Compressor Bot | Professor Compressor",
+        "Professor Compressor | Discord Video Compressor Bot",
         description,
         body,
         "/",
@@ -296,7 +298,7 @@ def guide_html(base_url: str) -> str:
   </article>"""
     return _document(
         base_url,
-        "How to Compress Videos for Discord | Professor Compressor",
+        "Professor Compressor | How to Compress Videos for Discord",
         description,
         body,
         GUIDE_PATH,
