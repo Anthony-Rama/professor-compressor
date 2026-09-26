@@ -7,7 +7,7 @@ import secrets
 import time
 from collections import deque
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -95,6 +95,9 @@ class UploadJob:
     state: str = "open"
     claim_secret: str | None = None
     claimed_at: float | None = None
+    guild_id: int | None = None
+    guild_name: str = "Unknown server"
+    created_at: float = field(default_factory=time.time)
 
 
 @dataclass(frozen=True)
@@ -226,6 +229,47 @@ def guild_alert_message(
         f"Members: `{member_count}`\n"
         f"Connected servers: `{connected_servers}`"
     )
+
+
+def interaction_guild_name(interaction: discord.Interaction) -> str:
+    """Return a usable guild name even when Discord sends partial guild data."""
+    guild = interaction.guild
+    if guild is None and interaction.guild_id is not None:
+        guild = client.get_guild(interaction.guild_id)
+    guild_name = getattr(guild, "name", "").strip()
+    return guild_name or "Unknown server"
+
+
+def compression_outcome_alert(
+    job: UploadJob,
+    *,
+    succeeded: bool,
+    file_count: int = 0,
+    total_bytes: int = 0,
+    stage: str | None = None,
+    elapsed_seconds: int | None = None,
+) -> str:
+    """Build a privacy-safe terminal outcome alert for a compression session."""
+    if elapsed_seconds is None:
+        started_at = job.claimed_at or job.created_at
+        elapsed_seconds = max(0, int(time.time() - started_at))
+    outcome = (
+        "✅ **Compression delivered successfully**"
+        if succeeded
+        else "❌ **Compression failed**"
+    )
+    lines = [
+        outcome,
+        f"Server: **{safe_alert_text(job.guild_name or 'Unknown server')}**",
+        f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
+        f"Files: `{file_count}`",
+    ]
+    if total_bytes:
+        lines.append(f"Finished size: `{total_bytes / MIB:.1f} MiB`")
+    if stage:
+        lines.append(f"Stage: `{safe_alert_text(stage, limit=60)}`")
+    lines.append(f"Elapsed: `{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}`")
+    return "\n".join(lines)
 
 
 def botstats_report(
@@ -770,6 +814,52 @@ async def receive_results(request: web.Request) -> web.Response:
             active_relay_uploads -= 1
 
 
+async def receive_browser_failure(request: web.Request) -> web.Response:
+    """Accept a privacy-safe terminal failure signal from the browser client."""
+    token = request.match_info["token"]
+    job = active_job(token)
+    if job is None:
+        return json_error("This session is no longer active.", 410, "session_expired")
+    supplied_secret = request.headers.get("X-Upload-Session", "")
+    if not job.claim_secret or not secrets.compare_digest(
+        supplied_secret, job.claim_secret
+    ):
+        return json_error(
+            "This browser is not authorized to update the session.",
+            403,
+            "session_invalid",
+        )
+    if job.state != "claimed":
+        return json_error(
+            "This session is still being processed or already reached delivery.",
+            409,
+            "outcome_already_recorded",
+        )
+    try:
+        payload = await request.json()
+    except (ValueError, TypeError):
+        payload = {}
+    raw_stage = str(payload.get("stage", "Browser processing"))
+    stage = "".join(
+        character
+        for character in raw_stage
+        if character.isalnum() or character in " ._-"
+    ).strip()[:60]
+    schedule_owner_alert(
+        compression_outcome_alert(
+            job,
+            succeeded=False,
+            stage=stage or "Browser processing",
+        )
+    )
+    job.state = "done"
+    jobs.pop(job.token, None)
+    return web.json_response(
+        {"ok": True},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 async def get_channel(job: UploadJob) -> discord.abc.Messageable | None:
     if job.interaction.channel is not None:
         return job.interaction.channel
@@ -842,16 +932,31 @@ async def delivery_worker(worker_number: int) -> None:
         delivery = await delivery_queue.get()
         try:
             message = await deliver_browser_results(delivery.job, delivery.results)
+            total_bytes = sum(len(result.data) for result in delivery.results)
             metrics.increment("deliveries_succeeded")
             metrics.increment("files_delivered", len(delivery.results))
-            metrics.increment(
-                "bytes_delivered",
-                sum(len(result.data) for result in delivery.results),
+            metrics.increment("bytes_delivered", total_bytes)
+            schedule_owner_alert(
+                compression_outcome_alert(
+                    delivery.job,
+                    succeeded=True,
+                    file_count=len(delivery.results),
+                    total_bytes=total_bytes,
+                )
             )
             if not delivery.completed.done():
                 delivery.completed.set_result(message)
         except Exception as error:
             metrics.increment("deliveries_failed")
+            schedule_owner_alert(
+                compression_outcome_alert(
+                    delivery.job,
+                    succeeded=False,
+                    file_count=len(delivery.results),
+                    total_bytes=sum(len(result.data) for result in delivery.results),
+                    stage="Discord delivery",
+                )
+            )
             if not delivery.completed.done():
                 delivery.completed.set_exception(error)
         finally:
@@ -924,6 +1029,8 @@ async def compress(interaction: discord.Interaction) -> None:
         expires_at=time.time() + JOB_TTL_SECONDS,
         discord_limit=interaction.filesize_limit,
         interaction=interaction,
+        guild_id=interaction.guild_id,
+        guild_name=interaction_guild_name(interaction),
     )
     metrics.increment("sessions_created")
     upload_url = f"{PUBLIC_BASE_URL}/upload/{quote(token)}"
@@ -936,7 +1043,7 @@ async def compress(interaction: discord.Interaction) -> None:
         view=view,
         ephemeral=True,
     )
-    guild_name = interaction.guild.name if interaction.guild else "Unknown server"
+    guild_name = interaction_guild_name(interaction)
     schedule_owner_alert(
         "⚙️ **Compression session created**\n"
         f"Server: **{safe_alert_text(guild_name)}**\n"
@@ -1002,6 +1109,10 @@ async def start_upload_server() -> None:
     application.router.add_get("/terms", terms_of_service)
     application.router.add_get("/upload/{token}", upload_form)
     application.router.add_post("/upload/{token}", receive_results)
+    application.router.add_post(
+        "/upload/{token}/failure",
+        receive_browser_failure,
+    )
     project_root = Path(__file__).resolve().parent
     application.router.add_static("/brand/", project_root / "static")
     application.router.add_static(

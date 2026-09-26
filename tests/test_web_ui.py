@@ -29,6 +29,13 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("Sending ", self.page)
         self.assertNotIn("Estimating time remaining", self.page)
 
+    def test_reports_terminal_browser_failures_privately(self) -> None:
+        self.assertIn('X-Upload-Session": SESSION_SECRET', self.page)
+        self.assertIn('"/failure"', self.page)
+        self.assertIn('runStage = "Browser compression"', self.page)
+        self.assertIn('runStage = "Relay upload or Discord delivery"', self.page)
+        self.assertIn("void reportBrowserFailure(runStage)", self.page)
+
     def test_targets_most_of_discords_safe_upload_size(self) -> None:
         self.assertIn("const OUTPUT_TARGET_RATIO = 0.97;", self.page)
         self.assertIn(

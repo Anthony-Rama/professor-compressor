@@ -5,9 +5,14 @@ from unittest.mock import AsyncMock, Mock, patch
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
 from app import (
+    UploadJob,
     botstats_report,
+    compression_outcome_alert,
     guild_alert_message,
+    interaction_guild_name,
+    jobs,
     on_guild_join,
+    receive_browser_failure,
     report_dsc_stats,
     safe_alert_text,
 )
@@ -29,6 +34,73 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`123`", message)
         self.assertIn("`42`", message)
         self.assertIn("Connected servers: `2`", message)
+
+    def test_partial_guild_uses_unknown_server_fallback(self) -> None:
+        interaction = Mock()
+        interaction.guild.name = ""
+        interaction.guild_id = 123
+
+        self.assertEqual(interaction_guild_name(interaction), "Unknown server")
+
+    def test_success_alert_contains_delivery_metrics_without_filenames(self) -> None:
+        job = UploadJob(
+            token="token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20_000_000,
+            interaction=Mock(),
+            guild_id=789,
+            guild_name="Test Server",
+        )
+
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=2,
+            total_bytes=5 * 1024 * 1024,
+            elapsed_seconds=65,
+        )
+
+        self.assertIn("delivered successfully", message)
+        self.assertIn("Test Server", message)
+        self.assertIn("Files: `2`", message)
+        self.assertIn("Finished size: `5.0 MiB`", message)
+        self.assertIn("Elapsed: `1:05`", message)
+        self.assertNotIn("clip.mp4", message)
+
+    async def test_browser_failure_is_authenticated_and_terminal(self) -> None:
+        job = UploadJob(
+            token="failure-token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20_000_000,
+            interaction=Mock(),
+            state="claimed",
+            claim_secret="claim-secret",
+            guild_id=789,
+            guild_name="Test Server",
+        )
+        jobs[job.token] = job
+        request = Mock()
+        request.match_info = {"token": job.token}
+        request.headers = {"X-Upload-Session": "claim-secret"}
+        request.json = AsyncMock(
+            return_value={"stage": "Browser compression<script>"}
+        )
+        try:
+            with patch("app.schedule_owner_alert") as schedule_alert:
+                response = await receive_browser_failure(request)
+        finally:
+            jobs.pop(job.token, None)
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(job.state, "done")
+        alert = schedule_alert.call_args.args[0]
+        self.assertIn("Compression failed", alert)
+        self.assertIn("Browser compressionscript", alert)
+        self.assertNotIn("<script>", alert)
 
     async def test_join_event_schedules_notification(self) -> None:
         guild = Mock(name="guild")

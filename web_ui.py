@@ -111,6 +111,7 @@ let wakeLock = null;
 let cancelled = false;
 let running = false;
 let tabProgress = "Preparing files";
+let runStage = "Browser compression";
 
 function readableSize(bytes) {
   if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
@@ -542,6 +543,24 @@ async function uploadWithRetry(results) {
   }
 }
 
+async function reportBrowserFailure(stage) {
+  try {
+    await fetch(window.location.pathname.replace(/\/$/, "") + "/failure", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Upload-Session": SESSION_SECRET
+      },
+      body: JSON.stringify({ stage }),
+      cache: "no-store",
+      credentials: "same-origin",
+      keepalive: true
+    });
+  } catch (reportError) {
+    console.debug("The failure notification could not reach the relay.", reportError);
+  }
+}
+
 function friendlyError(error) {
   if (error.code === "session_expired" || error.code === "session_used") {
     return "This private session expired or was already used. Return to Discord and run /compress again.";
@@ -611,6 +630,7 @@ form.addEventListener("submit", async (event) => {
   work.hidden = false;
   hideMessage();
   startedAt = performance.now();
+  runStage = "Browser compression";
   overallProgress.value = 0;
   backgroundWarning.hidden = true;
   setRunDetail("Checking files");
@@ -635,6 +655,7 @@ form.addEventListener("submit", async (event) => {
     }
     currentState = null;
     overallProgress.value = 80;
+    runStage = "Relay upload or Discord delivery";
     setPhase("send", "Sending finished files",
       "Compression is complete. Finished MP4 files are now being sent through the relay to Discord.");
     const response = await uploadWithRetry(results);
@@ -654,6 +675,7 @@ form.addEventListener("submit", async (event) => {
   } catch (error) {
     if (cancelled || error.name === "AbortError") return;
     console.error(error);
+    void reportBrowserFailure(runStage);
     setPhase("compress", "Action needed", "The process stopped before delivery completed.");
     setRunDetail("Stopped");
     showMessage(friendlyError(error));
