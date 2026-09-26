@@ -255,6 +255,7 @@ def page(title: str, body: str) -> web.Response:
     .performance-help summary {{ color: #dbe2ed; font-weight: 700; cursor: pointer; }}
     .performance-help p {{ margin: 10px 0 0; font-size: 13px; }}
     .performance-help code {{ color: #cbd2ff; overflow-wrap: anywhere; }}
+    .format-help {{ margin: 16px 0 0; }}
     .file-input {{ position: absolute; width: 1px; height: 1px; padding: 0;
                    margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
                    white-space: nowrap; border: 0; }}
