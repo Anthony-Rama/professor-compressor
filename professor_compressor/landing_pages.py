@@ -109,6 +109,8 @@ def _document(base_url: str, title: str, description: str, body: str, path: str)
     footer {{ border-top: 1px solid #29364f; padding: 32px 0 45px;
               font-size: 13px; }}
     .footer-links {{ display: flex; flex-wrap: wrap; gap: 18px; }}
+    .listing-links a {{ text-decoration: none;
+                        border-bottom: 1px solid currentColor; }}
     @media (max-width: 720px) {{
       .hero {{ grid-template-columns: 1fr; padding: 56px 0; gap: 42px; }}
       .mascot {{ width: 180px; justify-self: start; border-radius: 34px; }}
@@ -229,7 +231,7 @@ def home_html(base_url: str) -> str:
   <section id="listings" aria-labelledby="listings-title">
     <h2 id="listings-title">Find Professor Compressor</h2>
     <p>Professor Compressor is listed in these Discord bot directories:</p>
-    <div class="footer-links">
+    <div class="footer-links listing-links">
       <a href="{DSC_LISTING_URL}">dsc.sh</a>
       <a href="{DISCORD_BOT_LIST_URL}">Discord Bot List</a>
       <a href="{DISCORD_BOTS_URL}">discord.bots.gg</a>
