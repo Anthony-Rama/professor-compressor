@@ -262,6 +262,8 @@ def page(title: str, body: str) -> web.Response:
                     border: 1px dashed #59677d; border-radius: 14px;
                     background: #111a2a; cursor: pointer; transition: .18s ease; }}
     .file-picker:hover {{ border-color: #8991ff; background: #151f33; }}
+    .file-picker.drag-over {{ border-color: #a5b4fc; background: #26345b;
+      outline: 3px solid rgba(124, 131, 255, .35); }}
     .file-input:focus + .file-picker {{ outline: 3px solid rgba(124, 131, 255, .28);
                                        outline-offset: 2px; }}
     .picker-plus {{ width: 38px; height: 38px; display: grid; place-items: center;
