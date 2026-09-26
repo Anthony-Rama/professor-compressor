@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const { execFileSync } = require('node:child_process');
-const { mkdtempSync, rmSync } = require('node:fs');
+const { mkdtempSync, rmSync, readFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 
@@ -15,6 +15,24 @@ test.beforeAll(() => {
   generate('large.mp4', 0, 3);
   generate('small.mp4', 35, 0.5);
   generate('small.mov', 35, 0.5);
+  for (const [name, codec] of [
+    ['sample.mkv', 'libx264'], ['sample.avi', 'mpeg4'],
+    ['sample.webm', 'libvpx-vp9'], ['sample.wmv', 'wmv2'],
+    ['sample.m2ts', 'mpeg2video'], ['sample.3gp', 'mpeg4'],
+    ['sample.mpg', 'mpeg2video'], ['sample.ogv', 'libtheora'],
+    ['sample.flv', 'flv'], ['sample.ts', 'mpeg2video'],
+    ['hevc.mkv', 'libx265'], ['av1.mkv', 'libaom-av1'],
+  ]) execFileSync('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+    'testsrc2=size=320x240:rate=25', '-t', '0.4', '-c:v', codec,
+    ...(codec === 'libx265' ? ['-x265-params', 'log-level=error:pools=2'] : []),
+    ...(codec === 'libaom-av1' ? ['-cpu-used', '8'] : []),
+    join(fixtures, name),
+  ]);
+  execFileSync('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+    'sine=frequency=440', '-t', '0.4', '-c:a', 'libopus', join(fixtures, 'audio.webm'),
+  ]);
 });
 test.afterAll(() => rmSync(fixtures, { recursive: true, force: true }));
 
@@ -26,7 +44,11 @@ async function openSession(page, request) {
 async function deliver(page, files) {
   await page.locator('#clips').setInputFiles(files);
   await page.locator('#submit').click();
-  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord', { timeout: 60000 });
+  await expect.poll(async () => {
+    if (await page.locator('#message').isVisible()) return page.locator('#phase-title').textContent();
+    return 'Processing';
+  }, { timeout: 60000 }).toMatch(/Delivered to Discord|Action needed/);
+  expect(await page.locator('#phase-title').textContent(), await page.locator('#message').textContent()).toBe('Delivered to Discord');
 }
 
 test('oversized video loads WebAssembly and compresses under the real CSP', async ({ page, request }) => {
@@ -52,6 +74,105 @@ test('ten fitting MP4s deliver together without loading an encoder', async ({ pa
 test('small QuickTime MOV is converted to an actual MP4', async ({ page, request }) => {
   await openSession(page, request);
   await deliver(page, join(fixtures, 'small.mov'));
+});
+
+for (const name of ['sample.mkv', 'sample.avi', 'sample.webm', 'sample.wmv',
+  'sample.m2ts', 'sample.3gp', 'sample.mpg', 'sample.ogv', 'sample.flv', 'sample.ts',
+  'hevc.mkv']) {
+  test(`converts ${name} using encoder metadata rather than browser codecs`, async ({ page, request }) => {
+    await openSession(page, request);
+    await deliver(page, join(fixtures, name));
+  });
+}
+
+test('unsupported AV1 fails without uploading and allows a supported replacement', async ({ page, request }) => {
+  let uploads = 0;
+  page.on('request', req => {
+    if (req.method() === 'POST' && /\/upload\/[^/]+$/.test(new URL(req.url()).pathname)) uploads++;
+  });
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'av1.mkv'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#message')).toContainText('unsupported or damaged codec', {timeout:30000});
+  expect(uploads).toBe(0);
+  await deliver(page, join(fixtures, 'small.mp4'));
+});
+
+async function dropFiles(page, count) {
+  const transfer = await page.evaluateHandle(({ bytes, count }) => {
+    const dt = new DataTransfer();
+    for (let i = 0; i < count; i++) dt.items.add(new File([new Uint8Array(bytes)], `clip-${i}.mp4`, {type:'video/mp4'}));
+    return dt;
+  }, {bytes:Array.from(readFileSync(join(fixtures, 'small.mp4'))), count});
+  await page.locator('#drop-zone').dispatchEvent('drop', {dataTransfer:transfer});
+  await transfer.dispose();
+}
+
+test('dropped videos populate the input and deliver together', async ({ page, request }) => {
+  await openSession(page, request);
+  await dropFiles(page, 2);
+  await expect(page.locator('.file-card')).toHaveCount(2);
+  await page.locator('#submit').click();
+  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
+  await dropFiles(page, 1);
+  await expect(page.locator('.file-card')).toHaveCount(2);
+});
+
+test('too many dropped files preserves the existing selection', async ({ page, request }) => {
+  await openSession(page, request);
+  await dropFiles(page, 1);
+  await dropFiles(page, 11);
+  await expect(page.locator('#message')).toContainText('no more than 10');
+  await expect(page.locator('#message')).toBeVisible();
+  await expect(page.locator('.file-card')).toHaveCount(1);
+});
+
+test('audio-only and damaged containers fail clearly and allow another selection', async ({ page, request }) => {
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'audio.webm'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#message')).toContainText('No video stream', { timeout: 30000 });
+  await page.locator('#clips').setInputFiles({name:'broken.mkv', mimeType:'video/x-matroska',
+    buffer:Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0])});
+  await page.locator('#submit').click();
+  await expect(page.locator('#message')).toContainText('Could not determine video metadata', { timeout: 30000 });
+  await deliver(page, join(fixtures, 'small.mp4'));
+});
+
+test('drops cannot replace files while compression is running', async ({ page, request }) => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/assets/core-mt-esm/ffmpeg-core.js', async route => {
+    await gate;
+    await route.continue();
+  });
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#clips')).toBeDisabled();
+  await dropFiles(page, 2);
+  await expect(page.locator('.file-card')).toHaveCount(1);
+  await expect(page.locator('.file-name')).toHaveText('large.mp4');
+  release();
+  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord', { timeout: 60000 });
+});
+
+test('folder drops are rejected and outside drops do not navigate away', async ({ page, request }) => {
+  await openSession(page, request);
+  const url = page.url();
+  expect(await page.evaluate(() => {
+    const event = new Event('drop', {bubbles:true, cancelable:true});
+    Object.defineProperty(event, 'dataTransfer', {value:{items:[{
+      webkitGetAsEntry: () => ({isDirectory:true}),
+    }], files:[]}});
+    return document.getElementById('drop-zone').dispatchEvent(event);
+  })).toBe(false);
+  await expect(page.locator('#message')).toBeVisible();
+  await expect(page.locator('#message')).toContainText('not folders');
+  expect(await page.evaluate(() => document.body.dispatchEvent(
+    new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:new DataTransfer()})
+  ))).toBe(false);
+  expect(page.url()).toBe(url);
 });
 
 test('invalid input can be replaced and retried in the same session', async ({ page, request }) => {

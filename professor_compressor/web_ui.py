@@ -42,10 +42,10 @@ def browser_compressor(
 </details>
 <form id="upload">
   <input class="file-input" id="clips" name="clips" type="file"
-    accept="video/*,.mkv,.avi,.ts,.m2ts" multiple required>
-  <label class="file-picker" for="clips">
+    accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.mpeg,.mpg,.ogv,.ogg,.flv,.ts,.mts,.m2ts,.3gp,.3g2,.wmv,.asf" multiple required>
+  <label class="file-picker" id="drop-zone" for="clips">
     <span class="picker-plus" aria-hidden="true">+</span>
-    <span><strong>Choose videos</strong><small>Select up to __MAX_CLIPS__ files</small></span>
+    <span><strong>Choose videos or drag them here</strong><small>Select up to __MAX_CLIPS__ files; a new selection replaces the previous one</small></span>
   </label>
   <p id="selection" class="selection" aria-live="polite">No videos selected</p>
   <div class="session-note">
@@ -73,8 +73,15 @@ def browser_compressor(
         <span id="elapsed">Elapsed 0:00</span><span id="run-detail">Preparing files</span>
       </div>
     </div>
-    <div id="message" class="message" hidden aria-live="assertive"></div>
   </div>
+  <div id="message" class="message" hidden aria-live="assertive"></div>
+  <details class="performance-help">
+    <summary>Supported video formats</summary>
+    <p>MP4, MOV, M4V, WebM, MKV, AVI, MPEG, OGV, FLV, TS, MTS, M2TS,
+      3GP, 3G2, WMV, and ASF. Support also depends on the codec inside the file.
+      AV1 conversion is not supported by this encoder. Damaged, encrypted,
+      or unsupported videos cannot be converted.</p>
+  </details>
   <p class="privacy"><span aria-hidden="true">🔒</span> Compression runs on
     this device. Only finished files are sent through the relay to Discord.
     MP4s that already fit may be sent unchanged.<br>
@@ -130,7 +137,6 @@ let cancelled = false;
 let running = false;
 let tabProgress = "Preparing files";
 let runStage = "Browser compression";
-let runAbort = null;
 
 function readableSize(bytes) {
   if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
@@ -300,6 +306,53 @@ function renderSelection() {
 
 clips.addEventListener("change", renderSelection);
 
+const dropZone = document.getElementById("drop-zone");
+let dragDepth = 0;
+function clearDrag() {
+  dragDepth = 0;
+  dropZone.classList.remove("drag-over");
+}
+// Prevent dropped files from navigating away from this single-use session.
+document.addEventListener("dragover", (event) => event.preventDefault());
+document.addEventListener("drop", (event) => {
+  event.preventDefault();
+  clearDrag();
+});
+dropZone.addEventListener("dragenter", (event) => {
+  event.preventDefault();
+  if (running || clips.disabled) return;
+  dragDepth += 1;
+  dropZone.classList.add("drag-over");
+});
+dropZone.addEventListener("dragleave", () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) clearDrag();
+});
+dropZone.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect =
+    running || clips.disabled ? "none" : "copy";
+});
+dropZone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  clearDrag();
+  if (running || clips.disabled || !event.dataTransfer) return;
+  const items = Array.from(event.dataTransfer.items || []);
+  if (items.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) {
+    showMessage("Drop video files, not folders.", "error");
+    return;
+  }
+  const files = Array.from(event.dataTransfer.files);
+  if (!files.length) return;
+  if (files.length > MAX_CLIPS) {
+    showMessage("Choose no more than " + MAX_CLIPS + " videos.", "error");
+    return;
+  }
+  clips.files = event.dataTransfer.files;
+  hideMessage();
+  renderSelection();
+});
+
 function createEncoder() {
   const encoder = new FFmpeg();
   encoder.on("log", ({ message: line }) => {
@@ -365,6 +418,9 @@ async function videoSignature(file) {
   const bytes = new Uint8Array(await file.slice(0, 512).arrayBuffer());
   const ascii = (start, length) => String.fromCharCode(...bytes.slice(start, start + length));
   if (bytes.length >= 16 && ascii(4, 4) === "ftyp") {
+    const majorBrand = ascii(8, 4);
+    if (majorBrand === "qt  ") return "mov";
+    if (/^3g/.test(majorBrand)) return "3gp";
     const boxLength = Math.min(bytes.length, new DataView(bytes.buffer).getUint32(0));
     const allowedBrands = new Set([
       "avc1", "dash", "iso2", "iso3", "iso4", "iso5", "iso6", "isom",
@@ -373,60 +429,22 @@ async function videoSignature(file) {
     for (let offset = 8; offset + 4 <= boxLength; offset += 4) {
       if (allowedBrands.has(ascii(offset, 4))) return "mp4";
     }
-    if (ascii(8, 4) === "qt  ") return "mov";
     throw new Error(file.name + " uses an unsupported media-container signature. " +
-      "Choose a standard MP4, MOV, WebM, MKV, AVI, MPEG, OGG, FLV, or TS video.");
+      "Choose a supported video format listed below the upload controls.");
   }
   if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 &&
       bytes[2] === 0xdf && bytes[3] === 0xa3) return "webm/mkv";
   if (bytes.length >= 12 && ascii(0, 4) === "RIFF" && ascii(8, 4) === "AVI ") return "avi";
   if (bytes.length >= 4 && ascii(0, 4) === "OggS") return "ogg";
   if (bytes.length >= 3 && ascii(0, 3) === "FLV") return "flv";
+  const asfHeader = [0x30,0x26,0xb2,0x75,0x8e,0x66,0xcf,0x11,0xa6,0xd9,0x00,0xaa,0x00,0x62,0xce,0x6c];
+  if (asfHeader.every((value, index) => bytes[index] === value)) return "asf/wmv";
   if (bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x00 &&
       bytes[2] === 0x01 && [0xba, 0xb3].includes(bytes[3])) return "mpeg";
   if (bytes.length >= 377 && bytes[0] === 0x47 && bytes[188] === 0x47) return "ts";
+  if (bytes.length >= 389 && bytes[4] === 0x47 && bytes[196] === 0x47 && bytes[388] === 0x47) return "m2ts";
   throw new Error(file.name + " does not have a recognized video signature. " +
-    "Choose an MP4, MOV, WebM, MKV, AVI, MPEG, OGG, FLV, or TS video.");
-}
-
-function durationOf(file) {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement("video");
-    const url = URL.createObjectURL(file);
-    const signal = runAbort.signal;
-    let settled = false;
-    const finish = (error, duration) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", abort);
-      video.onloadedmetadata = null;
-      video.onerror = null;
-      video.removeAttribute("src");
-      video.load();
-      URL.revokeObjectURL(url);
-      if (error) reject(error);
-      else resolve(duration);
-    };
-    const abort = () => finish(new DOMException("Cancelled", "AbortError"));
-    const timeout = setTimeout(() => finish(new Error(
-      "Reading video metadata timed out. Try another video."
-    )), 15000);
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) { abort(); return; }
-    video.preload = "metadata";
-    video.onloadedmetadata = () => {
-      const duration = video.duration;
-      if (Number.isFinite(duration) && duration > 0) finish(null, duration);
-      else finish(new Error("Could not determine the duration of " + file.name +
-        ". Try converting it to MP4 first."));
-    };
-    video.onerror = () => {
-      finish(new Error("Your browser could not read " + file.name +
-        ". Try converting it to MP4 first."));
-    };
-    video.src = url;
-  });
+    "Choose a supported video format listed below the upload controls.");
 }
 
 async function removeVirtualFile(name) {
@@ -443,31 +461,56 @@ async function compressOne(state) {
     updateFileSizes(state, file.size);
     return { blob: file, name: safeOriginalName(file.name, state.index), state };
   }
-  const duration = await durationOf(file);
-  const audioKbps = 96;
-  const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
-  let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
-  if (videoKbps < 100) {
-    throw new Error(file.name + " is too long to fit at a usable quality. " +
-      "Trim the video into shorter clips and try again.");
-  }
+  // Probe using the same decoder as conversion rather than HTML video support.
+  // Browsers cannot read metadata for many otherwise decodable MKV/AVI files.
   const inputName = "input-" + state.index + ".video";
   const outputName = "output-" + state.index + ".mp4";
-  const scale = "fps=fps='min(source_fps,30)'," +
-    "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease," +
-    "scale=trunc(iw/2)*2:trunc(ih/2)*2";
-  async function encode(bitrate) {
-    lastFfmpegMessage = "";
-    return ffmpeg.exec([
-      "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
-      "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
-      "-preset", "veryfast", "-b:v", bitrate + "k", "-maxrate", bitrate + "k",
-      "-bufsize", (bitrate * 2) + "k", "-vf", scale, "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-b:a", audioKbps + "k", "-movflags", "+faststart", outputName
-    ]);
-  }
+  const probeName = "probe-" + state.index + ".json";
   try {
     await ffmpeg.writeFile(inputName, await fetchFile(file));
+    updateFile(state, "Reading video metadata", 0);
+    await ffmpeg.ffprobe([
+      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,duration",
+      "-of", "json", inputName, "-o", probeName
+    ], 30000);
+    if (cancelled) throw new DOMException("Cancelled", "AbortError");
+    // The pinned wasm core returns -1 even for successful probes; validate its
+    // structured output instead of relying on that exit status.
+    let metadata;
+    try {
+      metadata = JSON.parse(await ffmpeg.readFile(probeName, "utf8"));
+      if (metadata.error || !Array.isArray(metadata.streams)) throw new Error("Invalid metadata");
+    } catch (error) {
+      if (cancelled) throw new DOMException("Cancelled", "AbortError");
+      throw new Error("Could not determine video metadata for " + file.name +
+        ". The file may be damaged or unsupported by this encoder.");
+    }
+    const videoStream = metadata.streams.find((stream) => stream.codec_type === "video");
+    if (!videoStream) throw new Error("No video stream found in " + file.name + ". Choose a video, not an audio-only file.");
+    const duration = [metadata.format?.duration, videoStream.duration]
+      .map(Number).find((value) => Number.isFinite(value) && value > 0);
+    if (!duration) throw new Error(
+      "Could not determine the duration of " + file.name + ". Re-export the clip with a finite duration.");
+    const audioKbps = 96;
+    const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
+    let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
+    if (videoKbps < 100) {
+      throw new Error(file.name + " is too long to fit at a usable quality. " +
+        "Trim the video into shorter clips and try again.");
+    }
+    const scale = "fps=fps='min(source_fps,30)'," +
+      "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease," +
+      "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+    async function encode(bitrate) {
+      lastFfmpegMessage = "";
+      return ffmpeg.exec([
+        "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
+        "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
+        "-preset", "veryfast", "-b:v", bitrate + "k", "-maxrate", bitrate + "k",
+        "-bufsize", (bitrate * 2) + "k", "-vf", scale, "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", audioKbps + "k", "-movflags", "+faststart", outputName
+      ]);
+    }
     currentAttempt = 1;
     let exitCode = await encode(videoKbps);
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
@@ -499,6 +542,7 @@ async function compressOne(state) {
   } finally {
     await removeVirtualFile(inputName);
     await removeVirtualFile(outputName);
+    await removeVirtualFile(probeName);
   }
 }
 
@@ -511,7 +555,7 @@ async function compressWithRetry(state) {
     } catch (error) {
       if (cancelled || error.name === "AbortError") throw error;
       console.error("Compression attempt failed", error, lastFfmpegMessage);
-      if (attempt === 2 || /too long|recognized video signature|Could not determine/.test(error.message)) {
+      if (attempt === 2 || /too long|recognized video signature|Could not determine|No video stream/.test(error.message)) {
         updateFile(state, "Needs attention", 0);
         throw error;
       }
@@ -660,7 +704,6 @@ function finishRun() {
 cancelButton.addEventListener("click", () => {
   if (!running) return;
   cancelled = true;
-  runAbort.abort();
   if (uploadRequest) uploadRequest.abort();
   if (ffmpeg) {
     ffmpeg.terminate();
@@ -683,7 +726,6 @@ form.addEventListener("submit", async (event) => {
     return;
   }
   cancelled = false;
-  runAbort = new AbortController();
   running = true;
   submit.disabled = true;
   clips.disabled = true;

@@ -10,7 +10,7 @@
 
 ## What it does
 
-Run `/compress` in a Discord server, open the private link, and choose up to 10 videos. Professor Compressor automatically formats the results to fit the upload limit Discord reports for that server.
+Run `/compress` in a Discord server, open the private link, and choose or drag and drop up to 10 videos. Professor Compressor automatically formats the results to fit the upload limit Discord reports for that server. Dropping a new batch replaces the current selection; folders are not accepted.
 
 When `BOTSTATS_GUILD_ID` is configured, the application owner or application
 team members can run `/botstats` in that private server for an ephemeral live
@@ -28,6 +28,18 @@ other servers, defaults to administrators only, and still verifies the caller.
   processing remains on the user's device.
 
 Professor Compressor currently accepts video files and produces Discord-compatible MP4 files. It does not compress images, GIFs, PDFs, or other document types.
+
+Supported input containers include MP4/M4V, MOV, WebM, MKV, AVI, MPEG/MPG,
+OGV/OGG, FLV, TS/MTS/M2TS, 3GP/3G2, and WMV/ASF. File signatures are checked
+instead of trusting extensions. For conversion, the bundled FFmpeg probes
+duration and video streams directly, so support does not depend on the browser's
+ability to preview the source format. The codec inside a container must still be
+supported by that FFmpeg build; encrypted, damaged, and unknown-duration sources
+may fail. This is broad format support, not a guarantee for every video codec.
+Browser conversion tests cover H.264, HEVC/H.265, VP9, MPEG-4 Part 2, MPEG-2,
+WMV2, Theora, and FLV1. The pinned encoder cannot convert AV1 sources; users
+should export those as H.264 first. Fitting MP4 passthrough does not validate
+playback compatibility and remains subject to Discord/client codec support.
 
 ## How it works
 
@@ -238,8 +250,9 @@ Browser tests require `ffmpeg` on PATH to generate test clips. They run a
 loopback-only relay with Discord delivery replaced by a capture stub; no bot
 token is required and no files are posted to Discord. Set `TEST_PYTHON` to your
 virtualenv Python and optionally `CHROME_EXECUTABLE` to a local Chrome executable.
-These tests exercise real WebAssembly compression, fallback, MOV conversion,
-batching, cancellation, retry, and narrow-screen layout. A live `/compress`
+These tests exercise real WebAssembly compression, fallback, multiple video
+containers and codecs, drag and drop, invalid inputs, batching, cancellation,
+retry, and narrow-screen layout. A live `/compress`
 smoke test is still required to verify deployed Discord permissions and delivery.
 
 This design does not provide end-to-end encryption. The operator of a modified deployment and Discord can access the finished files. Review the code and host your own instance if that trust boundary does not meet your needs.
