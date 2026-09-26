@@ -12,6 +12,11 @@
 
 Run `/compress` in a Discord server, open the private link, and choose up to 10 videos. Professor Compressor automatically formats the results to fit the upload limit Discord reports for that server.
 
+When `BOTSTATS_GUILD_ID` is configured, the application owner or application
+team members can run `/botstats` in that private server for an ephemeral live
+server list and process-lifetime usage totals. The command is not registered in
+other servers, defaults to administrators only, and still verifies the caller.
+
 - Compression happens in the browser with FFmpeg WebAssembly.
 - Original videos stay on the user's device.
 - Compressed results are held briefly in server memory and relayed to Discord.
@@ -136,11 +141,17 @@ Check the service health at `https://your-domain.example/healthz`. Aggregate,
 privacy-safe usage counters are available at
 `https://your-domain.example/metricsz`.
 
+The hosted legal documents required for Discord application verification are
+available at `https://your-domain.example/privacy` and
+`https://your-domain.example/terms`.
+
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DISCORD_TOKEN` | Required | Secret token from the Discord Developer Portal |
+| `ALERT_WEBHOOK_URL` | Empty | Optional private Discord webhook for install, removal, and `/compress` usage alerts |
+| `BOTSTATS_GUILD_ID` | Empty | Optional private server where the owner-only `/botstats` command is registered |
 | `DOMAIN` | `compressor.example.com` | Public DNS name used by Caddy |
 | `WEB_HOST` | `127.0.0.1` | Address used by the Python web service |
 | `WEB_PORT` | `8080` | Port used by the Python web service |
@@ -162,6 +173,13 @@ When `ALLOWED_GUILD_IDS` is empty, commands are available in every server that i
 ```dotenv
 ALLOWED_GUILD_IDS=123456789012345678,987654321098765432
 ```
+
+To receive private operational alerts, create a webhook in an owner-only
+Discord channel and set `ALERT_WEBHOOK_URL`. Alerts report installs, removals,
+and accepted `/compress` sessions. They include the server name and ID, member
+count for installation events, and aggregate process-lifetime counts. They do
+not include usernames, channel names, filenames, IP addresses, or file content.
+The webhook URL is a secret and must never be committed.
 
 ## Privacy and security
 
@@ -220,6 +238,7 @@ docker compose ps
 
 ```text
 app.py          Discord commands, upload relay, and HTTP server
+legal_pages.py  Public Privacy Policy and Terms of Service pages
 media_validation.py  Dependency-free MP4 structural validation
 metrics.py      Privacy-safe aggregate process metrics
 web_ui.py       Browser interface and FFmpeg compression workflow

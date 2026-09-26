@@ -6,6 +6,7 @@ import os
 import secrets
 import time
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,17 +18,20 @@ from dotenv import load_dotenv
 load_dotenv()
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 import discord
 from discord import app_commands
 
 from media_validation import valid_mp4_signature
 from metrics import RuntimeMetrics
+from legal_pages import privacy_policy_html, terms_of_service_html
 from web_ui import browser_compressor
 
 
 MIB = 1024 * 1024
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
+BOTSTATS_GUILD_ID_TEXT = os.getenv("BOTSTATS_GUILD_ID", "").strip()
 WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 PUBLIC_BASE_URL = os.getenv(
@@ -63,6 +67,13 @@ except ValueError as error:
     raise RuntimeError(
         "ALLOWED_GUILD_IDS must contain comma-separated Discord server IDs."
     ) from error
+
+try:
+    BOTSTATS_GUILD_ID = (
+        int(BOTSTATS_GUILD_ID_TEXT) if BOTSTATS_GUILD_ID_TEXT else None
+    )
+except ValueError as error:
+    raise RuntimeError("BOTSTATS_GUILD_ID must be a Discord server ID.") from error
 
 if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing from .env")
@@ -108,8 +119,98 @@ request_times: dict[tuple[str, str], deque[float]] = {}
 active_relay_uploads = 0
 delivery_bytes_held = 0
 commands_synced = False
+application_operator_ids: frozenset[int] | None = None
 effective_allowed_guild_ids: frozenset[int] = ALLOWED_GUILD_IDS
 metrics = RuntimeMetrics()
+
+
+def safe_alert_text(value: str, limit: int = 100) -> str:
+    """Make external Discord names safe to include in notification Markdown."""
+    return discord.utils.escape_markdown(value.replace("`", "'"))[:limit]
+
+
+async def send_owner_alert(message: str) -> None:
+    """Send a best-effort private alert without affecting the user workflow."""
+    if not ALERT_WEBHOOK_URL:
+        return
+    try:
+        timeout = ClientTimeout(total=5)
+        async with ClientSession(timeout=timeout) as session:
+            async with session.post(
+                ALERT_WEBHOOK_URL,
+                headers={
+                    "User-Agent": (
+                        "ProfessorCompressor/1.0 "
+                        "(+https://github.com/Anthony-Rama/discord-bot)"
+                    )
+                },
+                json={
+                    "content": message,
+                    "allowed_mentions": {"parse": []},
+                },
+            ) as response:
+                response.raise_for_status()
+    except Exception as error:
+        print(f"Owner notification failed: {type(error).__name__}")
+
+
+def schedule_owner_alert(message: str) -> None:
+    """Run an alert in the background so Discord commands remain responsive."""
+    if not ALERT_WEBHOOK_URL:
+        return
+    task = asyncio.create_task(send_owner_alert(message))
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+
+
+def guild_alert_message(
+    action: str,
+    guild: discord.Guild,
+    server_count: int | None = None,
+) -> str:
+    member_count = guild.member_count if guild.member_count is not None else "Unknown"
+    connected_servers = len(client.guilds) if server_count is None else server_count
+    return (
+        f"{action}\n"
+        f"Server: **{safe_alert_text(guild.name)}**\n"
+        f"Server ID: `{guild.id}`\n"
+        f"Members: `{member_count}`\n"
+        f"Connected servers: `{connected_servers}`"
+    )
+
+
+def botstats_report(
+    guilds: Iterable[discord.Guild],
+    snapshot: dict[str, int],
+) -> str:
+    sorted_guilds = sorted(guilds, key=lambda guild: guild.name.casefold())
+    lines = [
+        "**Professor Compressor status**",
+        f"Connected servers: **{len(sorted_guilds)}**",
+        f"Sessions since restart: **{snapshot['sessions_created']}**",
+        f"Successful deliveries since restart: **{snapshot['deliveries_succeeded']}**",
+        "",
+        "**Live server list**",
+    ]
+    for guild in sorted_guilds:
+        member_count = guild.member_count if guild.member_count is not None else "Unknown"
+        lines.append(
+            f"- {safe_alert_text(guild.name)} | ID: `{guild.id}` | "
+            f"Members: `{member_count}`"
+        )
+    return "\n".join(lines)
+
+
+async def get_application_operator_ids() -> frozenset[int]:
+    """Return the application owner and team members allowed to view status."""
+    global application_operator_ids
+    if application_operator_ids is None:
+        application = await client.application_info()
+        operator_ids = {application.owner.id}
+        if application.team is not None:
+            operator_ids.update(member.id for member in application.team.members)
+        application_operator_ids = frozenset(operator_ids)
+    return application_operator_ids
 
 
 def compression_target(discord_limit: int) -> int:
@@ -249,6 +350,7 @@ def page(title: str, body: str) -> web.Response:
                         color: #9ce8d2; }}
     .privacy {{ margin: 18px 0 0; text-align: center; color: #8794a7;
                 font-size: 13px; }}
+    .privacy a {{ color: #aeb4ff; }}
     .error {{ color: #fda4af !important; }}
     [hidden] {{ display: none !important; }}
     @media (max-width: 560px) {{
@@ -377,6 +479,28 @@ async def aggregate_metrics(request: web.Request) -> web.Response:
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+def legal_response(document: str) -> web.Response:
+    return web.Response(
+        text=document,
+        content_type="text/html",
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+async def privacy_policy(request: web.Request) -> web.Response:
+    del request
+    return legal_response(privacy_policy_html())
+
+
+async def terms_of_service(request: web.Request) -> web.Response:
+    del request
+    return legal_response(terms_of_service_html())
 
 
 async def upload_form(request: web.Request) -> web.Response:
@@ -763,6 +887,56 @@ async def compress(interaction: discord.Interaction) -> None:
         view=view,
         ephemeral=True,
     )
+    guild_name = interaction.guild.name if interaction.guild else "Unknown server"
+    schedule_owner_alert(
+        "⚙️ **Compression session created**\n"
+        f"Server: **{safe_alert_text(guild_name)}**\n"
+        f"Server ID: `{interaction.guild_id}`\n"
+        f"Connected servers: `{len(client.guilds)}`\n"
+        f"Sessions since restart: `{metrics.snapshot()['sessions_created']}`"
+    )
+
+
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+async def botstats(interaction: discord.Interaction) -> None:
+    await interaction.response.defer(ephemeral=True)
+    try:
+        operator_ids = await get_application_operator_ids()
+    except discord.HTTPException:
+        await interaction.followup.send(
+            "Discord could not verify the application owner. Try again shortly.",
+            ephemeral=True,
+        )
+        return
+    if interaction.user.id not in operator_ids:
+        await interaction.followup.send(
+            "This command is restricted to the application owner.",
+            ephemeral=True,
+        )
+        return
+
+    report = botstats_report(client.guilds, metrics.snapshot())
+    if len(report) <= 1900:
+        await interaction.followup.send(report, ephemeral=True)
+        return
+    report_file = discord.File(
+        io.BytesIO(report.encode("utf-8")),
+        filename="professor-compressor-status.txt",
+    )
+    await interaction.followup.send(
+        "The live server list is attached.",
+        file=report_file,
+        ephemeral=True,
+    )
+
+
+if BOTSTATS_GUILD_ID is not None:
+    tree.command(
+        name="botstats",
+        description="View private Professor Compressor server and usage statistics",
+        guild=discord.Object(id=BOTSTATS_GUILD_ID),
+    )(botstats)
 
 
 async def start_upload_server() -> None:
@@ -775,6 +949,8 @@ async def start_upload_server() -> None:
     )
     application.router.add_get("/healthz", health)
     application.router.add_get("/metricsz", aggregate_metrics)
+    application.router.add_get("/privacy", privacy_policy)
+    application.router.add_get("/terms", terms_of_service)
     application.router.add_get("/upload/{token}", upload_form)
     application.router.add_post("/upload/{token}", receive_results)
     project_root = Path(__file__).resolve().parent
@@ -812,6 +988,16 @@ async def start_upload_server() -> None:
 
 
 @client.event
+async def on_guild_join(guild: discord.Guild) -> None:
+    schedule_owner_alert(guild_alert_message("🟢 **Professor Compressor installed**", guild))
+
+
+@client.event
+async def on_guild_remove(guild: discord.Guild) -> None:
+    schedule_owner_alert(guild_alert_message("🔴 **Professor Compressor removed**", guild))
+
+
+@client.event
 async def on_ready() -> None:
     global commands_synced
     if not commands_synced:
@@ -820,6 +1006,13 @@ async def on_ready() -> None:
             "Synced global commands: "
             + ", ".join(command.name for command in synced_commands)
         )
+        if BOTSTATS_GUILD_ID is not None:
+            owner_guild = discord.Object(id=BOTSTATS_GUILD_ID)
+            owner_commands = await tree.sync(guild=owner_guild)
+            print(
+                f"Synced private commands to server {BOTSTATS_GUILD_ID}: "
+                + ", ".join(command.name for command in owner_commands)
+            )
         if not client.guilds:
             print(
                 "Warning: the bot is not installed as a member of any server. "
@@ -835,7 +1028,7 @@ async def on_ready() -> None:
             print("Commands are available in all Discord servers.")
         commands_synced = True
     await start_upload_server()
-    print(f"Logged in as {client.user}")
+    print(f"Logged in as {client.user} in {len(client.guilds)} server(s)")
 
 
 def run() -> None:

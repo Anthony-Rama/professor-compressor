@@ -60,7 +60,10 @@ def browser_compressor(
     <div id="message" class="message" hidden aria-live="assertive"></div>
   </div>
   <p class="privacy"><span aria-hidden="true">🔒</span> Originals are compressed on
-    this device. Only finished files are sent through the relay to Discord.</p>
+    this device. Only finished files are sent through the relay to Discord.<br>
+    <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+    <span aria-hidden="true"> · </span>
+    <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></p>
 </form>
 
 <script type="module">

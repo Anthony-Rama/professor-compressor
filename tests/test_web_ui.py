@@ -18,6 +18,8 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("Compressing on this device", self.page)
         self.assertIn("Sending to Discord", self.page)
         self.assertIn("Only finished files are sent", self.page)
+        self.assertIn('href="/privacy"', self.page)
+        self.assertIn('href="/terms"', self.page)
 
     def test_includes_retry_cancel_and_metrics(self) -> None:
         self.assertIn("Cancel", self.page)
