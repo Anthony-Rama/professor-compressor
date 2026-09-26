@@ -31,7 +31,9 @@ deployment. No merge or production deployment was performed during this audit.
 - Python dependency audit and npm audit reported no known vulnerabilities.
 - A targeted scan of tracked files found no webhook credentials, DiscordThings
   tokens, or private-key headers. This is not proof that every secret is absent.
-- Browser tests were added to CI; the updated CI workflow has not yet run remotely.
+- Browser tests and a production-container HTTP/assets smoke test are included in
+  CI. Check the latest branch run before merging; local results alone are not a
+  substitute for that run.
 
 ## Release gates still requiring verification
 
@@ -40,8 +42,8 @@ deployment. No merge or production deployment was performed during this audit.
   attachment permission and verify the failure notification and user message.
 - Verify `/botstats` visibility and authorization using a non-owner account.
 - Verify live server-install/remove notifications and dsc.sh statistics reporting.
-- Build the production container in CI (Docker was unavailable locally) and
-  verify HTTPS, health endpoints, and browser assets behind the deployed proxy.
+- Require the production-container CI checks to pass, then verify HTTPS, health
+  endpoints, and browser assets behind the deployed proxy after deployment.
 - Test Edge, Firefox, Safari, low-memory devices, long clips, and realistic
   concurrent workloads. The Chrome tests do not establish support for every
   browser, codec, file size, or hardware configuration.
