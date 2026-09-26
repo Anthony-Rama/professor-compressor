@@ -2,7 +2,7 @@
 
 from html import escape
 
-EFFECTIVE_DATE = "September 25, 2026"
+EFFECTIVE_DATE = "September 26, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/discord-bot"
 
 
@@ -48,6 +48,7 @@ def _document(title: str, content: str) -> str:
     <footer>
       <a href="/privacy">Privacy Policy</a>
       <a href="/terms">Terms of Service</a>
+      <a href="/brand/third-party-notices.txt">Third-party notices</a>
       <a href="{PROJECT_URL}">Source code and contact</a>
     </footer>
   </main>
@@ -67,8 +68,7 @@ def privacy_policy_html() -> str:
     <h2>1. Scope</h2>
     <p>This policy describes how the hosted Professor Compressor Discord bot and
       browser compressor (the “Service”) process information. It does not govern
-      Discord, your browser, or independently hosted copies of the open-source
-      project.</p>
+      Discord, your browser, or independently operated services.</p>
 
     <h2>2. Information processed</h2>
     <ul>
@@ -76,7 +76,8 @@ def privacy_policy_html() -> str:
         channel identifiers, interaction metadata, and the applicable Discord
         upload limit are processed to create a session and return results to the
         correct channel.</li>
-      <li><strong>Compressed output files:</strong> finished MP4 files and their
+      <li><strong>Output files:</strong> finished MP4 files, including fitting
+        MP4s sent unchanged, and their
         filenames are transmitted over HTTPS and held temporarily in server
         memory while they are validated and delivered to Discord.</li>
       <li><strong>Security data:</strong> an IP address is processed temporarily
@@ -90,8 +91,11 @@ def privacy_policy_html() -> str:
     </ul>
 
     <h2>3. Video processing and storage</h2>
-    <p>Original videos are read and compressed by FFmpeg WebAssembly inside your
-      browser and are not uploaded to Professor Compressor. Finished files are
+    <p>Videos needing conversion or compression are processed by FFmpeg
+      WebAssembly inside your browser; only their resulting MP4 files are
+      uploaded. A fitting MP4 may skip recompression, in which case the original
+      file is uploaded unchanged through Professor Compressor to Discord.
+      Uploaded files are
       held only in volatile memory while awaiting delivery and are released
       after delivery, failure, cancellation, expiration, or a service restart.
       Professor Compressor does not intentionally write video files to disk.</p>
@@ -142,7 +146,8 @@ def privacy_policy_html() -> str:
     <h2>11. Changes and contact</h2>
     <p>This policy may be updated when the Service changes. Material changes will
       be reflected by the effective date above. Questions or privacy concerns
-      may be submitted through the project repository linked below.</p>
+      may be sent to <a href="mailto:anthonyhrama@gmail.com">anthonyhrama@gmail.com</a>.
+      Do not include private videos, credentials, or session links.</p>
         """,
     )
 

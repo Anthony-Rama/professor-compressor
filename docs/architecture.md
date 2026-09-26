@@ -21,8 +21,9 @@ flowchart LR
 
 ## Trust and data boundaries
 
-- Original videos stay inside the user's browser and are processed by FFmpeg
-  WebAssembly.
+- Videos needing conversion or compression are processed by FFmpeg WebAssembly
+  in the browser; their originals are not uploaded. Fitting MP4s may bypass
+  recompression and be uploaded unchanged to the relay for Discord delivery.
 - Finished MP4 files cross the HTTPS boundary and are held briefly in process
   memory while awaiting Discord delivery.
 - The service does not write uploaded files to disk.

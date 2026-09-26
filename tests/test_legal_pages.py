@@ -8,8 +8,11 @@ class LegalPageTests(unittest.TestCase):
     def test_privacy_policy_describes_actual_data_flow(self) -> None:
         document = privacy_policy_html()
 
-        self.assertIn("Original videos", document)
-        self.assertIn("inside your\n      browser", document)
+        self.assertIn("WebAssembly inside your browser", document)
+        self.assertIn("file is uploaded unchanged", document)
+        self.assertNotIn("are not uploaded to Professor Compressor", document)
+        self.assertNotIn("open-source", document)
+        self.assertIn("mailto:anthonyhrama@gmail.com", document)
         self.assertIn("held temporarily in server\n        memory", document)
         self.assertIn("does not intentionally write video files to disk", document)
         self.assertIn("IP address", document)
