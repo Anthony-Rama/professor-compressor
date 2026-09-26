@@ -208,9 +208,10 @@ a secret and must never be committed.
 
 ## Quality checks
 
-Every pull request and push to `main` runs GitHub Actions checks for the Python
-unit tests, Python compilation, dependency installation, and a production
-Docker image build.
+Every pull request and branch push runs GitHub Actions checks for linting,
+formatting, generated browser JavaScript, HTTP routes and packaged assets,
+Python compilation, dependency vulnerabilities, and a production Docker image
+build.
 
 Run the same core checks locally:
 

@@ -1,4 +1,6 @@
 import asyncio
+import shutil
+import subprocess
 import unittest
 from unittest.mock import AsyncMock, Mock
 
@@ -10,16 +12,29 @@ from professor_compressor.web_ui import browser_compressor
 
 class BrowserPageTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.page = browser_compressor(10, 19_000_000, "session_secret-123", 600)
+        self.page = browser_compressor(
+            10,
+            19_000_000,
+            220_000_000,
+            "session_secret-123",
+            600,
+        )
 
     def test_replaces_private_page_values(self) -> None:
         self.assertIn("const MAX_CLIPS = 10;", self.page)
         self.assertIn("const TARGET_BYTES = 19000000;", self.page)
+        self.assertIn("const MAX_BATCH_BYTES = 220000000;", self.page)
         self.assertIn('const SESSION_SECRET = "session_secret-123";', self.page)
         self.assertNotIn("__SESSION_SECRET__", self.page)
 
     def test_escapes_session_secret_as_javascript_data(self) -> None:
-        page = browser_compressor(1, 100, '</script><script>alert("x")</script>', 60)
+        page = browser_compressor(
+            1,
+            100,
+            100,
+            '</script><script>alert("x")</script>',
+            60,
+        )
 
         self.assertIn(r"\u003c/script\u003e\u003cscript\u003ealert(\"x\")", page)
         self.assertNotIn('</script><script>alert("x")</script>', page)
@@ -39,7 +54,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("Sending ", self.page)
         self.assertNotIn("Estimating time remaining", self.page)
 
-    def test_reports_terminal_browser_failures_privately(self) -> None:
+    def test_reports_browser_failures_privately(self) -> None:
         self.assertIn('X-Upload-Session": SESSION_SECRET', self.page)
         self.assertIn('"/failure"', self.page)
         self.assertIn('runStage = "Browser compression"', self.page)
@@ -49,8 +64,32 @@ class BrowserPageTests(unittest.TestCase):
     def test_targets_most_of_discords_safe_upload_size(self) -> None:
         self.assertIn("const OUTPUT_TARGET_RATIO = 0.97;", self.page)
         self.assertIn(
-            "TARGET_BYTES * 8 * OUTPUT_TARGET_RATIO",
+            "effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO",
             self.page,
+        )
+
+    def test_caps_each_output_to_the_batch_relay_limit(self) -> None:
+        self.assertIn(
+            "MAX_BATCH_BYTES / Math.max(1, selectedFiles.length)",
+            self.page,
+        )
+        self.assertIn(
+            "return Math.min(TARGET_BYTES, batchTargetBytes)",
+            self.page,
+        )
+        self.assertIn("state.file.size > effectiveTargetBytes", self.page)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
+    def test_generated_module_has_valid_javascript(self) -> None:
+        script = self.page.split('<script type="module">', 1)[1].split("</script>", 1)[
+            0
+        ]
+        subprocess.run(
+            ["node", "--input-type=module", "--check"],
+            input=script,
+            text=True,
+            capture_output=True,
+            check=True,
         )
 
     def test_protects_active_compression_from_sleep_and_hidden_tabs(self) -> None:

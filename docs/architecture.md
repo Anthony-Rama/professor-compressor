@@ -83,6 +83,8 @@ components can be imported and tested without production credentials.
 The relay uses bounded concurrency, queue depth, and in-memory byte limits.
 When any limit is reached, it returns a retryable response instead of accepting
 unbounded work. A delivery request has one terminal success or failure result;
-the worker releases its accounted bytes in a `finally` block. Browser failures
-are authenticated with the claimed session secret before they affect state or
-generate an operator alert.
+the worker releases its accounted bytes in a `finally` block. Browser failure
+reports are authenticated with the claimed session secret and deduplicated
+before they generate an operator alert. A browser-side failure does not consume
+the session, so the page's retry action remains usable until the session
+expires.

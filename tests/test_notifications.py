@@ -70,7 +70,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Elapsed: `1:05`", message)
         self.assertNotIn("clip.mp4", message)
 
-    async def test_browser_failure_is_authenticated_and_terminal(self) -> None:
+    async def test_browser_failure_is_authenticated_and_allows_retry(self) -> None:
         job = UploadJob(
             token="failure-token",
             user_id=123,
@@ -93,15 +93,45 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
                 "professor_compressor.application.schedule_owner_alert"
             ) as schedule_alert:
                 response = await receive_browser_failure(request)
+
+            self.assertEqual(response.status, 200)
+            self.assertIs(job.state, JobState.CLAIMED)
+            self.assertIn(job.token, jobs)
+            self.assertTrue(job.browser_failure_reported)
+            alert = schedule_alert.call_args.args[0]
+            self.assertIn("Compression failed", alert)
+            self.assertIn("Browser compressionscript", alert)
+            self.assertNotIn("<script>", alert)
+        finally:
+            jobs.pop(job.token, None)
+
+    async def test_browser_failure_alert_is_only_sent_once(self) -> None:
+        job = UploadJob(
+            token="failure-token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20_000_000,
+            interaction=Mock(),
+            state=JobState.CLAIMED,
+            claim_secret="claim-secret",
+            browser_failure_reported=True,
+        )
+        jobs[job.token] = job
+        request = Mock()
+        request.match_info = {"token": job.token}
+        request.headers = {"X-Upload-Session": "claim-secret"}
+        request.json = AsyncMock(return_value={"stage": "Browser compression"})
+        try:
+            with patch(
+                "professor_compressor.application.schedule_owner_alert"
+            ) as schedule_alert:
+                response = await receive_browser_failure(request)
         finally:
             jobs.pop(job.token, None)
 
         self.assertEqual(response.status, 200)
-        self.assertIs(job.state, JobState.DONE)
-        alert = schedule_alert.call_args.args[0]
-        self.assertIn("Compression failed", alert)
-        self.assertIn("Browser compressionscript", alert)
-        self.assertNotIn("<script>", alert)
+        schedule_alert.assert_not_called()
 
     async def test_join_event_schedules_notification(self) -> None:
         guild = Mock(name="guild")

@@ -29,6 +29,7 @@ class UploadJob:
     state: JobState = JobState.OPEN
     claim_secret: str | None = field(default=None, repr=False)
     claimed_at: float | None = None
+    browser_failure_reported: bool = False
     guild_id: int | None = None
     guild_name: str = "Unknown server"
     created_at: float = field(default_factory=time.time)

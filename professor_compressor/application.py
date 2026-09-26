@@ -510,6 +510,7 @@ async def upload_form(request: web.Request) -> web.Response:
         browser_compressor(
             MAX_CLIPS,
             safe_target,
+            min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES),
             job.claim_secret,
             max(1, int(job.expires_at - time.time())),
         ),
@@ -521,9 +522,9 @@ def safe_result_name(name: str | None, number: int) -> str:
     cleaned = "".join(
         character for character in raw if character.isalnum() or character in " ._-"
     ).strip(" .")
-    if not cleaned.lower().endswith(".mp4"):
-        cleaned += ".mp4"
-    return cleaned or f"clip-{number}.mp4"
+    stem = cleaned[:-4] if cleaned.lower().endswith(".mp4") else cleaned
+    stem = stem[:120].rstrip(" .")
+    return f"{stem or f'clip-{number}'}.mp4"
 
 
 async def receive_results(request: web.Request) -> web.Response:
@@ -726,15 +727,15 @@ async def receive_browser_failure(request: web.Request) -> web.Response:
         for character in raw_stage
         if character.isalnum() or character in " ._-"
     ).strip()[:60]
-    schedule_owner_alert(
-        compression_outcome_alert(
-            job,
-            succeeded=False,
-            stage=stage or "Browser processing",
+    if not job.browser_failure_reported:
+        schedule_owner_alert(
+            compression_outcome_alert(
+                job,
+                succeeded=False,
+                stage=stage or "Browser processing",
+            )
         )
-    )
-    job.state = JobState.DONE
-    jobs.pop(job.token, None)
+        job.browser_failure_reported = True
     return web.json_response(
         {"ok": True},
         headers={"Cache-Control": "no-store"},
@@ -971,10 +972,8 @@ if BOTSTATS_GUILD_ID is not None:
     )(botstats)
 
 
-async def start_upload_server() -> None:
-    global web_runner, cleanup_task, delivery_queue
-    if web_runner is not None:
-        return
+def create_web_application() -> web.Application:
+    """Build the HTTP application so routes can be smoke-tested independently."""
     application = web.Application(
         client_max_size=MAX_RESULT_TOTAL_BYTES + 2 * MIB,
         middlewares=[browser_security_headers],
@@ -1008,10 +1007,23 @@ async def start_upload_server() -> None:
         "/assets/core-mt-esm/",
         project_root / "node_modules/@ffmpeg/core-mt/dist/esm",
     )
+    return application
+
+
+async def start_upload_server() -> None:
+    global web_runner, cleanup_task, delivery_queue
+    if web_runner is not None:
+        return
+    application = create_web_application()
     web_runner = web.AppRunner(application)
-    await web_runner.setup()
-    site = web.TCPSite(web_runner, WEB_HOST, WEB_PORT)
-    await site.start()
+    try:
+        await web_runner.setup()
+        site = web.TCPSite(web_runner, WEB_HOST, WEB_PORT)
+        await site.start()
+    except Exception:
+        await web_runner.cleanup()
+        web_runner = None
+        raise
     delivery_queue = asyncio.Queue(maxsize=DELIVERY_QUEUE_SIZE)
     for worker_number in range(1, DELIVERY_WORKERS + 1):
         worker = asyncio.create_task(delivery_worker(worker_number))

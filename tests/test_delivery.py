@@ -9,12 +9,19 @@ from professor_compressor.application import (
     UploadJob,
     compression_target,
     deliver_browser_results,
+    safe_result_name,
 )
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
     def test_compression_target_keeps_small_delivery_reserve(self) -> None:
         self.assertEqual(compression_target(20_000_000), 19_600_000)
+
+    def test_result_names_are_safe_and_bounded(self) -> None:
+        result = safe_result_name("../" + "a" * 300 + ".mp4", 1)
+
+        self.assertEqual(result, "a" * 120 + ".mp4")
+        self.assertNotIn("/", result)
 
     async def test_results_are_sent_as_a_new_channel_message(self) -> None:
         interaction = Mock()

@@ -16,6 +16,7 @@ def _json_script_value(value: object) -> str:
 def browser_compressor(
     max_clips: int,
     target_bytes: int,
+    max_batch_bytes: int,
     session_secret: str,
     expires_in_seconds: int,
 ) -> str:
@@ -25,7 +26,7 @@ def browser_compressor(
   alt="Professor Compressor mascot">
 <h1>Compress videos for Discord</h1>
 <p class="intro">Choose up to __MAX_CLIPS__ videos. Finished videos are formatted
-  for Discord's current free upload limit.</p>
+  for Discord's current upload limit.</p>
 <div class="stay-open">
   <span aria-hidden="true">⏱</span>
   <span><strong>Keep this page open and active until it finishes.</strong><br>
@@ -87,6 +88,7 @@ import { fetchFile, toBlobURL } from "/assets/util-esm/index.js";
 
 const MAX_CLIPS = __MAX_CLIPS__;
 const TARGET_BYTES = __TARGET_BYTES__;
+const MAX_BATCH_BYTES = __MAX_BATCH_BYTES__;
 const SESSION_SECRET = __SESSION_SECRET__;
 const SESSION_EXPIRES_SECONDS = __EXPIRES_SECONDS__;
 const OUTPUT_TARGET_RATIO = 0.97;
@@ -148,6 +150,13 @@ function safeStem(filename, index) {
 
 function safeOriginalName(filename, index) {
   return safeStem(filename, index) + ".mp4";
+}
+
+function outputTargetBytes() {
+  const batchTargetBytes = Math.floor(
+    MAX_BATCH_BYTES / Math.max(1, selectedFiles.length)
+  );
+  return Math.min(TARGET_BYTES, batchTargetBytes);
 }
 
 function setPhase(phase, title, copy) {
@@ -400,14 +409,15 @@ async function removeVirtualFile(name) {
 async function compressOne(state) {
   const file = state.file;
   const format = await videoSignature(file);
-  if (file.size <= TARGET_BYTES && format === "mp4") {
+  const effectiveTargetBytes = outputTargetBytes();
+  if (file.size <= effectiveTargetBytes && format === "mp4") {
     updateFile(state, "Already fits", 100);
     updateFileSizes(state, file.size);
     return { blob: file, name: safeOriginalName(file.name, state.index), state };
   }
   const duration = await durationOf(file);
   const audioKbps = 96;
-  const usableBits = TARGET_BYTES * 8 * OUTPUT_TARGET_RATIO;
+  const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
   let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
   if (videoKbps < 100) {
     throw new Error(file.name + " is too long to fit at a usable quality. " +
@@ -436,8 +446,8 @@ async function compressOne(state) {
     if (exitCode !== 0) throw new Error("The encoder could not read " + file.name +
       ". The video may use an unsupported or damaged codec.");
     let output = await ffmpeg.readFile(outputName);
-    if (output.byteLength > TARGET_BYTES) {
-      const correction = TARGET_BYTES / output.byteLength;
+    if (output.byteLength > effectiveTargetBytes) {
+      const correction = effectiveTargetBytes / output.byteLength;
       videoKbps = Math.max(100, Math.floor(
         videoKbps * correction * OUTPUT_TARGET_RATIO
       ));
@@ -450,7 +460,7 @@ async function compressOne(state) {
         file.name + ". Try that video by itself.");
       output = await ffmpeg.readFile(outputName);
     }
-    if (output.byteLength > TARGET_BYTES) {
+    if (output.byteLength > effectiveTargetBytes) {
       throw new Error(file.name + " could not be reduced below Discord's limit. " +
         "Trim it into a shorter clip and try again.");
     }
@@ -658,8 +668,9 @@ form.addEventListener("submit", async (event) => {
   }
   try {
     const formats = await Promise.all(selectedFiles.map((state) => videoSignature(state.file)));
+    const effectiveTargetBytes = outputTargetBytes();
     const needsEncoder = selectedFiles.some((state, index) =>
-      state.file.size > TARGET_BYTES || formats[index] !== "mp4");
+      state.file.size > effectiveTargetBytes || formats[index] !== "mp4");
     setPhase("compress", "Compressing on your device",
       "Originals remain on this device. Nothing is sent until every video is ready.");
     if (needsEncoder && !ffmpeg) encoderMode = await loadEncoder();
@@ -714,6 +725,7 @@ expiryTimer = setInterval(updateExpiry, 1000);
     return (
         template.replace("__MAX_CLIPS__", _json_script_value(max_clips))
         .replace("__TARGET_BYTES__", _json_script_value(target_bytes))
+        .replace("__MAX_BATCH_BYTES__", _json_script_value(max_batch_bytes))
         .replace("__SESSION_SECRET__", _json_script_value(session_secret))
         .replace("__EXPIRES_SECONDS__", _json_script_value(expires_in_seconds))
     )
