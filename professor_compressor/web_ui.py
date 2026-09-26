@@ -75,7 +75,7 @@ def browser_compressor(
     </div>
   </div>
   <div id="message" class="message" hidden aria-live="assertive"></div>
-  <details class="performance-help">
+  <details class="performance-help format-help">
     <summary>Supported video formats</summary>
     <p>MP4, MOV, M4V, WebM, MKV, AVI, MPEG, OGV, FLV, TS, MTS, M2TS,
       3GP, 3G2, WMV, and ASF. Support also depends on the codec inside the file.

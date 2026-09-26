@@ -236,3 +236,25 @@ test('narrow screens contain a ten-file selection', async ({ page, request }) =>
   await page.locator('#clips').setInputFiles(Array(10).fill(join(fixtures, 'small.mp4')));
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+for (const width of [375, 1440]) {
+  test(`format help does not overlap controls or messages at ${width}px`, async ({ page, request }) => {
+    await page.setViewportSize({width, height:1000});
+    await openSession(page, request);
+    const help = page.locator('.format-help');
+    const gapAfter = async selector => {
+      const above = await page.locator(selector).boundingBox();
+      const below = await help.boundingBox();
+      expect(below.y - (above.y + above.height)).toBeGreaterThanOrEqual(15);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    };
+    await gapAfter('#submit');
+    await help.locator('summary').click();
+    await gapAfter('#submit');
+    await deliver(page, join(fixtures, 'small.mp4'));
+    await gapAfter('#message');
+    await help.locator('summary').click();
+    await gapAfter('#message');
+    await page.screenshot({path: test.info().outputPath(`layout-${width}.png`), fullPage:true});
+  });
+}
