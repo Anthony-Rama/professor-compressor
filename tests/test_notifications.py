@@ -65,6 +65,8 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("delivered successfully", message)
         self.assertIn("Test Server", message)
+        self.assertIn("User ID: `123`", message)
+        self.assertNotIn("<@123>", message)
         self.assertIn("Files: `2`", message)
         self.assertIn("Finished size: `5.0 MiB`", message)
         self.assertIn("Elapsed: `1:05`", message)
@@ -101,6 +103,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(job.browser_failure_reported)
             alert = schedule_alert.call_args.args[0]
             self.assertIn("Compression failed", alert)
+            self.assertIn("User ID: `123`", alert)
             self.assertIn("Browser compressionscript", alert)
             self.assertNotIn("<script>", alert)
         finally:

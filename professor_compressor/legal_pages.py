@@ -2,7 +2,7 @@
 
 from html import escape
 
-EFFECTIVE_DATE = "September 26, 2026"
+EFFECTIVE_DATE = "September 27, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
@@ -87,9 +87,15 @@ def privacy_policy_html() -> str:
         abuse.</li>
       <li><strong>Operational data:</strong> aggregate process counters may track
         sessions, queued files, delivered bytes, failures, and rate-limited
-        requests. Installation and usage notifications sent privately to the
-        operator may include a server name, server identifier, member count,
-        and aggregate totals.</li>
+        requests. Installation notifications sent privately to the operator
+        may include a server name, server identifier, member count, and totals.
+        Private compression-session and outcome notifications also include the
+        command user's Discord ID so the operator can correlate a session with
+        a delivery issue. These alerts do not include filenames or video files.</li>
+      <li><strong>Optional feedback:</strong> the feedback and support links open
+        your email application. No feedback is sent unless you choose to send
+        an email. If you do, the operator receives the email address and message
+        you provide; please do not include private videos or session links.</li>
     </ul>
 
     <h2>3. Video processing and storage</h2>
@@ -137,9 +143,11 @@ def privacy_policy_html() -> str:
 
     <h2>9. Your choices</h2>
     <p>You may choose not to use the Service, cancel before uploading completed
-      files, remove the bot from a server you manage, or delete delivered files
-      from Discord if you have permission to do so. The Service does not maintain
-      user accounts or a persistent personal-information database.</p>
+      files, remove the bot from a server you manage, decline to send optional
+      feedback, or delete delivered files from Discord if you have permission
+      to do so. The Service does not maintain user accounts or a persistent
+      personal-information database. Operator alerts and feedback emails may
+      remain in the operator's Discord channel or mailbox until deleted.</p>
 
     <h2>10. Age requirements</h2>
     <p>The Service is intended only for people permitted to use Discord under

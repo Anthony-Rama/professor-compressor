@@ -40,7 +40,7 @@ The Discord bot token stays on the server. Videos that need conversion remain on
 - **Format-aware conversion.** FFmpeg probes the source rather than relying on the browser's ability to preview it. File signatures are checked instead of trusting extensions or MIME types. Duration-aware bitrate targeting aims below Discord's reported limit and retries oversized results.
 - **Bounded delivery.** The relay applies per-address rate limits, upload concurrency limits, a queue limit, and an in-memory byte budget. Explicit job states prevent duplicate delivery, while backpressure and timeouts make overload visible to the browser.
 - **Short-lived access.** Upload links are random, expire, and can be opened once. The claimed session uses a separate secret for authenticated retries and failure reports.
-- **Operational visibility.** Health and aggregate process metrics support monitoring without recording filenames or user, channel, server, or IP identifiers in the metrics. An owner-only `/botstats` command can show live server information in a configured private server.
+- **Operational visibility.** Health and aggregate process metrics support monitoring without recording filenames or user, channel, server, or IP identifiers in the metrics. Private operator alerts include server details and the Discord user ID for compression sessions and outcomes. An owner-only `/botstats` command can show live server information in a configured private server.
 
 The [architecture notes](docs/architecture.md) cover the request lifecycle, code boundaries, failure behavior, and scaling tradeoffs.
 

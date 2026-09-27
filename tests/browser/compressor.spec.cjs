@@ -53,9 +53,13 @@ async function deliver(page, files) {
 
 test('oversized video loads WebAssembly and compresses under the real CSP', async ({ page, request }) => {
   await openSession(page, request);
+  await expect(page.locator('#feedback-actions')).toBeHidden();
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
   await deliver(page, join(fixtures, 'large.mp4'));
   await expect(page.locator('.file-meta')).toContainText('smaller');
+  await expect(page.locator('#feedback-actions')).toBeVisible();
+  await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
+  await expect(page.locator('.support-link')).toHaveAttribute('href', /^mailto:/);
 });
 
 test('single-thread fallback still encodes when multithread core is unavailable', async ({ page, request }) => {
@@ -94,8 +98,11 @@ test('unsupported AV1 fails without uploading and allows a supported replacement
   await page.locator('#clips').setInputFiles(join(fixtures, 'av1.mkv'));
   await page.locator('#submit').click();
   await expect(page.locator('#message')).toContainText('unsupported or damaged codec', {timeout:30000});
+  await expect(page.locator('#feedback-actions')).toBeVisible();
+  await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(failure\)/);
   expect(uploads).toBe(0);
   await deliver(page, join(fixtures, 'small.mp4'));
+  await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
 });
 
 async function dropFiles(page, count) {

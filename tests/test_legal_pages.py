@@ -17,6 +17,8 @@ class LegalPageTests(unittest.TestCase):
         self.assertIn("does not intentionally write video files to disk", document)
         self.assertIn("IP address", document)
         self.assertIn("does not sell personal information", document)
+        self.assertIn("command user's Discord ID", document)
+        self.assertIn("No feedback is sent unless you choose to send", document)
         self.assertIn('href="/terms"', document)
 
     def test_terms_cover_content_abuse_and_service_limits(self) -> None:

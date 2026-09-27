@@ -46,11 +46,13 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             patch.object(app.client, "get_guild", return_value=Mock()),
             patch.object(app, "jobs", {}),
             patch.object(app, "last_job_at", {}),
-            patch.object(app, "schedule_owner_alert"),
+            patch.object(app, "schedule_owner_alert") as alert,
         ):
             await app.compress.callback(interaction)
             self.assertEqual(len(app.jobs), 1)
             self.assertEqual(next(iter(app.jobs.values())).guild_id, 123)
+            self.assertIn("User ID: `789`", alert.call_args.args[0])
+            self.assertNotIn("<@789>", alert.call_args.args[0])
 
         interaction.response.send_message.assert_awaited_once()
 
