@@ -52,8 +52,10 @@ class BrowserPageTests(unittest.TestCase):
             'id="feedback-actions" class="feedback-actions" hidden', self.page
         )
         self.assertIn("Share feedback", self.page)
-        self.assertIn("Get support", self.page)
-        self.assertIn("mailto:anthonyhrama@gmail.com", self.page)
+        self.assertIn("Email support", self.page)
+        self.assertIn("Join support server", self.page)
+        self.assertIn("https://discord.com/invite/32RWwNWyEH", self.page)
+        self.assertIn("mailto:professorcompressor.support@gmail.com", self.page)
         self.assertIn('showFeedback("success")', self.page)
         self.assertIn('showFeedback("failure")', self.page)
 

@@ -59,7 +59,8 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();
   await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
-  await expect(page.locator('.support-link')).toHaveAttribute('href', /^mailto:/);
+  await expect(page.locator('.support-link[href^="mailto:"]')).toHaveAttribute('href', /^mailto:professorcompressor\.support@gmail\.com\?/);
+  await expect(page.getByRole('link', {name: 'Join support server'})).toHaveAttribute('href', 'https://discord.com/invite/32RWwNWyEH');
 });
 
 test('single-thread fallback still encodes when multithread core is unavailable', async ({ page, request }) => {

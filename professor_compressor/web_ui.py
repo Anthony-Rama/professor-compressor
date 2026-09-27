@@ -77,11 +77,12 @@ def browser_compressor(
   <div id="message" class="message" hidden aria-live="assertive"></div>
   <div id="feedback-actions" class="feedback-actions" hidden>
     <a id="feedback-link" class="feedback-link"
-      href="mailto:anthonyhrama@gmail.com?subject=Professor%20Compressor%20feedback">Share feedback</a>
+      href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20feedback">Share feedback</a>
     <a class="support-link"
-      href="mailto:anthonyhrama@gmail.com?subject=Professor%20Compressor%20support">Get support</a>
-    <p>Optional: these links open your email app. Please don't include private
-      videos or session links.</p>
+      href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20support">Email support</a>
+    <a class="support-link" href="https://discord.com/invite/32RWwNWyEH">Join support server</a>
+    <p>Optional: email links open your email app; the server link opens Discord.
+      Please don't share private videos or session links.</p>
   </div>
   <details class="performance-help format-help">
     <summary>Supported video formats</summary>
@@ -205,7 +206,7 @@ function hideMessage() {
 }
 
 function showFeedback(outcome) {
-  feedbackLink.href = "mailto:anthonyhrama@gmail.com?subject=" +
+  feedbackLink.href = "mailto:professorcompressor.support@gmail.com?subject=" +
     encodeURIComponent("Professor Compressor feedback (" + outcome + ")");
   feedbackActions.hidden = false;
 }

@@ -135,6 +135,7 @@ def _document(base_url: str, title: str, description: str, body: str, path: str)
       alt="" width="44" height="44">Professor Compressor</a>
     <nav aria-label="Main navigation">
       <a href="{GUIDE_PATH}">Written Guide</a>
+      <a href="/#support">Support</a>
       <a href="{PROJECT_URL}">GitHub</a>
       <a href="/#listings">Bot listings</a>
     </nav>
@@ -144,7 +145,8 @@ def _document(base_url: str, title: str, description: str, body: str, path: str)
     <a href="/privacy">Privacy Policy</a>
     <a href="/terms">Terms of Service</a>
     <a href="/brand/third-party-notices.txt">Third-party notices</a>
-    <a href="{PROJECT_URL}">Source and contact</a>
+    <a href="mailto:professorcompressor.support@gmail.com">Support and contact</a>
+    <a href="https://discord.com/invite/32RWwNWyEH">Support server</a>
     <span>Professor Compressor is not affiliated with Discord.</span>
   </div></footer>
 </body>
@@ -237,6 +239,16 @@ def home_html(base_url: str) -> str:
     <p>Add Professor Compressor to a server where you can manage apps, then
       run <strong>/compress</strong> in a channel.</p>
     <a class="button primary" href="{invite_url}">Add to Discord</a>
+  </section>
+  <section id="support" aria-labelledby="support-title">
+    <h2 id="support-title">Questions or concerns?</h2>
+    <p>Email us or join the official Professor Compressor Discord server
+      for help and feedback. For private issues, use email rather than a
+      public server channel.</p>
+    <div class="footer-links">
+      <a href="mailto:professorcompressor.support@gmail.com">Email support</a>
+      <a href="https://discord.com/invite/32RWwNWyEH">Join the support server</a>
+    </div>
   </section>
   <section id="listings" aria-labelledby="listings-title">
     <h2 id="listings-title">Find Professor Compressor</h2>

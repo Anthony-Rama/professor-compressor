@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://discord.com/oauth2/authorize?client_id=1550752400271351839&amp;permissions=277025426432&amp;integration_type=0&amp;scope=bot+applications.commands">Add to Discord</a>
   · <a href="https://professor-compressor.duckdns.org/">Website</a>
+  · <a href="https://discord.com/invite/32RWwNWyEH">Support server</a>
   · <a href="docs/architecture.md">Architecture</a>
 </p>
 
@@ -70,6 +71,6 @@ For maintainers, the test commands and development workflow are in [DEVELOPMENT.
 
 ## Source and licensing
 
-Copyright (c) 2026 Anthony Rama. All rights reserved in the original project code and documentation. The repository is published for viewing and review; no license to reuse, modify, distribute, or commercially exploit the original code is granted. Contact [Anthony Rama](mailto:anthonyhrama@gmail.com) for permission. Rights granted by applicable law or GitHub's terms remain unaffected. Outside code contributions are not currently accepted.
+Copyright (c) 2026 Anthony Rama. All rights reserved in the original project code and documentation. The repository is published for viewing and review; no license to reuse, modify, distribute, or commercially exploit the original code is granted. Contact [Anthony Rama](mailto:professorcompressor.support@gmail.com) for permission. Rights granted by applicable law or GitHub's terms remain unaffected. Outside code contributions are not currently accepted.
 
 Third-party components retain their own licenses. In particular, the FFmpeg WebAssembly cores declare GPL-2.0-or-later. See [third-party notices](THIRD_PARTY_NOTICES.md) for versions, license texts, source references, and distribution details.
