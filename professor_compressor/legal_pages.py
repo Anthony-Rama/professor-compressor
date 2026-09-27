@@ -90,8 +90,9 @@ def privacy_policy_html() -> str:
         requests. Installation notifications sent privately to the operator
         may include a server name, server identifier, member count, and totals.
         Private compression-session and outcome notifications also include the
-        command user's Discord ID so the operator can correlate a session with
-        a delivery issue. These alerts do not include filenames or video files.</li>
+        command user's Discord username and user ID so the operator can
+        correlate a session with a delivery issue. These alerts do not include
+        filenames or video files.</li>
       <li><strong>Optional feedback:</strong> email feedback and support links
         open your email application. No feedback is sent unless you choose to
         send an email. If you do, the operator receives the email address and

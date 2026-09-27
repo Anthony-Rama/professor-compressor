@@ -13,7 +13,8 @@ from .domain import UploadJob
 
 def safe_alert_text(value: str, limit: int = 100) -> str:
     """Escape untrusted Discord names before placing them in Markdown."""
-    return discord.utils.escape_markdown(value.replace("`", "'"))[:limit]
+    escaped = discord.utils.escape_markdown(value.replace("`", "'"))
+    return discord.utils.escape_mentions(escaped)[:limit]
 
 
 def guild_alert_message(
@@ -54,6 +55,7 @@ def compression_outcome_alert(
         outcome,
         f"Server: **{safe_alert_text(job.guild_name or 'Unknown server')}**",
         f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
+        f"Username: **{safe_alert_text('@' + (job.username or 'unknown'))}**",
         f"User ID: `{job.user_id}`",
         f"Files: `{file_count}`",
     ]

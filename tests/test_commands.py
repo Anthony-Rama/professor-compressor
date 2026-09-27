@@ -14,6 +14,7 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
         interaction.channel_id = 456
         interaction.guild.name = "Test server"
         interaction.user.id = 789
+        interaction.user.name = "clip_creator"
         interaction.filesize_limit = 20_000_000
         interaction.response.send_message = AsyncMock()
         return interaction
@@ -51,7 +52,9 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             await app.compress.callback(interaction)
             self.assertEqual(len(app.jobs), 1)
             self.assertEqual(next(iter(app.jobs.values())).guild_id, 123)
+            self.assertIn("Username: **@clip\\_creator**", alert.call_args.args[0])
             self.assertIn("User ID: `789`", alert.call_args.args[0])
+            self.assertEqual(next(iter(app.jobs.values())).username, "clip_creator")
             self.assertNotIn("<@789>", alert.call_args.args[0])
 
         interaction.response.send_message.assert_awaited_once()

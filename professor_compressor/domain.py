@@ -32,6 +32,7 @@ class UploadJob:
     browser_failure_reported: bool = False
     guild_id: int | None = None
     guild_name: str = "Unknown server"
+    username: str = ""
     created_at: float = field(default_factory=time.time)
 
 
