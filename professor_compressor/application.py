@@ -1024,6 +1024,7 @@ async def compress(interaction: discord.Interaction) -> None:
         f"Server: **{safe_alert_text(guild_name)}**\n"
         f"Server ID: `{interaction.guild_id}`\n"
         f"Username: **{safe_alert_text('@' + interaction.user.name)}**\n"
+        f"User ID: `{interaction.user.id}`\n"
         f"Connected servers: `{len(client.guilds)}`\n"
         f"Sessions since restart: `{metrics.snapshot()['sessions_created']}`"
     )

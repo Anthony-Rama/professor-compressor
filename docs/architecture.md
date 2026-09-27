@@ -71,9 +71,9 @@ responsibilities:
   values safely into JavaScript.
 - `media_validation.py` validates untrusted MP4 structure without trusting
   filenames or MIME headers.
-- `notifications.py` formats operator messages with escaped Discord usernames,
-  but without channel names, filenames, IP addresses, session tokens, or file
-  content.
+- `notifications.py` formats operator messages with escaped Discord usernames
+  and user IDs, but without channel names, filenames, IP addresses, session
+  tokens, or file content.
 - `metrics.py` provides locked, aggregate, process-lifetime counters.
 
 The package root has no import-time startup behavior. The runtime token is

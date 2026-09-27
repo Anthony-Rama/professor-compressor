@@ -53,7 +53,7 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.jobs), 1)
             self.assertEqual(next(iter(app.jobs.values())).guild_id, 123)
             self.assertIn("Username: **@clip\\_creator**", alert.call_args.args[0])
-            self.assertNotIn("User ID:", alert.call_args.args[0])
+            self.assertIn("User ID: `789`", alert.call_args.args[0])
             self.assertEqual(next(iter(app.jobs.values())).username, "clip_creator")
             self.assertNotIn("<@789>", alert.call_args.args[0])
 

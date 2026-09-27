@@ -68,7 +68,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("delivered successfully", message)
         self.assertIn("Test Server", message)
         self.assertIn("Username: **@clip\\_creator**", message)
-        self.assertNotIn("User ID:", message)
+        self.assertIn("User ID: `123`", message)
         self.assertNotIn("<@123>", message)
         self.assertIn("Files: `2`", message)
         self.assertIn("Finished size: `5.0 MiB`", message)
@@ -108,6 +108,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             alert = schedule_alert.call_args.args[0]
             self.assertIn("Compression failed", alert)
             self.assertIn("Username: **@clip\\_creator**", alert)
+            self.assertIn("User ID: `123`", alert)
             self.assertIn("Browser compressionscript", alert)
             self.assertNotIn("<script>", alert)
         finally:

@@ -56,6 +56,7 @@ def compression_outcome_alert(
         f"Server: **{safe_alert_text(job.guild_name or 'Unknown server')}**",
         f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
         f"Username: **{safe_alert_text('@' + (job.username or 'unknown'))}**",
+        f"User ID: `{job.user_id}`",
         f"Files: `{file_count}`",
     ]
     if total_bytes:
