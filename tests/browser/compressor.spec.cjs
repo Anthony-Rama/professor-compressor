@@ -261,8 +261,9 @@ for (const width of [375, 1440]) {
     await gapAfter('#submit');
     await deliver(page, join(fixtures, 'small.mp4'));
     await gapAfter('#message');
+    await gapAfter('#feedback-actions');
     await help.locator('summary').click();
-    await gapAfter('#message');
+    await gapAfter('#feedback-actions');
     await page.screenshot({path: test.info().outputPath(`layout-${width}.png`), fullPage:true});
   });
 }
