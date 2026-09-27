@@ -5,7 +5,7 @@
 Please do not open a public issue for a suspected vulnerability or include
 tokens, private upload links, video files, or other sensitive data in a report.
 
-Email [anthonyhrama@gmail.com](mailto:anthonyhrama@gmail.com) with the subject
+Email [professorcompressor.support@gmail.com](mailto:professorcompressor.support@gmail.com) with the subject
 “Professor Compressor security report.” If GitHub's **Report a vulnerability**
 form is available in the repository's Security tab, you may use it instead.
 Include the affected version or commit, reproduction steps, expected impact,

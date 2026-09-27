@@ -96,6 +96,16 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Add to Discord", home_html)
         self.assertIn("Written Guide", home_html)
         self.assertIn("Read how it works", home_html)
+        self.assertIn('id="support"', home_html)
+        self.assertIn("Join the support server", home_html)
+        self.assertIn(
+            'href="mailto:professorcompressor.support@gmail.com">Support and contact',
+            home_html,
+        )
+        self.assertIn(
+            'href="https://discord.com/invite/32RWwNWyEH">Support server',
+            home_html,
+        )
         self.assertNotIn("Video guide", home_html)
         self.assertNotIn("Top.gg", home_html)
         self.assertIn('id="listings"', home_html)

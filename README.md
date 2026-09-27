@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://discord.com/oauth2/authorize?client_id=1550752400271351839&amp;permissions=277025426432&amp;integration_type=0&amp;scope=bot+applications.commands">Add to Discord</a>
   · <a href="https://professor-compressor.duckdns.org/">Website</a>
+  · <a href="https://discord.com/invite/32RWwNWyEH">Support server</a>
   · <a href="docs/architecture.md">Architecture</a>
 </p>
 
@@ -40,7 +41,7 @@ The Discord bot token stays on the server. Videos that need conversion remain on
 - **Format-aware conversion.** FFmpeg probes the source rather than relying on the browser's ability to preview it. File signatures are checked instead of trusting extensions or MIME types. Duration-aware bitrate targeting aims below Discord's reported limit and retries oversized results.
 - **Bounded delivery.** The relay applies per-address rate limits, upload concurrency limits, a queue limit, and an in-memory byte budget. Explicit job states prevent duplicate delivery, while backpressure and timeouts make overload visible to the browser.
 - **Short-lived access.** Upload links are random, expire, and can be opened once. The claimed session uses a separate secret for authenticated retries and failure reports.
-- **Operational visibility.** Health and aggregate process metrics support monitoring without recording filenames or user, channel, server, or IP identifiers in the metrics. An owner-only `/botstats` command can show live server information in a configured private server.
+- **Operational visibility.** Health and aggregate process metrics support monitoring without recording filenames or user, channel, server, or IP identifiers in the metrics. Private operator alerts include server details and the Discord user ID for compression sessions and outcomes. An owner-only `/botstats` command can show live server information in a configured private server.
 
 The [architecture notes](docs/architecture.md) cover the request lifecycle, code boundaries, failure behavior, and scaling tradeoffs.
 
@@ -70,6 +71,6 @@ For maintainers, the test commands and development workflow are in [DEVELOPMENT.
 
 ## Source and licensing
 
-Copyright (c) 2026 Anthony Rama. All rights reserved in the original project code and documentation. The repository is published for viewing and review; no license to reuse, modify, distribute, or commercially exploit the original code is granted. Contact [Anthony Rama](mailto:anthonyhrama@gmail.com) for permission. Rights granted by applicable law or GitHub's terms remain unaffected. Outside code contributions are not currently accepted.
+Copyright (c) 2026 Anthony Rama. All rights reserved in the original project code and documentation. The repository is published for viewing and review; no license to reuse, modify, distribute, or commercially exploit the original code is granted. Contact [Anthony Rama](mailto:professorcompressor.support@gmail.com) for permission. Rights granted by applicable law or GitHub's terms remain unaffected. Outside code contributions are not currently accepted.
 
 Third-party components retain their own licenses. In particular, the FFmpeg WebAssembly cores declare GPL-2.0-or-later. See [third-party notices](THIRD_PARTY_NOTICES.md) for versions, license texts, source references, and distribution details.

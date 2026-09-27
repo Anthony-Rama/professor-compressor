@@ -2,7 +2,7 @@
 
 from html import escape
 
-EFFECTIVE_DATE = "September 26, 2026"
+EFFECTIVE_DATE = "September 27, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
@@ -51,7 +51,7 @@ def _document(title: str, content: str) -> str:
       <a href="/privacy">Privacy Policy</a>
       <a href="/terms">Terms of Service</a>
       <a href="/brand/third-party-notices.txt">Third-party notices</a>
-      <a href="{PROJECT_URL}">Source code and contact</a>
+      <a href="{PROJECT_URL}">Source code</a>
     </footer>
   </main>
 </body>
@@ -87,9 +87,17 @@ def privacy_policy_html() -> str:
         abuse.</li>
       <li><strong>Operational data:</strong> aggregate process counters may track
         sessions, queued files, delivered bytes, failures, and rate-limited
-        requests. Installation and usage notifications sent privately to the
-        operator may include a server name, server identifier, member count,
-        and aggregate totals.</li>
+        requests. Installation notifications sent privately to the operator
+        may include a server name, server identifier, member count, and totals.
+        Private compression-session and outcome notifications also include the
+        command user's Discord ID so the operator can correlate a session with
+        a delivery issue. These alerts do not include filenames or video files.</li>
+      <li><strong>Optional feedback:</strong> email feedback and support links
+        open your email application. No feedback is sent unless you choose to
+        send an email. If you do, the operator receives the email address and
+        message you provide. The support-server link opens Discord; anything
+        you post there is subject to that server's visibility and Discord's
+        policies. Do not share private videos or session links.</li>
     </ul>
 
     <h2>3. Video processing and storage</h2>
@@ -137,9 +145,11 @@ def privacy_policy_html() -> str:
 
     <h2>9. Your choices</h2>
     <p>You may choose not to use the Service, cancel before uploading completed
-      files, remove the bot from a server you manage, or delete delivered files
-      from Discord if you have permission to do so. The Service does not maintain
-      user accounts or a persistent personal-information database.</p>
+      files, remove the bot from a server you manage, decline to send optional
+      feedback, or delete delivered files from Discord if you have permission
+      to do so. The Service does not maintain user accounts or a persistent
+      personal-information database. Operator alerts and feedback emails may
+      remain in the operator's Discord channel or mailbox until deleted.</p>
 
     <h2>10. Age requirements</h2>
     <p>The Service is intended only for people permitted to use Discord under
@@ -148,8 +158,12 @@ def privacy_policy_html() -> str:
     <h2>11. Changes and contact</h2>
     <p>This policy may be updated when the Service changes. Material changes will
       be reflected by the effective date above. Questions or privacy concerns
-      may be sent to <a href="mailto:anthonyhrama@gmail.com">anthonyhrama@gmail.com</a>.
-      Do not include private videos, credentials, or session links.</p>
+      may be sent by email to
+      <a href="mailto:professorcompressor.support@gmail.com">email</a>
+      or through the
+      <a href="https://discord.com/invite/32RWwNWyEH">support server</a>.
+      Do not include private videos, credentials, or session links in
+      public channels.</p>
         """,
     )
 
@@ -229,6 +243,8 @@ def terms_of_service_html() -> str:
     <h2>11. Changes and contact</h2>
     <p>These Terms may be updated as the Service evolves. Continued use after an
       update means you accept the revised Terms. Questions may be submitted
-      through the project repository linked below.</p>
+      by <a href="mailto:professorcompressor.support@gmail.com">email</a>
+      or in the
+      <a href="https://discord.com/invite/32RWwNWyEH">support server</a>.</p>
         """,
     )

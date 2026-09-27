@@ -47,6 +47,18 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('href="/privacy"', self.page)
         self.assertIn('href="/terms"', self.page)
 
+    def test_feedback_is_optional_and_has_a_support_link(self) -> None:
+        self.assertIn(
+            'id="feedback-actions" class="feedback-actions" hidden', self.page
+        )
+        self.assertIn("Share feedback", self.page)
+        self.assertIn("Email support", self.page)
+        self.assertIn("Join support server", self.page)
+        self.assertIn("https://discord.com/invite/32RWwNWyEH", self.page)
+        self.assertIn("mailto:professorcompressor.support@gmail.com", self.page)
+        self.assertIn('showFeedback("success")', self.page)
+        self.assertIn('showFeedback("failure")', self.page)
+
     def test_includes_retry_cancel_and_metrics(self) -> None:
         self.assertIn("Cancel", self.page)
         self.assertIn("Retrying automatically", self.page)

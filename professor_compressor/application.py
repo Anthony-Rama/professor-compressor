@@ -345,6 +345,16 @@ def page(title: str, body: str) -> web.Response:
     .message.error {{ border: 1px solid #733648; background: #321b27; }}
     .message.success {{ border: 1px solid #276052; background: #16362f;
                         color: #9ce8d2; }}
+    .feedback-actions {{ display: flex; flex-wrap: wrap; align-items: center;
+                         gap: 10px; margin-top: 14px; }}
+    .feedback-actions a {{ display: inline-flex; align-items: center;
+                           justify-content: center; min-height: 42px;
+                           padding: 10px 14px; border-radius: 10px;
+                           font-size: 13px; font-weight: 700; text-decoration: none; }}
+    .feedback-link {{ color: #fff; background: #5865f2; }}
+    .support-link {{ color: #cbd2ff; border: 1px solid #59677d; }}
+    .feedback-actions a:hover {{ filter: brightness(1.12); }}
+    .feedback-actions p {{ flex-basis: 100%; margin: 0; font-size: 12px; }}
     .privacy {{ margin: 18px 0 0; text-align: center; color: #8794a7;
                 font-size: 13px; }}
     .privacy a {{ color: #aeb4ff; }}
@@ -1012,6 +1022,7 @@ async def compress(interaction: discord.Interaction) -> None:
         "⚙️ **Compression session created**\n"
         f"Server: **{safe_alert_text(guild_name)}**\n"
         f"Server ID: `{interaction.guild_id}`\n"
+        f"User ID: `{interaction.user.id}`\n"
         f"Connected servers: `{len(client.guilds)}`\n"
         f"Sessions since restart: `{metrics.snapshot()['sessions_created']}`"
     )

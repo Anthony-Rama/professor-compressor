@@ -75,6 +75,15 @@ def browser_compressor(
     </div>
   </div>
   <div id="message" class="message" hidden aria-live="assertive"></div>
+  <div id="feedback-actions" class="feedback-actions" hidden>
+    <a id="feedback-link" class="feedback-link"
+      href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20feedback">Share feedback</a>
+    <a class="support-link"
+      href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20support">Email support</a>
+    <a class="support-link" href="https://discord.com/invite/32RWwNWyEH">Join support server</a>
+    <p>Optional: email links open your email app; the server link opens Discord.
+      Please don't share private videos or session links.</p>
+  </div>
   <details class="performance-help format-help">
     <summary>Supported video formats</summary>
     <p>MP4, MOV, M4V, WebM, MKV, AVI, MPEG, OGV, FLV, TS, MTS, M2TS,
@@ -111,6 +120,8 @@ const selection = document.getElementById("selection");
 const filesElement = document.getElementById("files");
 const work = document.getElementById("work");
 const message = document.getElementById("message");
+const feedbackActions = document.getElementById("feedback-actions");
+const feedbackLink = document.getElementById("feedback-link");
 const overallProgress = document.getElementById("overall-progress");
 const phaseTitle = document.getElementById("phase-title");
 const phaseCopy = document.getElementById("phase-copy");
@@ -192,6 +203,12 @@ function showMessage(text, kind = "error") {
 function hideMessage() {
   message.hidden = true;
   message.textContent = "";
+}
+
+function showFeedback(outcome) {
+  feedbackLink.href = "mailto:professorcompressor.support@gmail.com?subject=" +
+    encodeURIComponent("Professor Compressor feedback (" + outcome + ")");
+  feedbackActions.hidden = false;
 }
 
 function renderDocumentTitle() {
@@ -733,6 +750,7 @@ form.addEventListener("submit", async (event) => {
   cancelButton.disabled = false;
   work.hidden = false;
   hideMessage();
+  feedbackActions.hidden = true;
   startedAt = performance.now();
   runStage = "Browser compression";
   overallProgress.value = 0;
@@ -770,6 +788,7 @@ form.addEventListener("submit", async (event) => {
     setRunDetail("Complete");
     setPhase("done", "Delivered to Discord", response.message);
     showMessage("Compression complete. You can close this page and return to Discord.", "success");
+    showFeedback("success");
     clips.disabled = true;
     submit.hidden = true;
     cancelButton.hidden = true;
@@ -785,6 +804,7 @@ form.addEventListener("submit", async (event) => {
     setPhase("compress", "Action needed", "The process stopped before delivery completed.");
     setRunDetail("Stopped");
     showMessage(friendlyError(error));
+    showFeedback("failure");
     finishRun();
     if ([409, 410, 502, 504].includes(error.status)) {
       submit.hidden = true;

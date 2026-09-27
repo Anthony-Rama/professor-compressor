@@ -12,11 +12,13 @@ class LegalPageTests(unittest.TestCase):
         self.assertIn("file is uploaded unchanged", document)
         self.assertNotIn("are not uploaded to Professor Compressor", document)
         self.assertNotIn("open-source", document)
-        self.assertIn("mailto:anthonyhrama@gmail.com", document)
+        self.assertIn("mailto:professorcompressor.support@gmail.com", document)
         self.assertIn("held temporarily in server\n        memory", document)
         self.assertIn("does not intentionally write video files to disk", document)
         self.assertIn("IP address", document)
         self.assertIn("does not sell personal information", document)
+        self.assertIn("command user's Discord ID", document)
+        self.assertIn("No feedback is sent unless you choose to", document)
         self.assertIn('href="/terms"', document)
 
     def test_terms_cover_content_abuse_and_service_limits(self) -> None:
@@ -26,6 +28,7 @@ class LegalPageTests(unittest.TestCase):
         self.assertIn("Acceptable use", document)
         self.assertIn("rate, memory, concurrency, or availability limits", document)
         self.assertIn("not affiliated with or endorsed by Discord Inc.", document)
+        self.assertIn("mailto:professorcompressor.support@gmail.com", document)
         self.assertIn('href="/privacy"', document)
 
     def test_legal_response_is_public_html(self) -> None:

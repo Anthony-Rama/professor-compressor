@@ -41,7 +41,7 @@ def compression_outcome_alert(
     stage: str | None = None,
     elapsed_seconds: int | None = None,
 ) -> str:
-    """Build an outcome alert without file or user identifiers."""
+    """Build an outcome alert without filenames or user mentions."""
     if elapsed_seconds is None:
         started_at = job.claimed_at or job.created_at
         elapsed_seconds = max(0, int(time.time() - started_at))
@@ -54,6 +54,7 @@ def compression_outcome_alert(
         outcome,
         f"Server: **{safe_alert_text(job.guild_name or 'Unknown server')}**",
         f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
+        f"User ID: `{job.user_id}`",
         f"Files: `{file_count}`",
     ]
     if total_bytes:
