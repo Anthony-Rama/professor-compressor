@@ -69,6 +69,42 @@ test('single-thread fallback still encodes when multithread core is unavailable'
   await deliver(page, join(fixtures, 'large.mp4'));
 });
 
+test('reloading a failed encoder keeps completed file progress intact', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const send = Worker.prototype.postMessage;
+    window.injectedWorkerFailure = false;
+    Worker.prototype.postMessage = function(message, ...rest) {
+      if (!window.injectedWorkerFailure && message?.type === 'WRITE_FILE') {
+        window.injectedWorkerFailure = true;
+        queueMicrotask(() => this.onmessage?.({data: {
+          id: message.id, type: 'ERROR', data: new Error('Injected worker write failure'),
+        }}));
+        return;
+      }
+      return send.call(this, message, ...rest);
+    };
+  });
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles([
+    join(fixtures, 'small.mp4'), join(fixtures, 'large.mp4'),
+  ]);
+  await page.evaluate(() => {
+    const firstStatus = document.querySelector('.file-status');
+    window.firstFileStatuses = [firstStatus.textContent];
+    new MutationObserver(() => window.firstFileStatuses.push(firstStatus.textContent))
+      .observe(firstStatus, {childList:true, subtree:true, characterData:true});
+  });
+  await page.locator('#submit').click();
+  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord', {timeout:60000});
+  const {injected, statuses} = await page.evaluate(() => ({
+    injected: window.injectedWorkerFailure, statuses: window.firstFileStatuses,
+  }));
+  expect(injected).toBe(true);
+  const completedAt = statuses.indexOf('Already fits');
+  expect(completedAt).toBeGreaterThanOrEqual(0);
+  expect(statuses.slice(completedAt + 1).some(status => status.startsWith('Loading'))).toBe(false);
+});
+
 test('ten fitting MP4s deliver together without loading an encoder', async ({ page, request }) => {
   await page.route('**/assets/core*-esm/**', () => { throw new Error('Unexpected encoding'); });
   await openSession(page, request);
@@ -158,6 +194,9 @@ test('drops cannot replace files while compression is running', async ({ page, r
   await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
   await page.locator('#submit').click();
   await expect(page.locator('#clips')).toBeDisabled();
+  await expect(page.locator('#phase-title')).toHaveText('Loading video engine');
+  await expect(page.locator('#run-detail')).toHaveText('Starting video engine');
+  await expect(page.locator('.file-status')).toHaveText('Loading video engine');
   await dropFiles(page, 2);
   await expect(page.locator('.file-card')).toHaveCount(1);
   await expect(page.locator('.file-name')).toHaveText('large.mp4');
