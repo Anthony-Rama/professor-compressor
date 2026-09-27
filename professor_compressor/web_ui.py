@@ -374,11 +374,18 @@ function createEncoder() {
   const encoder = new FFmpeg();
   encoder.on("log", ({ message: line }) => {
     lastFfmpegMessage = line;
-    console.debug("[ffmpeg] " + line);
   });
+  let lastProgressState = null;
+  let lastProgressAttempt = 0;
+  let lastProgressPercent = -1;
   encoder.on("progress", ({ progress: fraction }) => {
     if (!currentState || cancelled) return;
     const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+    if (currentState === lastProgressState && currentAttempt === lastProgressAttempt &&
+        percent === lastProgressPercent) return;
+    lastProgressState = currentState;
+    lastProgressAttempt = currentAttempt;
+    lastProgressPercent = percent;
     const adjustment = currentAttempt > 1 ? "Adjusting size" : "Compressing";
     updateFile(currentState, adjustment + " " + percent + "%", percent);
     const completed = selectedFiles.filter((state) => state.finalSize > 0).length;

@@ -22,6 +22,7 @@ from professor_compressor.application import (
 class NotificationTests(unittest.IsolatedAsyncioTestCase):
     def test_safe_alert_text_escapes_markdown_and_backticks(self) -> None:
         self.assertEqual(safe_alert_text("**name** `ping`"), "\\*\\*name\\*\\* 'ping'")
+        self.assertIn("@\u200beveryone", safe_alert_text("@everyone"))
 
     def test_guild_alert_contains_operational_data_only(self) -> None:
         guild = Mock(name="guild")
@@ -53,6 +54,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             interaction=Mock(),
             guild_id=789,
             guild_name="Test Server",
+            username="clip_creator",
         )
 
         message = compression_outcome_alert(
@@ -65,7 +67,8 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("delivered successfully", message)
         self.assertIn("Test Server", message)
-        self.assertIn("User ID: `123`", message)
+        self.assertIn("Username: **@clip\\_creator**", message)
+        self.assertNotIn("User ID:", message)
         self.assertNotIn("<@123>", message)
         self.assertIn("Files: `2`", message)
         self.assertIn("Finished size: `5.0 MiB`", message)
@@ -84,6 +87,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             claim_secret="claim-secret",
             guild_id=789,
             guild_name="Test Server",
+            username="clip_creator",
         )
         jobs[job.token] = job
         request = Mock()
@@ -103,7 +107,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(job.browser_failure_reported)
             alert = schedule_alert.call_args.args[0]
             self.assertIn("Compression failed", alert)
-            self.assertIn("User ID: `123`", alert)
+            self.assertIn("Username: **@clip\\_creator**", alert)
             self.assertIn("Browser compressionscript", alert)
             self.assertNotIn("<script>", alert)
         finally:

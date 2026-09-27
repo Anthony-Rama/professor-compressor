@@ -1004,6 +1004,7 @@ async def compress(interaction: discord.Interaction) -> None:
         interaction=interaction,
         guild_id=interaction.guild_id,
         guild_name=interaction_guild_name(interaction),
+        username=interaction.user.name,
     )
     metrics.increment("sessions_created")
     upload_url = f"{PUBLIC_BASE_URL}/upload/{quote(token)}"
@@ -1022,7 +1023,7 @@ async def compress(interaction: discord.Interaction) -> None:
         "⚙️ **Compression session created**\n"
         f"Server: **{safe_alert_text(guild_name)}**\n"
         f"Server ID: `{interaction.guild_id}`\n"
-        f"User ID: `{interaction.user.id}`\n"
+        f"Username: **{safe_alert_text('@' + interaction.user.name)}**\n"
         f"Connected servers: `{len(client.guilds)}`\n"
         f"Sessions since restart: `{metrics.snapshot()['sessions_created']}`"
     )
