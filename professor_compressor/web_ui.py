@@ -101,7 +101,7 @@ def browser_compressor(
 
 <script type="module">
 import { FFmpeg } from "/assets/ffmpeg-esm/index.js";
-import { fetchFile, toBlobURL } from "/assets/util-esm/index.js";
+import { fetchFile } from "/assets/util-esm/index.js";
 
 const MAX_CLIPS = __MAX_CLIPS__;
 const TARGET_BYTES = __TARGET_BYTES__;
@@ -390,17 +390,39 @@ function createEncoder() {
   return encoder;
 }
 
+async function startEncoder(config) {
+  const encoder = ffmpeg;
+  let timer;
+  try {
+    await Promise.race([
+      encoder.load(config),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error("The video engine took too long to start. Check your connection and try again.");
+          error.code = "encoder_start_timeout";
+          reject(error);
+        }, 120000);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadEncoder() {
   if (cancelled) throw new DOMException("Cancelled", "AbortError");
+  for (const state of selectedFiles) updateFile(state, "Loading video engine", 0);
+  setRunDetail("Loading video engine");
   const supportsThreads = self.crossOriginIsolated &&
     typeof SharedArrayBuffer !== "undefined";
   if (supportsThreads) {
     ffmpeg = createEncoder();
     try {
-      await ffmpeg.load({
-        coreURL: await toBlobURL(MULTI_CORE_BASE + "/ffmpeg-core.js", "text/javascript"),
-        wasmURL: await toBlobURL(MULTI_CORE_BASE + "/ffmpeg-core.wasm", "application/wasm"),
-        workerURL: await toBlobURL(MULTI_CORE_BASE + "/ffmpeg-core.worker.js", "text/javascript")
+      setRunDetail("Starting video engine");
+      await startEncoder({
+        coreURL: MULTI_CORE_BASE + "/ffmpeg-core.js",
+        wasmURL: MULTI_CORE_BASE + "/ffmpeg-core.wasm",
+        workerURL: MULTI_CORE_BASE + "/ffmpeg-core.worker.js"
       });
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
       return "multithreaded";
@@ -408,13 +430,19 @@ async function loadEncoder() {
       if (cancelled) throw error;
       console.warn("Multithreaded encoder unavailable; using fallback.", error);
       ffmpeg.terminate();
+      if (error.code === "encoder_start_timeout") {
+        ffmpeg = null;
+        throw error;
+      }
     }
   }
   ffmpeg = createEncoder();
   try {
-    await ffmpeg.load({
-      coreURL: await toBlobURL(SINGLE_CORE_BASE + "/ffmpeg-core.js", "text/javascript"),
-      wasmURL: await toBlobURL(SINGLE_CORE_BASE + "/ffmpeg-core.wasm", "application/wasm")
+    for (const state of selectedFiles) updateFile(state, "Loading compatibility engine", 0);
+    setRunDetail("Loading compatibility engine");
+    await startEncoder({
+      coreURL: SINGLE_CORE_BASE + "/ffmpeg-core.js",
+      wasmURL: SINGLE_CORE_BASE + "/ffmpeg-core.wasm"
     });
   } catch (error) {
     if (ffmpeg) ffmpeg.terminate();
@@ -768,9 +796,13 @@ form.addEventListener("submit", async (event) => {
     const effectiveTargetBytes = outputTargetBytes();
     const needsEncoder = selectedFiles.some((state, index) =>
       state.file.size > effectiveTargetBytes || formats[index] !== "mp4");
+    if (needsEncoder && !ffmpeg) {
+      setPhase("compress", "Loading video engine",
+        "The browser is preparing its video tools. This can take a minute on a first or uncached visit; your video stays on this device.");
+      encoderMode = await loadEncoder();
+    }
     setPhase("compress", "Compressing on your device",
       "Compression runs locally. Nothing is sent until every video is ready.");
-    if (needsEncoder && !ffmpeg) encoderMode = await loadEncoder();
     const results = [];
     for (const state of selectedFiles) {
       if (cancelled) throw new DOMException("Cancelled", "AbortError");

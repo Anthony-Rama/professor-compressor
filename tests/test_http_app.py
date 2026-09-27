@@ -225,6 +225,10 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(response.content_type, content_type)
                 else:
                     self.assertEqual(response.content_type, content_type)
+                if path.startswith("/assets/"):
+                    self.assertEqual(
+                        response.headers["Cache-Control"], "public, max-age=3600"
+                    )
 
     async def test_third_party_notices_are_publicly_available(self) -> None:
         for path, expected_text in (

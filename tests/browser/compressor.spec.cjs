@@ -158,6 +158,9 @@ test('drops cannot replace files while compression is running', async ({ page, r
   await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
   await page.locator('#submit').click();
   await expect(page.locator('#clips')).toBeDisabled();
+  await expect(page.locator('#phase-title')).toHaveText('Loading video engine');
+  await expect(page.locator('#run-detail')).toHaveText('Starting video engine');
+  await expect(page.locator('.file-status')).toHaveText('Loading video engine');
   await dropFiles(page, 2);
   await expect(page.locator('.file-card')).toHaveCount(1);
   await expect(page.locator('.file-name')).toHaveText('large.mp4');
