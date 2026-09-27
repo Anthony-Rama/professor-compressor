@@ -21,7 +21,13 @@ from discord import app_commands
 
 from .config import MIB, Settings
 from .domain import BrowserResult, DeliveryRequest, JobState, UploadJob
-from .landing_pages import guide_html, home_html, robots_txt, sitemap_xml
+from .landing_pages import (
+    BOT_INVITE_URL,
+    guide_html,
+    home_html,
+    robots_txt,
+    sitemap_xml,
+)
 from .legal_pages import privacy_policy_html, terms_of_service_html
 from .media_validation import valid_mp4_signature
 from .metrics import RuntimeMetrics
@@ -923,6 +929,7 @@ async def delivery_worker(worker_number: int) -> None:
     description="Privately compress up to 10 videos in your browser",
 )
 @app_commands.guild_only()
+@app_commands.allowed_installs(guilds=True, users=False)
 async def compress(interaction: discord.Interaction) -> None:
     if (
         effective_allowed_guild_ids
@@ -936,6 +943,18 @@ async def compress(interaction: discord.Interaction) -> None:
     if interaction.channel_id is None:
         await interaction.response.send_message(
             "Use this command inside a server channel.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild_id is None or client.get_guild(interaction.guild_id) is None:
+        view = discord.ui.View(timeout=None)
+        view.add_item(discord.ui.Button(label="Add bot to server", url=BOT_INVITE_URL))
+        await interaction.response.send_message(
+            "Professor Compressor must be installed in this server to send "
+            "your videos back here. Ask a server admin or someone with Manage "
+            "Server permission to add the bot to this server, then run "
+            "/compress again.",
+            view=view,
             ephemeral=True,
         )
         return

@@ -14,6 +14,8 @@
 
 Professor Compressor helps people share videos that exceed a server's upload limit. A member runs `/compress`, opens a private browser link, and selects or drops up to 10 videos. The browser prepares MP4 files that fit the limit Discord reports for that server; the bot sends the results back to the original channel.
 
+A server owner or member with **Manage Server** permission must add the bot to the server first. Installing the app only to a personal Discord account cannot deliver files back to a server channel.
+
 ## How it works
 
 ```mermaid
