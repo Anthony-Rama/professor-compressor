@@ -219,10 +219,6 @@ async def browser_security_headers(
         "worker-src 'self' blob:"
     )
     response.headers["X-Frame-Options"] = "DENY"
-    if request.path.startswith("/assets/"):
-        # The FFmpeg WebAssembly core is large; reuse it across sessions.
-        # Keep the lifetime bounded because these asset URLs are not versioned.
-        response.headers["Cache-Control"] = "public, max-age=3600"
     if request.path.startswith("/upload/") or request.path in {
         "/healthz",
         "/metricsz",

@@ -401,7 +401,7 @@ async function startEncoder(config) {
           const error = new Error("The video engine took too long to start. Check your connection and try again.");
           error.code = "encoder_start_timeout";
           reject(error);
-        }, 120000);
+        }, 300000);
       })
     ]);
   } finally {
@@ -411,7 +411,9 @@ async function startEncoder(config) {
 
 async function loadEncoder() {
   if (cancelled) throw new DOMException("Cancelled", "AbortError");
-  for (const state of selectedFiles) updateFile(state, "Loading video engine", 0);
+  for (const state of selectedFiles) {
+    if (!state.finalSize) updateFile(state, "Loading video engine", 0);
+  }
   setRunDetail("Loading video engine");
   const supportsThreads = self.crossOriginIsolated &&
     typeof SharedArrayBuffer !== "undefined";
@@ -438,7 +440,9 @@ async function loadEncoder() {
   }
   ffmpeg = createEncoder();
   try {
-    for (const state of selectedFiles) updateFile(state, "Loading compatibility engine", 0);
+    for (const state of selectedFiles) {
+      if (!state.finalSize) updateFile(state, "Loading compatibility engine", 0);
+    }
     setRunDetail("Loading compatibility engine");
     await startEncoder({
       coreURL: SINGLE_CORE_BASE + "/ffmpeg-core.js",
@@ -798,7 +802,7 @@ form.addEventListener("submit", async (event) => {
       state.file.size > effectiveTargetBytes || formats[index] !== "mp4");
     if (needsEncoder && !ffmpeg) {
       setPhase("compress", "Loading video engine",
-        "The browser is preparing its video tools. This can take a minute on a first or uncached visit; your video stays on this device.");
+        "The browser is preparing its video tools. A first or uncached visit may take a few minutes on a slow connection; your video stays on this device.");
       encoderMode = await loadEncoder();
     }
     setPhase("compress", "Compressing on your device",
