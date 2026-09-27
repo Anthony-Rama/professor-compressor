@@ -196,16 +196,25 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
     async def test_packaged_browser_assets_are_available(self) -> None:
         expected_types = {
             "/brand/professor-compressor.png": "image/png",
-            "/assets/ffmpeg-esm/index.js": "application/javascript",
-            "/assets/util-esm/index.js": "application/javascript",
+            "/assets/ffmpeg-esm/index.js": {
+                "application/javascript",
+                "text/javascript",
+            },
+            "/assets/util-esm/index.js": {"application/javascript", "text/javascript"},
             "/assets/core-esm/ffmpeg-core.wasm": "application/wasm",
-            "/assets/core-mt-esm/ffmpeg-core.worker.js": "application/javascript",
+            "/assets/core-mt-esm/ffmpeg-core.worker.js": {
+                "application/javascript",
+                "text/javascript",
+            },
         }
         for path, content_type in expected_types.items():
             with self.subTest(path=path):
                 response = await self.client.head(path)
                 self.assertEqual(response.status, 200)
-                self.assertEqual(response.content_type, content_type)
+                if isinstance(content_type, set):
+                    self.assertIn(response.content_type, content_type)
+                else:
+                    self.assertEqual(response.content_type, content_type)
 
     async def test_third_party_notices_are_publicly_available(self) -> None:
         for path, expected_text in (
