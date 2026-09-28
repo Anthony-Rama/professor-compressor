@@ -168,6 +168,29 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
                 "sending files", interaction.response.send_message.await_args.args[0]
             )
 
+    async def test_exit_wait_includes_remaining_command_cooldown(self):
+        interaction = self.make_interaction()
+        job = UploadJob(
+            "original",
+            789,
+            456,
+            time.time() + 600,
+            20_000_000,
+            interaction,
+            state=JobState.CLAIMED,
+            processing_until=time.time() + 90,
+            page_left_at=time.time() - 1,
+        )
+        with (
+            patch.object(app.client, "get_guild", return_value=interaction.guild),
+            patch.object(app, "jobs", {job.token: job}),
+            patch.object(app, "last_job_at", {(123, 789): time.time() - 2}),
+        ):
+            await app.compress.callback(interaction)
+            self.assertIn(
+                "wait 13 seconds", interaction.response.send_message.await_args.args[0]
+            )
+
     async def test_drain_rejects_new_command(self):
         interaction = self.make_interaction()
         with patch.object(app, "draining", True), patch.object(app, "jobs", {}):

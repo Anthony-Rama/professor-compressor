@@ -679,8 +679,8 @@ async def upload_form(request: web.Request) -> web.Response:
         return page(
             "Please wait",
             "<h1>Too many requests</h1>"
-            f"<p>Please wait {retry_after} seconds, then run "
-            "<strong>/compress</strong> again.</p>",
+            f"<p>Please wait {retry_after} seconds and reopen this link. "
+            "If it has expired, run <strong>/compress</strong> again.</p>",
         )
     token = request.match_info["token"]
     job = active_job(token)
@@ -1376,14 +1376,19 @@ async def compress(interaction: discord.Interaction) -> None:
         )
     ]
     if waiting_jobs:
+        cooldown_key = (interaction.guild_id or 0, interaction.user.id)
+        cooldown_ends = last_job_at.get(cooldown_key, 0.0) + USER_COOLDOWN_SECONDS
         wait_until = max(
-            min(
-                job.processing_until,
-                job.page_left_at + PAGE_EXIT_GRACE_SECONDS
-                if job.page_left_at is not None
-                else job.processing_until,
-            )
-            for job in waiting_jobs
+            cooldown_ends,
+            *(
+                min(
+                    job.processing_until,
+                    job.page_left_at + PAGE_EXIT_GRACE_SECONDS
+                    if job.page_left_at is not None
+                    else job.processing_until,
+                )
+                for job in waiting_jobs
+            ),
         )
         seconds = max(1, math.ceil(wait_until - now))
         await interaction.response.send_message(
