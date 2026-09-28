@@ -49,11 +49,11 @@ class BrowserPageTests(unittest.TestCase):
 
     def test_feedback_is_optional_and_has_a_support_link(self) -> None:
         self.assertIn(
-            'id="feedback-actions" class="feedback-actions" hidden', self.page
+            'id="feedback-actions" class="feedback-actions contact-actions" hidden',
+            self.page,
         )
-        self.assertIn("Share feedback", self.page)
-        self.assertIn("Email support", self.page)
-        self.assertIn("Join support server", self.page)
+        self.assertIn("Contact Us", self.page)
+        self.assertIn("Join Discord Server", self.page)
         self.assertIn("https://discord.com/invite/32RWwNWyEH", self.page)
         self.assertIn("mailto:professorcompressor.support@gmail.com", self.page)
         self.assertIn('showFeedback("success")', self.page)

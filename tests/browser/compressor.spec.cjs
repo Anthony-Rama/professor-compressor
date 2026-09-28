@@ -100,10 +100,16 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   await expect(page.locator('#session-note')).toBeHidden();
   await expect(page.locator('#stay-open')).toBeHidden();
   await expect(page.locator('#performance-help')).toBeHidden();
+  await expect(page.locator('#format-help')).toBeHidden();
   await expect(page.locator('#message')).toHaveCSS('text-align', 'center');
-  await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
-  await expect(page.locator('.support-link[href^="mailto:"]')).toHaveAttribute('href', /^mailto:professorcompressor\.support@gmail\.com\?/);
-  await expect(page.getByRole('link', {name: 'Join support server'})).toHaveAttribute('href', 'https://discord.com/invite/32RWwNWyEH');
+  await expect(page.getByRole('link', {name: 'Contact Us'})).toHaveAttribute('href', /^mailto:professorcompressor\.support@gmail\.com\?/);
+  await expect(page.getByRole('link', {name: 'Join Discord Server'})).toHaveAttribute('href', 'https://discord.com/invite/32RWwNWyEH');
+  const actions = page.locator('#feedback-actions');
+  const firstAction = await actions.getByRole('link', {name: 'Contact Us'}).boundingBox();
+  const secondAction = await actions.getByRole('link', {name: 'Join Discord Server'}).boundingBox();
+  const actionsBox = await actions.boundingBox();
+  expect(Math.abs((firstAction.x + secondAction.x + secondAction.width) / 2 -
+    (actionsBox.x + actionsBox.width / 2))).toBeLessThan(2);
 });
 
 test('single-thread fallback still encodes when multithread core is unavailable', async ({ page, request }) => {
@@ -233,9 +239,12 @@ test('unsupported AV1 fails without uploading and allows a supported replacement
   await page.locator('#submit').click();
   await expect(page.locator('#message')).toContainText('unsupported or damaged codec', {timeout:30000});
   await expect(page.locator('#feedback-actions')).toBeVisible();
+  await expect(page.locator('#format-help')).toBeVisible();
+  await expect(page.getByRole('link', {name: 'Contact Us'})).toBeVisible();
   await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(failure\)/);
   expect(uploads).toBe(0);
   await deliver(page, join(fixtures, 'small.mp4'));
+  await expect(page.locator('#format-help')).toBeHidden();
   await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
 });
 
@@ -534,10 +543,9 @@ for (const width of [375, 1440]) {
     await help.locator('summary').click();
     await gapAfter('#submit');
     await deliver(page, join(fixtures, 'small.mp4'));
-    await gapAfter('#message');
-    await gapAfter('#feedback-actions');
-    await help.locator('summary').click();
-    await gapAfter('#feedback-actions');
+    await expect(help).toBeHidden();
+    await expect(page.locator('#performance-help')).toBeHidden();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({path: test.info().outputPath(`layout-${width}.png`), fullPage:true});
   });
 }

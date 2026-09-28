@@ -73,16 +73,14 @@ __RECOVERY_NOTICE__
   </div>
   <div id="message" class="message" hidden aria-live="assertive"></div>
   <div id="downloads" class="feedback-actions" hidden aria-label="Save prepared videos"></div>
-  <div id="feedback-actions" class="feedback-actions" hidden>
+  <div id="feedback-actions" class="feedback-actions contact-actions" hidden>
     <a id="feedback-link" class="feedback-link"
-      href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20feedback">Share feedback</a>
-    <a class="support-link"
-      href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20support">Email support</a>
-    <a class="support-link" href="https://discord.com/invite/32RWwNWyEH">Join support server</a>
-    <p>Optional: email links open your email app; the server link opens Discord.
+      href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20contact">Contact Us</a>
+    <a class="support-link" href="https://discord.com/invite/32RWwNWyEH">Join Discord Server</a>
+    <p>The email link opens your email app; the server link opens Discord.
       Please don't share private videos or session links.</p>
   </div>
-  <details class="performance-help format-help">
+  <details class="performance-help format-help" id="format-help">
     <summary>Supported video formats</summary>
     <p>MP4, MOV, M4V, WebM, MKV, AVI, MPEG, OGV, FLV, TS, MTS, M2TS,
       3GP, 3G2, WMV, and ASF. Support also depends on the codec inside the file.
@@ -126,6 +124,7 @@ const selection = document.getElementById("selection");
 const sessionNote = document.getElementById("session-note");
 const stayOpen = document.getElementById("stay-open");
 const performanceHelp = document.getElementById("performance-help");
+const formatHelp = document.getElementById("format-help");
 const pageHeading = document.getElementById("page-heading");
 const pageIntro = document.getElementById("page-intro");
 const filesElement = document.getElementById("files");
@@ -985,6 +984,7 @@ form.addEventListener("submit", async (event) => {
     sessionNote.hidden = true;
     stayOpen.hidden = true;
     performanceHelp.hidden = true;
+    formatHelp.hidden = true;
     clips.disabled = true;
     submit.hidden = true;
     cancelButton.hidden = true;

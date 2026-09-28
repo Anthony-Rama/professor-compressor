@@ -367,6 +367,7 @@ def page(title: str, body: str) -> web.Response:
                         color: #9ce8d2; text-align: center; }}
     .feedback-actions {{ display: flex; flex-wrap: wrap; align-items: center;
                          gap: 10px; margin-top: 14px; }}
+    .contact-actions {{ justify-content: center; text-align: center; }}
     .feedback-actions a {{ display: inline-flex; align-items: center;
                            justify-content: center; min-height: 42px;
                            padding: 10px 14px; border-radius: 10px;
