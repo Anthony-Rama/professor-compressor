@@ -1029,8 +1029,7 @@ expiryTimer = setInterval(updateExpiry, 1000);
             "__RECOVERY_NOTICE__",
             '<div class="message" role="status"><strong>Page refreshed.</strong> '
             "Videos selected in the previous page are no longer available here. "
-            "Choose them again to restart local processing. Check Discord first "
-            "if you had already sent finished files.</div>"
+            "Choose them again to restart local processing.</div>"
             if reopened
             else "",
         )

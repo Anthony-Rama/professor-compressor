@@ -338,6 +338,7 @@ test('same browser can refresh and reselect without retaining local files', asyn
   await page.reload();
   await expect(page.getByRole('heading')).toHaveText('Compress videos for Discord');
   await expect(page.getByRole('status')).toContainText('Page refreshed');
+  await expect(page.getByRole('status')).not.toContainText('Check Discord first');
   await expect(page.locator('#selection')).toHaveText('No videos selected');
   expect(page.url()).toBe(url);
   await deliver(page, join(fixtures, 'small.mp4'));
