@@ -93,6 +93,14 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();
+  await expect(page.locator('#page-heading')).toHaveText('Upload complete');
+  await expect(page.locator('#page-intro')).toBeHidden();
+  await expect(page.locator('#drop-zone')).toBeHidden();
+  await expect(page.locator('#selection')).toBeHidden();
+  await expect(page.locator('#session-note')).toBeHidden();
+  await expect(page.locator('#stay-open')).toBeHidden();
+  await expect(page.locator('#performance-help')).toBeHidden();
+  await expect(page.locator('#message')).toHaveCSS('text-align', 'center');
   await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
   await expect(page.locator('.support-link[href^="mailto:"]')).toHaveAttribute('href', /^mailto:professorcompressor\.support@gmail\.com\?/);
   await expect(page.getByRole('link', {name: 'Join support server'})).toHaveAttribute('href', 'https://discord.com/invite/32RWwNWyEH');
@@ -378,9 +386,10 @@ test('refresh while Discord delivery is pending shows receipt status, not upload
   await page.locator('#submit').click();
   await expect(page.locator('#phase-copy')).toContainText('relay is processing this batch', {timeout:30000});
   await page.reload();
-  await expect(page.getByRole('heading')).toHaveText('Checking Discord delivery');
   await expect(page.locator('#clips')).toHaveCount(0);
   await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord', {timeout:15000});
+  await expect(page.getByRole('heading')).toHaveText('Delivery complete');
+  await expect(page.locator('#delivery-explanation')).toBeHidden();
   await expect(page.locator('#delivery-status')).toContainText('To upload more videos, run /compress again.');
 });
 
@@ -388,8 +397,9 @@ test('completed session refresh shows delivered receipt, not duplicate uploader'
   await openSession(page, request);
   await deliver(page, join(fixtures, 'small.mp4'));
   await page.reload();
-  await expect(page.getByRole('heading')).toHaveText('Checking Discord delivery');
   await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord');
+  await expect(page.getByRole('heading')).toHaveText('Delivery complete');
+  await expect(page.locator('#delivery-explanation')).toBeHidden();
   await expect(page.locator('#delivery-status')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('#clips')).toHaveCount(0);
 });
@@ -510,6 +520,10 @@ for (const width of [375, 1440]) {
     await page.setViewportSize({width, height:1000});
     await openSession(page, request);
     const help = page.locator('.format-help');
+    const performanceHelp = page.locator('#performance-help');
+    const formatBox = await help.boundingBox();
+    const performanceBox = await performanceHelp.boundingBox();
+    expect(performanceBox.y - (formatBox.y + formatBox.height)).toBeGreaterThanOrEqual(15);
     const gapAfter = async selector => {
       const above = await page.locator(selector).boundingBox();
       const below = await help.boundingBox();

@@ -288,13 +288,12 @@ def page(title: str, body: str) -> web.Response:
                   line-height: 1.45; }}
     .stay-open > span:first-child {{ font-size: 20px; line-height: 1.2; }}
     .stay-open strong {{ color: #f8fafc; }}
-    .performance-help {{ margin: -10px 0 24px; padding: 12px 14px;
+    .performance-help {{ margin: 16px 0 0; padding: 12px 14px;
                          border: 1px solid #344158; border-radius: 12px;
                          background: #151f30; color: #aeb9c9; font-size: 13px; }}
     .performance-help summary {{ color: #dbe2ed; font-weight: 700; cursor: pointer; }}
     .performance-help p {{ margin: 10px 0 0; font-size: 13px; }}
     .performance-help code {{ color: #cbd2ff; overflow-wrap: anywhere; }}
-    .format-help {{ margin: 16px 0 0; }}
     .file-input {{ position: absolute; width: 1px; height: 1px; padding: 0;
                    margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
                    white-space: nowrap; border: 0; }}
@@ -365,7 +364,7 @@ def page(title: str, body: str) -> web.Response:
                 font-size: 13px; line-height: 1.45; }}
     .message.error {{ border: 1px solid #733648; background: #321b27; }}
     .message.success {{ border: 1px solid #276052; background: #16362f;
-                        color: #9ce8d2; }}
+                        color: #9ce8d2; text-align: center; }}
     .feedback-actions {{ display: flex; flex-wrap: wrap; align-items: center;
                          gap: 10px; margin-top: 14px; }}
     .feedback-actions a {{ display: inline-flex; align-items: center;

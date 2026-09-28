@@ -28,23 +28,15 @@ def browser_compressor(
     template = r"""
 <img class="brand" src="/brand/professor-compressor.png"
   alt="Professor Compressor mascot">
-<h1>Compress videos for Discord</h1>
-<p class="intro">Choose up to __MAX_CLIPS__ videos. Finished videos are formatted
+<h1 id="page-heading">Compress videos for Discord</h1>
+<p class="intro" id="page-intro">Choose up to __MAX_CLIPS__ videos. Finished videos are formatted
   for Discord's current upload limit.</p>
 __RECOVERY_NOTICE__
-<div class="stay-open">
+<div class="stay-open" id="stay-open">
   <span aria-hidden="true">⏱</span>
   <span><strong>Keep this page open and active until it finishes.</strong><br>
   This helps compression run at full speed.</span>
 </div>
-<details class="performance-help">
-  <summary>Keep compression running quickly</summary>
-  <p>For maximum speed, move this tab into a separate window and keep part of
-    the window visible while compression runs.</p>
-  <p>In Chrome, open <code>chrome://settings/performance</code>, add this site
-    under <strong>Always keep these sites active</strong>, and turn off
-    <strong>Energy Saver</strong> while processing.</p>
-</details>
 <form id="upload">
   <input class="file-input" id="clips" name="clips" type="file"
     accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.mpeg,.mpg,.ogv,.ogg,.flv,.ts,.mts,.m2ts,.3gp,.3g2,.wmv,.asf" multiple required>
@@ -53,7 +45,7 @@ __RECOVERY_NOTICE__
     <span><strong>Choose videos or drag them here</strong><small>Select up to __MAX_CLIPS__ files; a new selection replaces the previous one</small></span>
   </label>
   <p id="selection" class="selection" aria-live="polite">No videos selected</p>
-  <div class="session-note">
+  <div class="session-note" id="session-note">
     <span>Private session, bound to this browser</span><span id="expires">Expires in --:--</span>
   </div>
   <div id="files" class="file-list" hidden></div>
@@ -97,6 +89,14 @@ __RECOVERY_NOTICE__
       AV1 conversion is not supported by this encoder. Damaged, encrypted,
       or unsupported videos cannot be converted.</p>
   </details>
+  <details class="performance-help" id="performance-help">
+    <summary>Keep compression running quickly</summary>
+    <p>For maximum speed, move this tab into a separate window and keep part of
+      the window visible while compression runs.</p>
+    <p>In Chrome, open <code>chrome://settings/performance</code>, add this site
+      under <strong>Always keep these sites active</strong>, and turn off
+      <strong>Energy Saver</strong> while processing.</p>
+  </details>
   <p class="privacy"><span aria-hidden="true">🔒</span> Compression runs on
     this device. Only finished files are sent through the relay to Discord.
     MP4s that already fit may be sent unchanged.<br>
@@ -123,6 +123,11 @@ const clips = document.getElementById("clips");
 const submit = document.getElementById("submit");
 const cancelButton = document.getElementById("cancel");
 const selection = document.getElementById("selection");
+const sessionNote = document.getElementById("session-note");
+const stayOpen = document.getElementById("stay-open");
+const performanceHelp = document.getElementById("performance-help");
+const pageHeading = document.getElementById("page-heading");
+const pageIntro = document.getElementById("page-intro");
 const filesElement = document.getElementById("files");
 const work = document.getElementById("work");
 const message = document.getElementById("message");
@@ -973,6 +978,13 @@ form.addEventListener("submit", async (event) => {
     showMessage("Compression complete. You can close this page and return to Discord. To upload more videos, run /compress again.", "success");
     deliveryComplete = true;
     showFeedback("success");
+    pageHeading.textContent = "Upload complete";
+    pageIntro.hidden = true;
+    dropZone.hidden = true;
+    selection.hidden = true;
+    sessionNote.hidden = true;
+    stayOpen.hidden = true;
+    performanceHelp.hidden = true;
     clips.disabled = true;
     submit.hidden = true;
     cancelButton.hidden = true;
@@ -1041,10 +1053,10 @@ def browser_delivery_status(session_secret: str) -> str:
     return (
         '<img class="brand" src="/brand/professor-compressor.png" '
         'alt="Professor Compressor mascot">'
-        "<h1>Checking Discord delivery</h1>"
-        '<p class="intro">Your browser may have refreshed while finished files '
-        "were being sent. The relay is checking the existing delivery. "
-        "Do not start another upload yet.</p>"
+        '<h1 id="delivery-heading">Checking Discord delivery</h1>'
+        '<p id="delivery-explanation" class="intro">Your browser may have '
+        "refreshed while finished files were being sent. Below is the "
+        "current status:</p>"
         '<p id="delivery-status" class="message" role="status">Checking status…</p>'
         '<p id="reselect" hidden>That upload did not complete. Videos held by '
         "the previous page cannot be restored. "
@@ -1054,6 +1066,8 @@ def browser_delivery_status(session_secret: str) -> str:
         "<script>\n"
         f"const SESSION_SECRET = {_json_script_value(session_secret)};\n"
         'const statusLine = document.getElementById("delivery-status");\n'
+        'const heading = document.getElementById("delivery-heading");\n'
+        'const explanation = document.getElementById("delivery-explanation");\n'
         'const reselect = document.getElementById("reselect");\n'
         "async function checkDelivery() {\n"
         "  try {\n"
@@ -1066,18 +1080,27 @@ def browser_delivery_status(session_secret: str) -> str:
         '      statusLine.textContent = "Delivery is still in progress. Check Discord before starting a new session.";\n'
         "      setTimeout(checkDelivery, 2000);\n"
         "    } else if (body.ok) {\n"
+        '      heading.textContent = "Delivery complete";\n'
+        "      explanation.hidden = true;\n"
         '      statusLine.textContent = "Delivered to Discord. You can return to your channel. To upload more videos, run /compress again.";\n'
         '      statusLine.classList.add("success");\n'
         "    } else if (body.ready) {\n"
+        '      heading.textContent = "Upload interrupted";\n'
+        "      explanation.hidden = true;\n"
         '      statusLine.textContent = "The upload stopped before Discord delivery.";\n'
         "      reselect.hidden = false;\n"
         '    } else if (body.code === "discord_delivery_failed") {\n'
+        '      heading.textContent = "Delivery failed";\n'
+        "      explanation.hidden = true;\n"
         '      statusLine.textContent = "Discord rejected this delivery. Run /compress again or contact support if it keeps happening.";\n'
         '      statusLine.classList.add("error");\n'
         "    } else {\n"
+        '      heading.textContent = "Delivery status unavailable";\n'
+        "      explanation.hidden = true;\n"
         '      statusLine.textContent = "Delivery could not be confirmed. Check Discord before running /compress again.";\n'
         "    }\n"
         "  } catch (_) {\n"
+        "    explanation.hidden = true;\n"
         '    statusLine.textContent = "Connection lost while checking delivery. Retrying safely…";\n'
         "    setTimeout(checkDelivery, 3000);\n"
         "  }\n"
