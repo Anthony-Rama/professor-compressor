@@ -970,7 +970,7 @@ form.addEventListener("submit", async (event) => {
     overallProgress.value = 100;
     setRunDetail("Complete");
     setPhase("done", "Delivered to Discord", response.message);
-    showMessage("Compression complete. You can close this page and return to Discord.", "success");
+    showMessage("Compression complete. You can close this page and return to Discord. To upload more videos, run /compress again.", "success");
     deliveryComplete = true;
     showFeedback("success");
     clips.disabled = true;
@@ -1066,7 +1066,7 @@ def browser_delivery_status(session_secret: str) -> str:
         '      statusLine.textContent = "Delivery is still in progress. Check Discord before starting a new session.";\n'
         "      setTimeout(checkDelivery, 2000);\n"
         "    } else if (body.ok) {\n"
-        '      statusLine.textContent = "Delivered to Discord. You can return to your channel.";\n'
+        '      statusLine.textContent = "Delivered to Discord. You can return to your channel. To upload more videos, run /compress again.";\n'
         '      statusLine.classList.add("success");\n'
         "    } else if (body.ready) {\n"
         '      statusLine.textContent = "The upload stopped before Discord delivery.";\n'

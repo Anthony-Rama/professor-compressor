@@ -90,6 +90,7 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   await expect(page.locator('#feedback-actions')).toBeHidden();
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
   await deliver(page, join(fixtures, 'large.mp4'));
+  await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();
   await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
@@ -380,6 +381,7 @@ test('refresh while Discord delivery is pending shows receipt status, not upload
   await expect(page.getByRole('heading')).toHaveText('Checking Discord delivery');
   await expect(page.locator('#clips')).toHaveCount(0);
   await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord', {timeout:15000});
+  await expect(page.locator('#delivery-status')).toContainText('To upload more videos, run /compress again.');
 });
 
 test('completed session refresh shows delivered receipt, not duplicate uploader', async ({ page, request }) => {
@@ -388,6 +390,7 @@ test('completed session refresh shows delivered receipt, not duplicate uploader'
   await page.reload();
   await expect(page.getByRole('heading')).toHaveText('Checking Discord delivery');
   await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord');
+  await expect(page.locator('#delivery-status')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('#clips')).toHaveCount(0);
 });
 
