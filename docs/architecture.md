@@ -52,7 +52,9 @@ state. This keeps the small deployment simple, but it means sessions, queue
 contents, and aggregate metrics disappear on restart. Horizontal scaling would
 require shared session storage and a durable external queue.
 
-`/healthz` reports readiness and current queue pressure. `/metricsz` reports
+`/healthz` reports liveness, release revision, and current queue pressure.
+`/readyz` checks Discord, command synchronization, workers, and maintenance state.
+`/metricsz` reports
 process-lifetime aggregate usage counters. Metrics never include user IDs,
 guild IDs, channel IDs, filenames, IP addresses, or file contents.
 
@@ -90,3 +92,39 @@ reports are authenticated with the claimed session secret and deduplicated
 before they generate an operator alert. A browser-side failure does not consume
 the session, so the page's retry action remains usable until the session
 expires.
+
+## Delivery recovery and expiration
+
+The target is the normal bot-message allowance, not a user's Nitro interaction
+allowance. The command checks effective channel permissions before creating a
+link, and the worker checks permissions and the current bot allowance again
+before sending. Threads have separate send permissions.
+
+A HEAD inspection never claims a link. A GET still claims the one-use page;
+refreshing it does not open another session. During active encoding, authenticated
+heartbeats renew the browser lease up to a two-hour total lifetime (or a longer
+explicitly configured active-session lifetime). Idle sessions expire normally.
+A second command cannot replace a session actively encoding or delivering;
+abandoned encoding leases clear after 90 seconds without a heartbeat.
+
+An accepted delivery is owned by the queue, not the browser connection. The HTTP
+request waits briefly, then returns 202 if work is pending. The browser polls an
+authenticated status endpoint. Queued work is not deleted by browser-session
+expiry, and disconnecting does not cancel the worker. A lost success response is
+recovered from a bounded one-hour receipt cache; duplicate uploads return that
+receipt without sending another message. Receipts contain no media or filenames.
+After receipt expiry or a process restart, a user must check Discord before
+starting another session. Exactly-once delivery across process failure or an
+ambiguous Discord API timeout is not guaranteed.
+
+Prepared browser files survive recoverable upload failures until the page closes
+or succeeds. Send-only retries use those files; optional local download links
+allow recovery without another encoding pass. Nothing is downloaded automatically.
+
+## Shutdown
+
+HTTP starts independently of Discord command synchronization. Transient sync
+failures retry while readiness stays false. On SIGTERM/SIGINT the process stops
+accepting new sessions and drains active encoding leases, uploads, and deliveries
+for at most 120 seconds. The configured container stop grace period is longer.
+This reduces interruptions but is not persistent storage or zero-downtime deployment.

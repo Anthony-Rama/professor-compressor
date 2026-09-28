@@ -130,7 +130,12 @@ def privacy_policy_html() -> str:
       automatically, and delivery data is kept in memory only as long as needed
       to complete or fail the request. IP-based rate-limit entries expire after
       their short rate-limit window. Aggregate counters reset when the process
-      restarts. Discord may retain delivered attachments according to its own
+      restarts. To recover an interrupted delivery response without sending files
+      twice, the relay keeps a bounded in-memory delivery receipt for up to one
+      hour. It contains the session authentication secret, outcome, and file
+      count, not video bytes or filenames. Active browser processing can renew
+      a session for a bounded period; idle sessions expire normally.
+      Discord may retain delivered attachments according to its own
       policies.</p>
 
     <h2>7. Cookies and tracking</h2>

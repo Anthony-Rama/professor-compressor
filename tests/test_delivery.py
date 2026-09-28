@@ -37,6 +37,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(app, "delivery_queue", queue),
                 patch.object(app, "delivery_bytes_held", 5),
                 patch.object(app, "schedule_owner_alert"),
+                patch.object(app, "outcomes", {}),
                 patch.object(
                     app,
                     "deliver_browser_results",
@@ -49,7 +50,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(app.delivery_bytes_held, 0)
                     self.assertIs(job.state, JobState.DONE)
                     if failure:
-                        self.assertIs(completed.exception(), failure)
+                        self.assertEqual(str(completed.exception()), str(failure))
                     else:
                         self.assertEqual(completed.result(), "sent")
                 finally:
@@ -74,12 +75,17 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             expires_at=9999999999,
             discord_limit=20_000_000,
             interaction=interaction,
+            guild_id=789,
         )
         results = [BrowserResult(name="clip.mp4", data=b"video")]
         channel = Mock()
         channel.send = AsyncMock()
 
         with (
+            patch(
+                "professor_compressor.application.client.get_guild",
+                return_value=Mock(filesize_limit=20_000_000),
+            ),
             patch(
                 "professor_compressor.application.get_channel",
                 AsyncMock(return_value=channel),

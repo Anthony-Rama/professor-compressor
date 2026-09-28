@@ -37,6 +37,9 @@ Some dependencies use moving branches, so the exact source revisions used for
 the distributed binaries must be confirmed before claiming complete
 corresponding-source availability.
 
+The remaining evidence and release steps are tracked in the
+[source-verification checklist](docs/ffmpeg-source-provenance.md).
+
 ## Distribution requirements
 
 Serving WebAssembly to browsers distributes those components. Preserve their

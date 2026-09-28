@@ -1,5 +1,7 @@
 import json
 
+from .assets import ASSET_PREFIX
+
 
 def _json_script_value(value: object) -> str:
     """Serialize data without allowing it to terminate an inline script."""
@@ -75,6 +77,7 @@ def browser_compressor(
     </div>
   </div>
   <div id="message" class="message" hidden aria-live="assertive"></div>
+  <div id="downloads" class="feedback-actions" hidden aria-label="Save prepared videos"></div>
   <div id="feedback-actions" class="feedback-actions" hidden>
     <a id="feedback-link" class="feedback-link"
       href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20feedback">Share feedback</a>
@@ -100,8 +103,8 @@ def browser_compressor(
 </form>
 
 <script type="module">
-import { FFmpeg } from "/assets/ffmpeg-esm/index.js";
-import { fetchFile } from "/assets/util-esm/index.js";
+import { FFmpeg } from "__ASSET_PREFIX__/ffmpeg-esm/index.js";
+import { fetchFile } from "__ASSET_PREFIX__/util-esm/index.js";
 
 const MAX_CLIPS = __MAX_CLIPS__;
 const TARGET_BYTES = __TARGET_BYTES__;
@@ -109,8 +112,8 @@ const MAX_BATCH_BYTES = __MAX_BATCH_BYTES__;
 const SESSION_SECRET = __SESSION_SECRET__;
 const SESSION_EXPIRES_SECONDS = __EXPIRES_SECONDS__;
 const OUTPUT_TARGET_RATIO = 0.97;
-const SINGLE_CORE_BASE = "/assets/core-esm";
-const MULTI_CORE_BASE = "/assets/core-mt-esm";
+const SINGLE_CORE_BASE = "__ASSET_PREFIX__/core-esm";
+const MULTI_CORE_BASE = "__ASSET_PREFIX__/core-mt-esm";
 
 const form = document.getElementById("upload");
 const clips = document.getElementById("clips");
@@ -148,6 +151,72 @@ let cancelled = false;
 let running = false;
 let tabProgress = "Preparing files";
 let runStage = "Browser compression";
+let sessionDeadline = Date.now() + SESSION_EXPIRES_SECONDS * 1000;
+let heartbeatTimer = null;
+let preparedResults = null;
+let recoveryURLs = [];
+let pauseRequest = Promise.resolve();
+
+function sessionExpired() { return Date.now() >= sessionDeadline; }
+
+function clearPreparedFiles() {
+  preparedResults = null;
+  for (const url of recoveryURLs) URL.revokeObjectURL(url);
+  recoveryURLs = [];
+  document.getElementById("downloads").replaceChildren();
+  document.getElementById("downloads").hidden = true;
+}
+
+function showPreparedFiles() {
+  const downloads = document.getElementById("downloads");
+  if (!preparedResults?.length || recoveryURLs.length) return;
+  const note = document.createElement("p");
+  note.textContent = "Your prepared files are still on this device. Save them before closing this page.";
+  downloads.append(note);
+  for (const result of preparedResults) {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(result.blob);
+    recoveryURLs.push(link.href);
+    link.download = result.name;
+    link.className = "support-link";
+    link.textContent = "Save video " + result.state.index;
+    downloads.append(link);
+  }
+  downloads.hidden = false;
+}
+
+async function sessionRequest(action = "status") {
+  let response;
+  try {
+    response = await fetch(window.location.pathname + "/" + action, {
+      method: action === "status" ? "GET" : "POST",
+      headers: {"X-Upload-Session": SESSION_SECRET},
+      cache: "no-store", signal: AbortSignal.timeout(10000)
+    });
+  } catch (_) {
+    throw Object.assign(new Error("Could not confirm delivery status. Keep this page open and try again; check Discord before starting a new session."), {status: 0});
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw Object.assign(new Error(body.error || "Session check failed."), {status: response.status, code: body.code});
+  if (!body.ok && !body.ready && !body.pending) throw Object.assign(new Error("The relay returned an unreadable status."), {status: 0});
+  if (body.ready) sessionDeadline = Date.now() + body.expires_in * 1000;
+  return body;
+}
+
+function stopHeartbeat() {
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+async function keepSessionAlive() {
+  try {
+    await sessionRequest("heartbeat");
+    updateExpiry();
+  } catch (error) {
+    if (error.status === 410 || error.status === 403) sessionDeadline = 0;
+    updateExpiry();
+  }
+}
 
 function readableSize(bytes) {
   if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
@@ -230,9 +299,11 @@ async function requestWakeLock() {
   if (!running || document.hidden || !("wakeLock" in navigator)) return;
   if (wakeLock && !wakeLock.released) return;
   try {
-    wakeLock = await navigator.wakeLock.request("screen");
-    wakeLock.addEventListener("release", () => {
-      wakeLock = null;
+    const acquired = await navigator.wakeLock.request("screen");
+    if (!running) { await acquired.release(); return; }
+    wakeLock = acquired;
+    acquired.addEventListener("release", () => {
+      if (wakeLock === acquired) wakeLock = null;
     });
   } catch (error) {
     console.debug("Screen wake lock was unavailable.", error);
@@ -305,9 +376,11 @@ function renderSelectedFiles(files) {
 }
 
 function renderSelection() {
+  clearPreparedFiles();
   const files = Array.from(clips.files);
   const validCount = files.length >= 1 && files.length <= MAX_CLIPS;
-  submit.disabled = !validCount || running;
+  submit.disabled = !validCount || running || sessionExpired();
+  submit.textContent = "Compress and send to Discord";
   selection.className = validCount || files.length === 0 ? "selection" : "selection error";
   if (files.length === 0) {
     selection.textContent = "No videos selected";
@@ -661,7 +734,7 @@ function xhrUpload(results) {
     });
     request.addEventListener("load", () => {
       const body = request.response || {};
-      if (request.status >= 200 && request.status < 300 && body.ok) resolve(body);
+      if (request.status >= 200 && request.status < 300 && (body.ok || body.pending)) resolve(body);
       else reject(Object.assign(new Error(body.error || "The relay rejected the upload."), {
         status: request.status, code: body.code, retryAfter: body.retry_after
       }));
@@ -681,14 +754,26 @@ function xhrUpload(results) {
 async function uploadWithRetry(results) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await xhrUpload(results);
+      // Reconcile an earlier upload before sending bytes again.
+      let response = await sessionRequest();
+      if (response.ready) response = await xhrUpload(results);
       uploadRequest = null;
+      const deadline = performance.now() + 600000;
+      while (response.pending) {
+        setRunDetail("Waiting for Discord");
+        phaseCopy.textContent = "The relay is processing this batch. You do not need to send it again.";
+        if (performance.now() > deadline) throw Object.assign(new Error("Delivery is still pending. Check its status again without recompressing."), {status: 0});
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        response = await sessionRequest();
+      }
+      if (!response.ok) throw Object.assign(new Error("The upload was interrupted before it was queued."), {status: 0});
       return response;
     } catch (error) {
       uploadRequest = null;
       if (cancelled || error.name === "AbortError") throw error;
       const retryable = error.status === 0 || error.status === 408 || error.status === 429 ||
-        error.status === 500 || error.status === 503;
+        error.status === 500 || error.status === 503 || error.status === 504 ||
+        (error.status === 502 && error.code !== "discord_delivery_failed");
       if (!retryable || attempt === 3) throw error;
       const waitSeconds = Number(error.retryAfter) || Math.pow(2, attempt);
       for (let remaining = waitSeconds; remaining > 0; remaining -= 1) {
@@ -721,11 +806,11 @@ async function reportBrowserFailure(stage) {
 
 function friendlyError(error) {
   if (error.code === "session_expired" || error.code === "session_used") {
-    return "This private session expired or was already used. Return to Discord and run /compress again.";
+    return "This session expired or the service restarted. Check Discord before creating a new session. You can save any prepared files below.";
   }
   if (error.code === "discord_delivery_failed") return error.message;
   if (error.status === 0) {
-    return "The upload could not reach the relay after three attempts. Check your connection, keep this page open, and try again.";
+    return "Delivery could not be confirmed. Check your connection and Discord, then use Check delivery / retry. Prepared files will not be recompressed.";
   }
   if (/memory|allocation|out of bounds/i.test(error.message || "")) {
     return "This browser ran out of memory. Close other tabs and try fewer or smaller videos.";
@@ -747,13 +832,16 @@ function stopClock() {
 
 function finishRun() {
   running = false;
+  stopHeartbeat();
+  pauseRequest = sessionRequest("pause").catch(() => {});
   backgroundWarning.hidden = true;
   void releaseWakeLock();
   renderDocumentTitle();
   cancelButton.hidden = true;
-  clips.disabled = false;
-  submit.disabled = false;
-  submit.textContent = "Try again";
+  clips.disabled = preparedResults !== null;
+  submit.disabled = sessionExpired() && !preparedResults;
+  submit.textContent = preparedResults ? "Check delivery / retry" : "Try again";
+  showPreparedFiles();
   stopClock();
 }
 
@@ -777,6 +865,11 @@ cancelButton.addEventListener("click", () => {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (running) return;
+  if (sessionExpired() && !preparedResults) {
+    updateExpiry();
+    showMessage("This session expired. Run /compress for a new link before processing videos.");
+    return;
+  }
   if (selectedFiles.length < 1 || selectedFiles.length > MAX_CLIPS) {
     showMessage("Choose between 1 and " + MAX_CLIPS + " videos.");
     return;
@@ -785,48 +878,62 @@ form.addEventListener("submit", async (event) => {
   running = true;
   submit.disabled = true;
   clips.disabled = true;
-  cancelButton.hidden = false;
+  cancelButton.hidden = Boolean(preparedResults);
   cancelButton.disabled = false;
   work.hidden = false;
   hideMessage();
   feedbackActions.hidden = true;
   startedAt = performance.now();
-  runStage = "Browser compression";
+  runStage = preparedResults ? "Relay upload or Discord delivery" : "Browser compression";
   overallProgress.value = 0;
   backgroundWarning.hidden = true;
   setRunDetail("Checking files");
-  await requestWakeLock();
+  void requestWakeLock();
   startClock();
-  for (const state of selectedFiles) {
-    state.finalSize = 0;
-    state.meta.textContent = readableSize(state.file.size) + " original";
-    updateFile(state, "Checking file", 0);
+  if (!preparedResults) {
+    for (const state of selectedFiles) {
+      state.finalSize = 0;
+      state.meta.textContent = readableSize(state.file.size) + " original";
+      updateFile(state, "Checking file", 0);
+    }
   }
   try {
-    const formats = await Promise.all(selectedFiles.map((state) => videoSignature(state.file)));
-    const effectiveTargetBytes = outputTargetBytes();
-    const needsEncoder = selectedFiles.some((state, index) =>
-      state.file.size > effectiveTargetBytes || formats[index] !== "mp4");
-    if (needsEncoder && !ffmpeg) {
-      setPhase("compress", "Loading video engine",
-        "The browser is preparing its video tools. A first or uncached visit may take a few minutes on a slow connection; your video stays on this device.");
-      encoderMode = await loadEncoder();
-    }
-    setPhase("compress", "Compressing on your device",
-      "Compression runs locally. Nothing is sent until every video is ready.");
-    const results = [];
-    for (const state of selectedFiles) {
+    await pauseRequest;
+    if (cancelled) throw new DOMException("Cancelled", "AbortError");
+    if (!preparedResults) {
+      const session = await sessionRequest("heartbeat");
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
-      results.push(await compressWithRetry(state));
+      if (!session.ready) throw new Error("This session already has a delivery in progress.");
+      stopHeartbeat();
+      heartbeatTimer = setInterval(() => { void keepSessionAlive(); }, 60000);
+      const formats = await Promise.all(selectedFiles.map((state) => videoSignature(state.file)));
+      if (cancelled) throw new DOMException("Cancelled", "AbortError");
+      const effectiveTargetBytes = outputTargetBytes();
+      const needsEncoder = selectedFiles.some((state, index) =>
+        state.file.size > effectiveTargetBytes || formats[index] !== "mp4");
+      if (needsEncoder && !ffmpeg) {
+        setPhase("compress", "Loading video engine",
+          "The browser is preparing its video tools. A first or uncached visit may take a few minutes on a slow connection; your video stays on this device.");
+        encoderMode = await loadEncoder();
+      }
+      setPhase("compress", "Compressing on your device",
+        "Compression runs locally. Nothing is sent until every video is ready.");
+      const results = [];
+      for (const state of selectedFiles) {
+        if (cancelled) throw new DOMException("Cancelled", "AbortError");
+        results.push(await compressWithRetry(state));
+      }
+      preparedResults = results;
     }
+    stopHeartbeat();
     currentState = null;
     overallProgress.value = 80;
     cancelButton.hidden = true;
     runStage = "Relay upload or Discord delivery";
     setPhase("send", "Sending finished files",
       "Compression is complete. Finished MP4 files are now being sent through the relay to Discord.");
-    const response = await uploadWithRetry(results);
-    for (const result of results) updateFile(result.state, "Delivered", 100);
+    const response = await uploadWithRetry(preparedResults);
+    for (const result of preparedResults) updateFile(result.state, "Delivered", 100);
     overallProgress.value = 100;
     setRunDetail("Complete");
     setPhase("done", "Delivered to Discord", response.message);
@@ -836,6 +943,7 @@ form.addEventListener("submit", async (event) => {
     submit.hidden = true;
     cancelButton.hidden = true;
     running = false;
+    clearPreparedFiles();
     backgroundWarning.hidden = true;
     void releaseWakeLock();
     renderDocumentTitle();
@@ -849,28 +957,36 @@ form.addEventListener("submit", async (event) => {
     showMessage(friendlyError(error));
     showFeedback("failure");
     finishRun();
-    if ([409, 410, 502, 504].includes(error.status)) {
+    if ([403, 409, 410].includes(error.status) || error.code === "discord_delivery_failed") {
       submit.hidden = true;
       clips.disabled = true;
     }
   }
 });
 
-const expiryStartedAt = Date.now();
 function updateExpiry() {
-  const elapsed = Math.floor((Date.now() - expiryStartedAt) / 1000);
-  const remaining = Math.max(0, SESSION_EXPIRES_SECONDS - elapsed);
+  const remaining = Math.max(0, Math.ceil((sessionDeadline - Date.now()) / 1000));
   expiresElement.textContent = remaining > 0
     ? "Expires in " + readableTime(remaining)
     : "Session expired";
-  if (remaining === 0) clearInterval(expiryTimer);
+  if (remaining === 0) {
+    if (!running) {
+      // Prepared files may already be queued; checking their receipt is safe.
+      submit.disabled = !preparedResults;
+    } else if (runStage === "Browser compression") {
+      cancelled = true;
+      if (ffmpeg) { ffmpeg.terminate(); ffmpeg = null; }
+      showMessage("This session expired before encoding finished. Run /compress for a new link.");
+    }
+  }
 }
 updateExpiry();
 expiryTimer = setInterval(updateExpiry, 1000);
 </script>
 """
     return (
-        template.replace("__MAX_CLIPS__", _json_script_value(max_clips))
+        template.replace("__ASSET_PREFIX__", ASSET_PREFIX)
+        .replace("__MAX_CLIPS__", _json_script_value(max_clips))
         .replace("__TARGET_BYTES__", _json_script_value(target_bytes))
         .replace("__MAX_BATCH_BYTES__", _json_script_value(max_batch_bytes))
         .replace("__SESSION_SECRET__", _json_script_value(session_secret))

@@ -18,6 +18,8 @@ from aiohttp import web
 from professor_compressor import application as app
 from professor_compressor.domain import UploadJob
 
+delivery_delays = {}
+
 
 async def test_session(request: web.Request) -> web.Response:
     token = secrets.token_urlsafe(16)
@@ -29,10 +31,13 @@ async def test_session(request: web.Request) -> web.Response:
         discord_limit=1_100_000,
         interaction=SimpleNamespace(channel=None),
     )
+    if request.query.get("slow") == "1":
+        delivery_delays[token] = 3
     return web.json_response({"path": f"/upload/{token}"})
 
 
 async def capture_delivery(job: UploadJob, results: list) -> str:
+    await asyncio.sleep(delivery_delays.pop(job.token, 0))
     if not results or not all(app.valid_mp4_signature(item.data) for item in results):
         raise RuntimeError("Invalid browser output")
     if any(len(item.data) > job.discord_limit for item in results):

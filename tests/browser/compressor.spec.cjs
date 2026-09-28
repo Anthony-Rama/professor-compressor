@@ -15,6 +15,14 @@ test.beforeAll(() => {
   generate('large.mp4', 0, 3);
   generate('small.mp4', 35, 0.5);
   generate('small.mov', 35, 0.5);
+  execFileSync('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+    'testsrc2=size=360x640:rate=30', '-f', 'lavfi', '-i',
+    'sine=frequency=440:sample_rate=48000', '-t', '2',
+    '-vf', "select='not(mod(n,2))+not(mod(n,5))'", '-fps_mode', 'vfr',
+    '-c:v', 'libx264', '-crf', '18', '-preset', 'ultrafast',
+    '-c:a', 'pcm_s16le', join(fixtures, 'portrait-audio-vfr.mov'),
+  ]);
   for (const [name, codec] of [
     ['sample.mkv', 'libx264'], ['sample.avi', 'mpeg4'],
     ['sample.webm', 'libvpx-vp9'], ['sample.wmv', 'wmv2'],
@@ -64,7 +72,7 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
 });
 
 test('single-thread fallback still encodes when multithread core is unavailable', async ({ page, request }) => {
-  await page.route('**/assets/core-mt-esm/**', route => route.abort());
+  await page.route('**/assets/**/core-mt-esm/**', route => route.abort());
   await openSession(page, request);
   await deliver(page, join(fixtures, 'large.mp4'));
 });
@@ -106,7 +114,7 @@ test('reloading a failed encoder keeps completed file progress intact', async ({
 });
 
 test('ten fitting MP4s deliver together without loading an encoder', async ({ page, request }) => {
-  await page.route('**/assets/core*-esm/**', () => { throw new Error('Unexpected encoding'); });
+  await page.route('**/assets/**/core*-esm/**', () => { throw new Error('Unexpected encoding'); });
   await openSession(page, request);
   await deliver(page, Array(10).fill(join(fixtures, 'small.mp4')));
   await expect(page.locator('#phase-copy')).toContainText('10 file(s)');
@@ -115,6 +123,60 @@ test('ten fitting MP4s deliver together without loading an encoder', async ({ pa
 test('small QuickTime MOV is converted to an actual MP4', async ({ page, request }) => {
   await openSession(page, request);
   await deliver(page, join(fixtures, 'small.mov'));
+});
+
+test('portrait variable-frame-rate video retains playable video and audio', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) {
+        window.preparedOutput = body.get('clips');
+      }
+      return originalSend.call(this, body);
+    };
+  });
+  await openSession(page, request);
+  await deliver(page, join(fixtures, 'portrait-audio-vfr.mov'));
+  const bytes = Buffer.from(await page.evaluate(async () =>
+    Array.from(new Uint8Array(await window.preparedOutput.arrayBuffer()))));
+  expect(bytes.length).toBeLessThanOrEqual(1_100_000);
+  const metadata = JSON.parse(execFileSync('ffprobe', [
+    '-v', 'error', '-count_frames', '-show_streams', '-of', 'json', '-i', 'pipe:0',
+  ], {input: bytes, maxBuffer: 2 * 1024 * 1024}));
+  const video = metadata.streams.find(stream => stream.codec_type === 'video');
+  const audio = metadata.streams.find(stream => stream.codec_type === 'audio');
+  expect(video.codec_name).toBe('h264');
+  expect(video.height).toBeGreaterThan(video.width);
+  expect(Number(video.nb_read_frames)).toBeGreaterThan(1);
+  expect(audio.codec_name).toBe('aac');
+  execFileSync('ffmpeg', [
+    '-v', 'error', '-xerror', '-i', 'pipe:0', '-f', 'null', '-',
+  ], {input: bytes});
+});
+
+test('cancelling during the session check does not start the video engine', async ({ page, request }) => {
+  let releaseCheck;
+  let markArrived;
+  const arrived = new Promise(resolve => { markArrived = resolve; });
+  let coreRequests = 0;
+  page.on('request', req => {
+    if (/\/core(?:-mt)?-esm\//.test(new URL(req.url()).pathname)) coreRequests++;
+  });
+  await page.route('**/heartbeat', async route => {
+    const release = new Promise(resolve => { releaseCheck = resolve; });
+    markArrived();
+    await release;
+    await route.continue();
+  });
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
+  await page.locator('#submit').click();
+  await arrived;
+  await page.locator('#cancel').click();
+  releaseCheck();
+  await expect(page.locator('#submit')).toBeEnabled();
+  await expect(page.locator('#message')).toContainText('Cancelled');
+  expect(coreRequests).toBe(0);
 });
 
 for (const name of ['sample.mkv', 'sample.avi', 'sample.webm', 'sample.wmv',
@@ -186,7 +248,7 @@ test('audio-only and damaged containers fail clearly and allow another selection
 test('drops cannot replace files while compression is running', async ({ page, request }) => {
   let release;
   const gate = new Promise(resolve => { release = resolve; });
-  await page.route('**/assets/core-mt-esm/ffmpeg-core.js', async route => {
+  await page.route('**/assets/**/core-mt-esm/ffmpeg-core.js', async route => {
     await gate;
     await route.continue();
   });
@@ -231,7 +293,7 @@ test('invalid input can be replaced and retried in the same session', async ({ p
 });
 
 test('cancel during engine loading settles before another attempt', async ({ page, request }) => {
-  await page.route('**/assets/core-mt-esm/ffmpeg-core.js', async route => {
+  await page.route('**/assets/**/core-mt-esm/ffmpeg-core.js', async route => {
     await new Promise(resolve => setTimeout(resolve, 500));
     await route.continue();
   });
@@ -275,6 +337,82 @@ test('delivery rejection shows an error and prevents duplicate submission', asyn
   await page.locator('#submit').click();
   await expect(page.locator('#phase-title')).toHaveText('Action needed');
   await expect(page.locator('#submit')).toBeHidden();
+});
+
+test('lost success response is recovered without another upload', async ({page, request}) => {
+  await page.addInitScript(() => {
+    const listen = XMLHttpRequest.prototype.addEventListener;
+    window.lostSuccess = false;
+    XMLHttpRequest.prototype.addEventListener = function(type, callback, ...args) {
+      if (type !== 'load') return listen.call(this,type,callback,...args);
+      return listen.call(this,type,function(event) {
+        if (!window.lostSuccess && this.responseType === 'json' && this.status === 200 && this.response?.ok) {
+          window.lostSuccess = true;
+          this.dispatchEvent(new ProgressEvent('error'));
+          return;
+        }
+        return callback.call(this,event);
+      },...args);
+    };
+  });
+  await openSession(page, request);
+  let uploads = 0;
+  page.on('request', r => {if(r.method()==='POST' && /\/upload\/[^/]+$/.test(new URL(r.url()).pathname)) uploads++;});
+  await deliver(page, join(fixtures,'small.mp4'));
+  expect(await page.evaluate(()=>window.lostSuccess)).toBe(true);
+  expect(uploads).toBe(1);
+});
+
+test('slow delivery is polled rather than reported failed or resent', async ({page, request}) => {
+  const session = await (await request.post('/test/session?slow=1')).json();
+  await page.goto(session.path);
+  let uploads=0;
+  let pending=0;
+  page.on('request', r=> {if(r.method()==='POST' && new URL(r.url()).pathname===session.path) uploads++;});
+  page.on('response', r=> {if(r.status()===202) pending++;});
+  await deliver(page,join(fixtures,'small.mp4'));
+  expect(uploads).toBe(1);
+  expect(pending).toBeGreaterThan(0);
+});
+
+test('expired idle session cannot start encoding', async ({page, request}) => {
+  await page.clock.install();
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures,'large.mp4'));
+  await page.clock.fastForward(31*60*1000);
+  await expect(page.locator('#expires')).toHaveText('Session expired');
+  await expect(page.locator('#submit')).toBeDisabled();
+  await page.locator('#clips').setInputFiles(join(fixtures,'small.mp4'));
+  await expect(page.locator('#submit')).toBeDisabled();
+});
+
+test('manual relay retry reuses prepared files and offers local recovery', async ({page, request}) => {
+  await page.addInitScript(() => {
+    window.encoderWrites=0;
+    const send=Worker.prototype.postMessage;
+    Worker.prototype.postMessage=function(message,...rest) {
+      if(message?.type==='WRITE_FILE') window.encoderWrites++;
+      return send.call(this,message,...rest);
+    };
+  });
+  await openSession(page,request);
+  let uploads=0;
+  await page.route('**/upload/*',async route=> {
+    if(route.request().method()==='POST' && uploads++<3) {
+      await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Busy',retry_after:0.01})});
+    } else await route.continue();
+  });
+  await page.locator('#clips').setInputFiles(join(fixtures,'large.mp4'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#phase-title')).toHaveText('Action needed',{timeout:60000});
+  await expect(page.locator('#downloads a')).toHaveCount(1);
+  await expect(page.locator('#clips')).toBeDisabled();
+  const writes=await page.evaluate(()=>window.encoderWrites);
+  expect(writes).toBeGreaterThan(0);
+  await page.getByRole('button',{name:'Check delivery / retry'}).click();
+  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord',{timeout:10000});
+  expect(await page.evaluate(()=>window.encoderWrites)).toBe(writes);
+  await expect(page.locator('#downloads')).toBeHidden();
 });
 
 test('narrow screens contain a ten-file selection', async ({ page, request }) => {

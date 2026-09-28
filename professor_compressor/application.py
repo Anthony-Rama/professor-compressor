@@ -5,6 +5,7 @@ import ipaddress
 import logging
 import os
 import secrets
+import signal
 import time
 from collections import deque
 from pathlib import Path
@@ -19,8 +20,10 @@ import discord
 from aiohttp import ClientSession, ClientTimeout, web
 from discord import app_commands
 
+from .assets import ASSET_PACKAGES, ASSET_PREFIX, NODE_MODULES
 from .config import MIB, Settings
-from .domain import BrowserResult, DeliveryRequest, JobState, UploadJob
+from .delivery_policy import bot_upload_limit, channel_delivery_problem
+from .domain import BrowserResult, DeliveryOutcome, DeliveryRequest, JobState, UploadJob
 from .landing_pages import (
     BOT_INVITE_URL,
     guide_html,
@@ -57,6 +60,7 @@ ACTIVE_SESSION_TTL_SECONDS = settings.active_session_ttl_seconds
 USER_COOLDOWN_SECONDS = settings.user_cooldown_seconds
 MAX_ACTIVE_JOBS = settings.max_active_jobs
 MAX_CLIPS = settings.max_clips
+BOT_BASE_UPLOAD_BYTES = settings.bot_base_upload_bytes
 MAX_RESULT_TOTAL_BYTES = settings.max_result_total_bytes
 UPLOAD_RATE_LIMIT_PER_MINUTE = settings.upload_rate_limit_per_minute
 MAX_CONCURRENT_UPLOADS = settings.max_concurrent_uploads
@@ -70,6 +74,10 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 jobs: dict[str, UploadJob] = {}
+outcomes: dict[str, DeliveryOutcome] = {}
+OUTCOME_TTL_SECONDS = 3600
+DELIVERY_RESPONSE_WAIT_SECONDS = 2
+draining = False
 background_tasks: set[asyncio.Task[Any]] = set()
 last_job_at: dict[tuple[int, int], float] = {}
 web_runner: web.AppRunner | None = None
@@ -81,6 +89,7 @@ request_times: dict[tuple[str, str], deque[float]] = {}
 active_relay_uploads = 0
 delivery_bytes_held = 0
 commands_synced = False
+command_sync_task: asyncio.Task[None] | None = None
 application_operator_ids: frozenset[int] | None = None
 effective_allowed_guild_ids: frozenset[int] = ALLOWED_GUILD_IDS
 metrics = RuntimeMetrics()
@@ -219,8 +228,15 @@ async def browser_security_headers(
         "worker-src 'self' blob:"
     )
     response.headers["X-Frame-Options"] = "DENY"
+    if (
+        isinstance(request.path, str)
+        and request.path.startswith(ASSET_PREFIX + "/")
+        and response.status == 200
+    ):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     if request.path.startswith("/upload/") or request.path in {
         "/healthz",
+        "/readyz",
         "/metricsz",
     }:
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
@@ -382,7 +398,14 @@ def page(title: str, body: str) -> web.Response:
 
 def active_job(token: str) -> UploadJob | None:
     job = jobs.get(token)
-    if job is None or job.state is JobState.DONE or time.time() > job.expires_at:
+    if (
+        job is None
+        or job.state is JobState.DONE
+        or (
+            time.time() > job.expires_at
+            and job.state not in {JobState.UPLOADING, JobState.QUEUED}
+        )
+    ):
         jobs.pop(token, None)
         return None
     return job
@@ -430,10 +453,14 @@ def discard_expired_jobs() -> None:
     expired_tokens = [
         token
         for token, job in jobs.items()
-        if job.state is JobState.DONE or now > job.expires_at
+        if job.state is JobState.DONE
+        or (now > job.expires_at and job.state in {JobState.OPEN, JobState.CLAIMED})
     ]
     for token in expired_tokens:
         jobs.pop(token, None)
+    for token, outcome in list(outcomes.items()):
+        if now > outcome.expires_at:
+            outcomes.pop(token, None)
 
     stale_cooldowns = [
         key
@@ -466,6 +493,7 @@ async def health(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "status": "ok",
+            "revision": os.getenv("APP_REVISION", "development")[:64],
             "discord_ready": client.is_ready(),
             "active_upload_links": len(jobs),
             "active_relay_uploads": active_relay_uploads,
@@ -474,6 +502,25 @@ async def health(request: web.Request) -> web.Response:
             "delivery_buffer_mib": round(delivery_bytes_held / MIB, 1),
             "delivery_buffer_limit_mib": round(MAX_DELIVERY_BUFFER_BYTES / MIB, 1),
         }
+    )
+
+
+async def readiness(request: web.Request) -> web.Response:
+    del request
+    workers_ready = len(delivery_workers) == DELIVERY_WORKERS and all(
+        not worker.done() for worker in delivery_workers
+    )
+    ready = client.is_ready() and commands_synced and workers_ready and not draining
+    return web.json_response(
+        {
+            "status": "ready" if ready else "not_ready",
+            "discord_ready": client.is_ready(),
+            "workers_ready": workers_ready,
+            "commands_synced": commands_synced,
+            "draining": draining,
+        },
+        status=200 if ready else 503,
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -548,6 +595,14 @@ async def terms_of_service(request: web.Request) -> web.Response:
 
 
 async def upload_form(request: web.Request) -> web.Response:
+    # aiohttp also dispatches HEAD to GET handlers; inspection must not claim a link.
+    if request.method == "HEAD":
+        return web.Response(headers={"Cache-Control": "no-store"})
+    if draining:
+        return page(
+            "Maintenance",
+            "<h1>Brief maintenance</h1><p>Please try your link again shortly.</p>",
+        )
     retry_after = rate_limit_retry_after(request, "open")
     if retry_after is not None:
         return page(
@@ -595,31 +650,112 @@ def safe_result_name(name: str | None, number: int) -> str:
     return f"{stem or f'clip-{number}'}.mp4"
 
 
-async def receive_results(request: web.Request) -> web.Response:
-    global active_relay_uploads, delivery_bytes_held
+def record_outcome(job: UploadJob, status: int, body: dict[str, object]) -> None:
+    outcomes[job.token] = DeliveryOutcome(
+        secret=job.claim_secret or "",
+        expires_at=time.time() + OUTCOME_TTL_SECONDS,
+        status=status,
+        body=body,
+    )
+    # Bound receipt memory independently from active sessions. No media is retained.
+    while len(outcomes) > max(1000, MAX_ACTIVE_JOBS * 4):
+        outcomes.pop(next(iter(outcomes)))
+
+
+def session_access(
+    request: web.Request,
+) -> tuple[UploadJob | None, web.Response | None]:
     token = request.match_info["token"]
     job = active_job(token)
-    if job is None:
-        return json_error(
+    receipt = outcomes.get(token)
+    if receipt and time.time() > receipt.expires_at:
+        outcomes.pop(token, None)
+        receipt = None
+    expected = receipt.secret if receipt else (job.claim_secret if job else None)
+    if not job and not receipt:
+        return None, json_error(
             "This session expired. Run /compress in Discord for a new link.",
             410,
             "session_expired",
         )
-    supplied_secret = request.headers.get("X-Upload-Session", "")
-    if not job.claim_secret or not secrets.compare_digest(
-        supplied_secret.encode(), job.claim_secret.encode()
-    ):
-        return json_error(
+    supplied = request.headers.get("X-Upload-Session", "")
+    if not expected or not secrets.compare_digest(supplied.encode(), expected.encode()):
+        return None, json_error(
             "This browser is not authorized to use the upload session.",
             403,
             "session_invalid",
         )
-    if job.state in {JobState.UPLOADING, JobState.QUEUED}:
-        return json_error(
-            "This session already has an upload in progress.",
-            409,
-            "upload_in_progress",
+    if receipt:
+        return None, web.json_response(
+            receipt.body, status=receipt.status, headers={"Cache-Control": "no-store"}
         )
+    return job, None
+
+
+def pending_response() -> web.Response:
+    return web.json_response(
+        {
+            "ok": False,
+            "pending": True,
+            "retry_after": 2,
+            "message": "Delivery is still being processed. Do not start another session.",
+        },
+        status=202,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def session_status(request: web.Request) -> web.Response:
+    job, response = session_access(request)
+    if response is not None:
+        return response
+    assert job is not None
+    if job.state in {JobState.UPLOADING, JobState.QUEUED}:
+        return pending_response()
+    return web.json_response(
+        {
+            "ok": False,
+            "ready": True,
+            "expires_in": max(0, int(job.expires_at - time.time())),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def renew_session(request: web.Request) -> web.Response:
+    job, response = session_access(request)
+    if response is not None:
+        return response
+    assert job is not None
+    if job.state is JobState.CLAIMED:
+        if not draining:
+            hard_deadline = (job.claimed_at or job.created_at) + max(
+                7200, ACTIVE_SESSION_TTL_SECONDS
+            )
+            job.expires_at = min(
+                time.time() + ACTIVE_SESSION_TTL_SECONDS, hard_deadline
+            )
+        job.processing_until = min(time.time() + 90, job.expires_at)
+    return await session_status(request)
+
+
+async def pause_session(request: web.Request) -> web.Response:
+    job, response = session_access(request)
+    if response is not None:
+        return response
+    assert job is not None
+    job.processing_until = 0
+    return await session_status(request)
+
+
+async def receive_results(request: web.Request) -> web.Response:
+    global active_relay_uploads, delivery_bytes_held
+    job, response = session_access(request)
+    if response is not None:
+        return response
+    assert job is not None
+    if job.state in {JobState.UPLOADING, JobState.QUEUED}:
+        return pending_response()
     if job.state is not JobState.CLAIMED:
         return json_error(
             "This one-use session is no longer available.",
@@ -659,8 +795,12 @@ async def receive_results(request: web.Request) -> web.Response:
         if not request.content_type.startswith("multipart/"):
             raise ValueError("The upload format was invalid. Please try again.")
         reader = await request.multipart()
+        upload_deadline = time.monotonic() + 300
         while True:
-            field = await asyncio.wait_for(reader.next(), timeout=30)
+            field = await asyncio.wait_for(
+                reader.next(),
+                timeout=max(0, min(30, upload_deadline - time.monotonic())),
+            )
             if field is None:
                 break
             if field.name != "clips" or not field.filename:
@@ -669,12 +809,11 @@ async def receive_results(request: web.Request) -> web.Response:
                 raise ValueError(f"You can send at most {MAX_CLIPS} results.")
 
             name = safe_result_name(field.filename, len(results) + 1)
-            if not name.lower().endswith(".mp4"):
-                raise ValueError(f"{name} is not an MP4 result.")
 
             file_data = bytearray()
             while chunk := await asyncio.wait_for(
-                field.read_chunk(1024 * 1024), timeout=30
+                field.read_chunk(1024 * 1024),
+                timeout=max(0, min(30, upload_deadline - time.monotonic())),
             ):
                 if delivery_bytes_held + len(chunk) > MAX_DELIVERY_BUFFER_BYTES:
                     return json_error(
@@ -710,6 +849,10 @@ async def receive_results(request: web.Request) -> web.Response:
         result_count = len(results)
         loop = asyncio.get_running_loop()
         completion: asyncio.Future[str] = loop.create_future()
+        # A disconnected request may never await this future again.
+        completion.add_done_callback(
+            lambda future: future.exception() if not future.cancelled() else None
+        )
         delivery = DeliveryRequest(job=job, results=results, completed=completion)
         try:
             delivery_queue.put_nowait(delivery)
@@ -728,18 +871,18 @@ async def receive_results(request: web.Request) -> web.Response:
         upload_slot_held = False
         job.state = JobState.QUEUED
         try:
-            message = await asyncio.wait_for(completion, timeout=180)
-        except TimeoutError:
-            job.state = JobState.DONE
-            return json_error(
-                "Discord took too long to accept the files. Check the channel "
-                "before starting a new compression session.",
-                504,
-                "discord_timeout",
+            message = await asyncio.wait_for(
+                asyncio.shield(completion), timeout=DELIVERY_RESPONSE_WAIT_SECONDS
             )
+        except TimeoutError:
+            return pending_response()
         except RuntimeError as error:
-            job.state = JobState.DONE
-            return json_error(str(error), 502, "discord_delivery_failed")
+            _, response = session_access(request)
+            return (
+                response
+                if response is not None
+                else json_error(str(error), 502, "discord_delivery_failed")
+            )
         job.state = JobState.DONE
         return web.json_response(
             {
@@ -823,8 +966,6 @@ async def receive_browser_failure(request: web.Request) -> web.Response:
 
 
 async def get_channel(job: UploadJob) -> discord.abc.Messageable | None:
-    if job.interaction.channel is not None:
-        return job.interaction.channel
     cached = client.get_channel(job.channel_id)
     if cached is not None:
         return cached
@@ -867,18 +1008,38 @@ async def deliver_browser_results(
             raise RuntimeError(
                 "The bot cannot access the channel where compression started."
             )
+        guild = client.get_guild(job.guild_id) if job.guild_id is not None else None
+        if guild is None or guild.me is None:
+            raise RuntimeError(
+                "The bot is no longer a member of the destination server."
+            )
+        problem = channel_delivery_problem(channel, channel.permissions_for(guild.me))
+        if problem:
+            raise RuntimeError(problem)
+        if any(
+            len(result.data) > bot_upload_limit(guild, BOT_BASE_UPLOAD_BYTES)
+            for result in results
+        ):
+            raise RuntimeError(
+                "The server's bot upload allowance changed. Run /compress again to prepare smaller files."
+            )
         await send_result_batch(channel.send, results, message)
         return "Your compressed videos were delivered to Discord."
     except Exception as error:
-        logger.warning("Result delivery failed (%s)", type(error).__name__)
-        if channel is not None:
-            try:
-                await channel.send(
-                    f"<@{job.user_id}> compressed files were received, but "
-                    "Discord rejected their delivery. Please try again."
-                )
-            except discord.HTTPException:
-                pass
+        logger.warning(
+            "Result delivery failed (%s; HTTP=%s; Discord code=%s)",
+            type(error).__name__,
+            getattr(error, "status", None),
+            getattr(error, "code", None),
+        )
+        if isinstance(error, RuntimeError):
+            raise
+        if not isinstance(error, (discord.Forbidden, discord.NotFound)) and (
+            not isinstance(error, discord.HTTPException) or error.status >= 500
+        ):
+            raise RuntimeError(
+                "Delivery could not be confirmed. Check the Discord channel before starting another session."
+            ) from error
         raise RuntimeError(
             "Discord rejected the files. Confirm that the bot can view the "
             "channel, send messages, and attach files, then run /compress again."
@@ -898,6 +1059,15 @@ async def delivery_worker(worker_number: int) -> None:
             metrics.increment("deliveries_succeeded")
             metrics.increment("files_delivered", len(delivery.results))
             metrics.increment("bytes_delivered", total_bytes)
+            record_outcome(
+                delivery.job,
+                200,
+                {
+                    "ok": True,
+                    "message": message,
+                    "count": len(delivery.results),
+                },
+            )
             schedule_owner_alert(
                 compression_outcome_alert(
                     delivery.job,
@@ -910,6 +1080,22 @@ async def delivery_worker(worker_number: int) -> None:
                 delivery.completed.set_result(message)
         except Exception as error:
             metrics.increment("deliveries_failed")
+            message = (
+                str(error)
+                if isinstance(error, RuntimeError)
+                else (
+                    "Delivery could not be confirmed. Check the Discord channel before starting another session."
+                )
+            )
+            record_outcome(
+                delivery.job,
+                502,
+                {
+                    "ok": False,
+                    "error": message,
+                    "code": "discord_delivery_failed",
+                },
+            )
             schedule_owner_alert(
                 compression_outcome_alert(
                     delivery.job,
@@ -920,7 +1106,7 @@ async def delivery_worker(worker_number: int) -> None:
                 )
             )
             if not delivery.completed.done():
-                delivery.completed.set_exception(error)
+                delivery.completed.set_exception(RuntimeError(message))
         finally:
             delivery_bytes_held = max(
                 0,
@@ -941,6 +1127,12 @@ async def delivery_worker(worker_number: int) -> None:
 @app_commands.guild_only()
 @app_commands.allowed_installs(guilds=True, users=False)
 async def compress(interaction: discord.Interaction) -> None:
+    if draining:
+        await interaction.response.send_message(
+            "Professor Compressor is finishing existing work before maintenance. Please try again shortly.",
+            ephemeral=True,
+        )
+        return
     if (
         effective_allowed_guild_ids
         and interaction.guild_id not in effective_allowed_guild_ids
@@ -956,7 +1148,12 @@ async def compress(interaction: discord.Interaction) -> None:
             ephemeral=True,
         )
         return
-    if interaction.guild_id is None or client.get_guild(interaction.guild_id) is None:
+    guild = (
+        client.get_guild(interaction.guild_id)
+        if interaction.guild_id is not None
+        else None
+    )
+    if guild is None:
         view = discord.ui.View(timeout=None)
         view.add_item(discord.ui.Button(label="Add bot to server", url=BOT_INVITE_URL))
         await interaction.response.send_message(
@@ -968,7 +1165,24 @@ async def compress(interaction: discord.Interaction) -> None:
             ephemeral=True,
         )
         return
+    problem = channel_delivery_problem(interaction.channel, interaction.app_permissions)
+    if problem:
+        await interaction.response.send_message(problem, ephemeral=True)
+        return
     discard_expired_jobs()
+    if any(
+        job.user_id == interaction.user.id
+        and (
+            job.state in {JobState.UPLOADING, JobState.QUEUED}
+            or job.processing_until > time.time()
+        )
+        for job in jobs.values()
+    ):
+        await interaction.response.send_message(
+            "You already have a compressor session processing files. Finish or cancel it before starting another. If you closed its tab, wait 90 seconds and try again. Your existing session has not been replaced.",
+            ephemeral=True,
+        )
+        return
     cooldown_key = (interaction.guild_id or 0, interaction.user.id)
     now = time.time()
     previous_job_at = last_job_at.get(cooldown_key, 0.0)
@@ -1000,7 +1214,9 @@ async def compress(interaction: discord.Interaction) -> None:
         user_id=interaction.user.id,
         channel_id=interaction.channel_id,
         expires_at=time.time() + JOB_TTL_SECONDS,
-        discord_limit=interaction.filesize_limit,
+        discord_limit=min(
+            bot_upload_limit(guild, BOT_BASE_UPLOAD_BYTES), interaction.filesize_limit
+        ),
         interaction=interaction,
         guild_id=interaction.guild_id,
         guild_name=interaction_guild_name(interaction),
@@ -1086,34 +1302,26 @@ def create_web_application() -> web.Application:
         f"/{GOOGLE_VERIFICATION_FILENAME}", google_site_verification
     )
     application.router.add_get("/healthz", health)
+    application.router.add_get("/readyz", readiness)
     application.router.add_get("/metricsz", aggregate_metrics)
     application.router.add_get("/privacy", privacy_policy)
     application.router.add_get("/terms", terms_of_service)
     application.router.add_get("/upload/{token}", upload_form)
     application.router.add_post("/upload/{token}", receive_results)
+    application.router.add_get("/upload/{token}/status", session_status)
+    application.router.add_post("/upload/{token}/heartbeat", renew_session)
+    application.router.add_post("/upload/{token}/pause", pause_session)
     application.router.add_post(
         "/upload/{token}/failure",
         receive_browser_failure,
     )
     package_root = Path(__file__).resolve().parent
-    project_root = package_root.parent
     application.router.add_static("/brand/", package_root / "static")
-    application.router.add_static(
-        "/assets/ffmpeg-esm/",
-        project_root / "node_modules/@ffmpeg/ffmpeg/dist/esm",
-    )
-    application.router.add_static(
-        "/assets/util-esm/",
-        project_root / "node_modules/@ffmpeg/util/dist/esm",
-    )
-    application.router.add_static(
-        "/assets/core-esm/",
-        project_root / "node_modules/@ffmpeg/core/dist/esm",
-    )
-    application.router.add_static(
-        "/assets/core-mt-esm/",
-        project_root / "node_modules/@ffmpeg/core-mt/dist/esm",
-    )
+    for name, package in ASSET_PACKAGES.items():
+        directory = NODE_MODULES / package / "dist/esm"
+        application.router.add_static(f"{ASSET_PREFIX}/{name}/", directory)
+        # Compatibility for pages opened before this release; never immutable.
+        application.router.add_static(f"/assets/{name}/", directory)
     return application
 
 
@@ -1168,9 +1376,8 @@ async def on_guild_remove(guild: discord.Guild) -> None:
     schedule_dsc_stats_update()
 
 
-@client.event
-async def on_ready() -> None:
-    global commands_synced, dsc_stats_task
+async def sync_commands() -> None:
+    global commands_synced
     if not commands_synced:
         synced_commands = await tree.sync()
         logger.info(
@@ -1200,7 +1407,29 @@ async def on_ready() -> None:
         else:
             logger.info("Commands are available in all Discord servers.")
         commands_synced = True
+
+
+async def sync_commands_with_retry() -> None:
+    while not client.is_closed() and not commands_synced:
+        try:
+            await sync_commands()
+        except discord.HTTPException as error:
+            logger.warning(
+                "Command sync failed (HTTP=%s; Discord code=%s); retrying",
+                error.status,
+                error.code,
+            )
+            await asyncio.sleep(30)
+
+
+@client.event
+async def on_ready() -> None:
+    global command_sync_task, dsc_stats_task
     await start_upload_server()
+    if not commands_synced and (command_sync_task is None or command_sync_task.done()):
+        command_sync_task = asyncio.create_task(sync_commands_with_retry())
+        background_tasks.add(command_sync_task)
+        command_sync_task.add_done_callback(background_tasks.discard)
     if DSC_API_TOKEN and (dsc_stats_task is None or dsc_stats_task.done()):
         dsc_stats_task = asyncio.create_task(dsc_stats_loop())
         background_tasks.add(dsc_stats_task)
@@ -1214,4 +1443,61 @@ def run() -> None:
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    client.run(runtime_settings.discord_token, log_handler=None)
+    asyncio.run(serve(runtime_settings.discord_token))
+
+
+async def drain_sessions(timeout: float = 120) -> None:
+    """Reject new work while allowing existing browser/relay work to finish."""
+    global draining
+    draining = True
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        busy = active_relay_uploads or any(
+            job.state is JobState.QUEUED or job.processing_until > time.time()
+            for job in jobs.values()
+        )
+        if not busy:
+            return
+        await asyncio.sleep(min(0.25, max(0, deadline - time.monotonic())))
+    logger.warning("Shutdown grace period ended with unfinished sessions")
+
+
+async def serve(token: str) -> None:
+    """Start HTTP independently of command sync, and drain on SIGTERM/SIGINT."""
+    global web_runner
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+    gateway = None
+    stopping = None
+    try:
+        async with client:
+            await start_upload_server()
+            gateway = asyncio.create_task(client.start(token))
+            stopping = asyncio.create_task(stop.wait())
+            done, _ = await asyncio.wait(
+                {gateway, stopping}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if gateway in done:
+                await gateway
+            else:
+                await drain_sessions()
+            await client.close()
+    finally:
+        for task in (gateway, stopping, *background_tasks):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *(
+                task
+                for task in (gateway, stopping, *background_tasks)
+                if task is not None
+            ),
+            return_exceptions=True,
+        )
+        if web_runner is not None:
+            await web_runner.cleanup()
+            web_runner = None
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.remove_signal_handler(sig)

@@ -1,6 +1,9 @@
 services:
   bot:
-    build: .
+    build:
+      context: .
+      args:
+        APP_REVISION: ${APP_REVISION:-development}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -10,6 +13,7 @@ services:
     expose:
       - "8080"
     mem_limit: 1g
+    stop_grace_period: 150s
 
   caddy:
     image: caddy:2.10-alpine

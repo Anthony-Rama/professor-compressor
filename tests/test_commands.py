@@ -1,10 +1,14 @@
 import os
+import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
+import discord
+
 from professor_compressor import application as app
+from professor_compressor.domain import JobState, UploadJob
 
 
 class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
@@ -13,6 +17,10 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
         interaction.guild_id = 123
         interaction.channel_id = 456
         interaction.guild.name = "Test server"
+        interaction.guild.filesize_limit = 20_000_000
+        interaction.app_permissions = discord.Permissions(
+            view_channel=True, send_messages=True, attach_files=True
+        )
         interaction.user.id = 789
         interaction.user.name = "clip_creator"
         interaction.filesize_limit = 20_000_000
@@ -44,7 +52,7 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_install_creates_session(self) -> None:
         interaction = self.make_interaction()
         with (
-            patch.object(app.client, "get_guild", return_value=Mock()),
+            patch.object(app.client, "get_guild", return_value=interaction.guild),
             patch.object(app, "jobs", {}),
             patch.object(app, "last_job_at", {}),
             patch.object(app, "schedule_owner_alert") as alert,
@@ -58,6 +66,65 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("<@789>", alert.call_args.args[0])
 
         interaction.response.send_message.assert_awaited_once()
+
+    async def test_user_nitro_allowance_does_not_set_bot_upload_limit(self):
+        interaction = self.make_interaction()
+        interaction.filesize_limit = 500_000_000
+        with (
+            patch.object(app.client, "get_guild", return_value=interaction.guild),
+            patch.object(app, "jobs", {}),
+            patch.object(app, "last_job_at", {}),
+            patch.object(app, "schedule_owner_alert"),
+        ):
+            await app.compress.callback(interaction)
+            self.assertEqual(
+                next(iter(app.jobs.values())).discord_limit, 20 * 1024 * 1024
+            )
+
+    async def test_missing_channel_permissions_prevent_session(self):
+        for permission in ("view_channel", "send_messages", "attach_files"):
+            interaction = self.make_interaction()
+            setattr(interaction.app_permissions, permission, False)
+            with (
+                patch.object(app.client, "get_guild", return_value=interaction.guild),
+                patch.object(app, "jobs", {}),
+            ):
+                await app.compress.callback(interaction)
+                self.assertFalse(app.jobs)
+                self.assertIn(
+                    "permissions", interaction.response.send_message.await_args.args[0]
+                )
+
+    async def test_active_session_is_not_replaced_but_abandoned_one_can_be(self):
+        for active in (True, False):
+            interaction = self.make_interaction()
+            job = UploadJob(
+                "original",
+                789,
+                456,
+                time.time() + 600,
+                20_000_000,
+                interaction,
+                state=JobState.CLAIMED,
+                processing_until=time.time() + 90 if active else 0,
+            )
+            with (
+                patch.object(app.client, "get_guild", return_value=interaction.guild),
+                patch.object(app, "jobs", {job.token: job}),
+                patch.object(app, "last_job_at", {}),
+                patch.object(app, "schedule_owner_alert"),
+            ):
+                await app.compress.callback(interaction)
+                self.assertEqual(job.token in app.jobs, active)
+
+    async def test_drain_rejects_new_command(self):
+        interaction = self.make_interaction()
+        with patch.object(app, "draining", True), patch.object(app, "jobs", {}):
+            await app.compress.callback(interaction)
+            self.assertFalse(app.jobs)
+            self.assertIn(
+                "maintenance", interaction.response.send_message.await_args.args[0]
+            )
 
     def test_command_is_server_install_only(self) -> None:
         self.assertTrue(app.compress.allowed_installs.guild)

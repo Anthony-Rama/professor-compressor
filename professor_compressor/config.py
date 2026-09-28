@@ -70,6 +70,7 @@ class Settings:
     user_cooldown_seconds: int = 15
     max_active_jobs: int = 250
     max_clips: int = 10
+    bot_base_upload_bytes: int = 20 * MIB
     max_result_total_bytes: int = 220 * MIB
     upload_rate_limit_per_minute: int = 8
     max_concurrent_uploads: int = 2
@@ -116,6 +117,7 @@ class Settings:
             ),
             user_cooldown_seconds=_integer("USER_COOLDOWN_SECONDS", 15),
             max_active_jobs=_integer("MAX_ACTIVE_JOBS", 250, minimum=1),
+            bot_base_upload_bytes=_integer("BOT_BASE_UPLOAD_MIB", 20, minimum=1) * MIB,
             max_result_total_bytes=(
                 _integer("MAX_RESULT_TOTAL_MIB", 220, minimum=1) * MIB
             ),

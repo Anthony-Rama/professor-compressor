@@ -34,6 +34,7 @@ class UploadJob:
     guild_name: str = "Unknown server"
     username: str = ""
     created_at: float = field(default_factory=time.time)
+    processing_until: float = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,3 +48,13 @@ class DeliveryRequest:
     job: UploadJob
     results: list[BrowserResult]
     completed: asyncio.Future[str]
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryOutcome:
+    """Short-lived receipt; never retains media or interaction credentials."""
+
+    secret: str = field(repr=False)
+    expires_at: float
+    status: int
+    body: dict[str, object]
