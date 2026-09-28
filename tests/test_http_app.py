@@ -129,7 +129,10 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         for path, title in (
             ("/privacy", "Professor Compressor | Privacy Policy"),
             ("/terms", "Professor Compressor | Terms of Service"),
-            ("/upload/not-a-real-token", "Professor Compressor | Link expired"),
+            (
+                "/upload/not-a-real-token",
+                "Professor Compressor | Private link unavailable",
+            ),
         ):
             with self.subTest(path=path):
                 response = await self.client.get(path)
@@ -202,6 +205,102 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(received[0].results[0].name.endswith(".mp4"))
         self.assertNotIn("/", received[0].results[0].name)
         self.assertIs(job.state, JobState.DONE)
+
+    async def test_refresh_requires_browser_cookie_and_revokes_old_page(self) -> None:
+        token = "refresh-test"
+        job = UploadJob(
+            token=token,
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20_000_000,
+            interaction=Mock(),
+        )
+        jobs[token] = job
+        head = await self.client.head(f"/upload/{token}")
+        self.assertNotIn("Set-Cookie", head.headers)
+        self.assertIs(job.state, JobState.OPEN)
+
+        first = await self.client.get(f"/upload/{token}")
+        cookie = first.cookies["__Secure-pc-browser"]
+        self.assertTrue(cookie["secure"])
+        self.assertTrue(cookie["httponly"])
+        self.assertEqual(cookie["samesite"], "Lax")
+        self.assertEqual(cookie["path"], f"/upload/{token}")
+        first_secret = job.claim_secret
+        self.assertIn("Choose videos", await first.text())
+
+        stranger = await self.client.get(f"/upload/{token}")
+        self.assertIn("Private link unavailable", await stranger.text())
+        self.assertEqual(job.claim_secret, first_secret)
+        wrong_cookie = await self.client.get(
+            f"/upload/{token}",
+            headers={"Cookie": "__Secure-pc-browser=incorrect"},
+        )
+        self.assertIn("Private link unavailable", await wrong_cookie.text())
+
+        authorized = await self.client.get(
+            f"/upload/{token}",
+            headers={"Cookie": f"__Secure-pc-browser={cookie.value}"},
+        )
+        self.assertIn("Page refreshed", await authorized.text())
+        self.assertNotEqual(job.claim_secret, first_secret)
+        stale = await self.client.get(
+            f"/upload/{token}/status",
+            headers={"X-Upload-Session": first_secret},
+        )
+        self.assertEqual(stale.status, 403)
+        current = await self.client.get(
+            f"/upload/{token}/status",
+            headers={"X-Upload-Session": job.claim_secret},
+        )
+        self.assertTrue((await current.json())["ready"])
+
+    async def test_refresh_during_delivery_only_shows_status(self) -> None:
+        token = "delivery-refresh"
+        job = UploadJob(
+            token=token,
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20_000_000,
+            interaction=Mock(),
+            state=JobState.QUEUED,
+            claim_secret="delivery-secret",
+            browser_secret="browser-secret",
+        )
+        jobs[token] = job
+        response = await self.client.get(
+            f"/upload/{token}",
+            headers={"Cookie": "__Secure-pc-browser=browser-secret"},
+        )
+        document = await response.text()
+        self.assertIn("Checking Discord delivery", document)
+        self.assertNotIn('id="clips"', document)
+        self.assertEqual(job.claim_secret, "delivery-secret")
+
+        without_cookie = await self.client.get(f"/upload/{token}")
+        self.assertIn("Private link unavailable", await without_cookie.text())
+
+    async def test_expired_claimed_link_does_not_reopen_with_cookie(self) -> None:
+        token = "expired-refresh"
+        jobs[token] = UploadJob(
+            token=token,
+            user_id=123,
+            channel_id=456,
+            expires_at=1,
+            discord_limit=20_000_000,
+            interaction=Mock(),
+            state=JobState.CLAIMED,
+            claim_secret="old-secret",
+            browser_secret="browser-secret",
+        )
+        response = await self.client.get(
+            f"/upload/{token}",
+            headers={"Cookie": "__Secure-pc-browser=browser-secret"},
+        )
+        self.assertIn("Private link unavailable", await response.text())
+        self.assertNotIn(token, jobs)
 
     async def test_packaged_browser_assets_are_available(self) -> None:
         expected_types = {

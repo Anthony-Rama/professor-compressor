@@ -331,10 +331,63 @@ test('cancel during engine loading settles before another attempt', async ({ pag
   await deliver(page, join(fixtures, 'small.mp4'));
 });
 
-test('consumed links cannot be reopened', async ({ page, request }) => {
+test('same browser can refresh and reselect without retaining local files', async ({ page, request }) => {
   await openSession(page, request);
+  const url = page.url();
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
   await page.reload();
-  await expect(page.getByRole('heading')).toHaveText('Upload link unavailable');
+  await expect(page.getByRole('heading')).toHaveText('Compress videos for Discord');
+  await expect(page.getByRole('status')).toContainText('Page refreshed');
+  await expect(page.locator('#selection')).toHaveText('No videos selected');
+  expect(page.url()).toBe(url);
+  await deliver(page, join(fixtures, 'small.mp4'));
+});
+
+test('claimed link is unavailable in another browser context', async ({ page, request, browser }) => {
+  await openSession(page, request);
+  const stranger = await browser.newContext();
+  try {
+    const otherPage = await stranger.newPage();
+    await otherPage.goto(page.url());
+    await expect(otherPage.getByRole('heading')).toHaveText('Private link unavailable');
+    await expect(otherPage.locator('#clips')).toHaveCount(0);
+    await expect(page.locator('#submit')).toBeVisible();
+  } finally {
+    await stranger.close();
+  }
+});
+
+test('refresh during local compression restarts with explicit file re-selection', async ({ page, request }) => {
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#work')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading')).toHaveText('Compress videos for Discord');
+  await expect(page.getByRole('status')).toContainText('Choose them again');
+  await expect(page.locator('#selection')).toHaveText('No videos selected');
+  await deliver(page, join(fixtures, 'small.mp4'));
+});
+
+test('refresh while Discord delivery is pending shows receipt status, not uploader', async ({ page, request }) => {
+  const response = await request.post('/test/session?slow=1');
+  await page.goto((await response.json()).path);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#phase-copy')).toContainText('relay is processing this batch', {timeout:30000});
+  await page.reload();
+  await expect(page.getByRole('heading')).toHaveText('Checking Discord delivery');
+  await expect(page.locator('#clips')).toHaveCount(0);
+  await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord', {timeout:15000});
+});
+
+test('completed session refresh shows delivered receipt, not duplicate uploader', async ({ page, request }) => {
+  await openSession(page, request);
+  await deliver(page, join(fixtures, 'small.mp4'));
+  await page.reload();
+  await expect(page.getByRole('heading')).toHaveText('Checking Discord delivery');
+  await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord');
+  await expect(page.locator('#clips')).toHaveCount(0);
 });
 
 test('busy relay is retried without recompression', async ({ page, request }) => {

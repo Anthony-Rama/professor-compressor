@@ -28,7 +28,7 @@ flowchart LR
     E --> F[Original Discord channel]
 ```
 
-1. The bot creates a short-lived session for the requesting user and channel. Opening the link consumes it and establishes a separate browser session secret.
+1. The bot creates a short-lived session for the requesting user and channel. Opening the link claims it for that browser. A refresh in the same browser can reopen the page, but local file selections must be made again.
 2. The page checks file signatures and uses FFmpeg WebAssembly to probe and, when necessary, convert videos locally. Fitting MP4 files can skip re-encoding.
 3. The browser uploads the resulting MP4 batch over HTTPS. The Python relay validates each file and delivers the batch as Discord attachments.
 4. The relay releases the files from memory after delivery or failure. It does not intentionally write video files to disk.
@@ -40,7 +40,7 @@ The Discord bot token stays on the server. Videos that need conversion remain on
 - **Browser-side video work.** FFmpeg WebAssembly does the expensive encoding on the user's device. Files are processed sequentially to limit browser memory use; a single-thread fallback covers browsers where the multithreaded core is unavailable.
 - **Format-aware conversion.** FFmpeg probes the source rather than relying on the browser's ability to preview it. File signatures are checked instead of trusting extensions or MIME types. Duration-aware bitrate targeting aims below Discord's reported limit and retries oversized results.
 - **Bounded delivery.** The relay applies per-address rate limits, upload concurrency limits, a queue limit, and an in-memory byte budget. Authenticated status polling and short-lived delivery receipts recover lost responses without resending an accepted batch. Prepared files can be saved or retried without recompression after a relay failure.
-- **Short-lived access.** Upload links are random, expire, and can be opened once. The claimed session uses a separate secret for authenticated retries, status checks, and failure reports. Active encoding renews a bounded session lease; idle links still expire.
+- **Short-lived access.** Upload links are random, expire, and can be claimed once. A short-lived, secure browser cookie permits same-browser refresh without making the claimed link public. Upload requests use a separate secret; refreshing revokes the previous page's secret. Active encoding renews a bounded session lease; idle links still expire.
 - **Operational visibility.** Health and aggregate process metrics support monitoring without recording filenames or user, channel, server, or IP identifiers in the metrics. Private operator alerts include server details and the Discord username and user ID for compression sessions and outcomes. An owner-only `/botstats` command can show live server information in a configured private server.
 
 The [architecture notes](docs/architecture.md) cover the request lifecycle, code boundaries, failure behavior, and scaling tradeoffs.

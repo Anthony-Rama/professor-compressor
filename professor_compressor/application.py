@@ -3,6 +3,7 @@ import html
 import io
 import ipaddress
 import logging
+import math
 import os
 import secrets
 import signal
@@ -41,7 +42,7 @@ from .notifications import (
     guild_alert_message,
     safe_alert_text,
 )
-from .web_ui import browser_compressor
+from .web_ui import browser_compressor, browser_delivery_status
 
 logger = logging.getLogger(__name__)
 settings = Settings.from_environment(require_token=False)
@@ -77,6 +78,9 @@ tree = app_commands.CommandTree(client)
 jobs: dict[str, UploadJob] = {}
 outcomes: dict[str, DeliveryOutcome] = {}
 OUTCOME_TTL_SECONDS = 3600
+RESUME_COOKIE_NAME = "__Secure-pc-browser"
+RESUME_COOKIE_MAX_AGE_SECONDS = 3 * 3600
+PAGE_EXIT_GRACE_SECONDS = 5
 DELIVERY_RESPONSE_WAIT_SECONDS = 2
 draining = False
 background_tasks: set[asyncio.Task[Any]] = set()
@@ -629,6 +633,38 @@ async def terms_of_service(request: web.Request) -> web.Response:
     return legal_response(terms_of_service_html())
 
 
+def browser_cookie_matches(request: web.Request, secret: str | None) -> bool:
+    supplied = request.cookies.get(RESUME_COOKIE_NAME, "")
+    return bool(secret and supplied and secrets.compare_digest(supplied, secret))
+
+
+def set_browser_cookie(response: web.Response, token: str, secret: str) -> None:
+    response.set_cookie(
+        RESUME_COOKIE_NAME,
+        secret,
+        max_age=RESUME_COOKIE_MAX_AGE_SECONDS,
+        path=f"/upload/{quote(token)}",
+        secure=True,
+        httponly=True,
+        samesite="Lax",
+    )
+
+
+def compressor_page(job: UploadJob, *, reopened: bool = False) -> web.Response:
+    safe_target = compression_target(job.discord_limit)
+    return page(
+        "Professor Compressor",
+        browser_compressor(
+            MAX_CLIPS,
+            safe_target,
+            min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES),
+            job.claim_secret or "",
+            max(1, int(job.expires_at - time.time())),
+            reopened=reopened,
+        ),
+    )
+
+
 async def upload_form(request: web.Request) -> web.Response:
     # aiohttp also dispatches HEAD to GET handlers; inspection must not claim a link.
     if request.method == "HEAD":
@@ -646,39 +682,52 @@ async def upload_form(request: web.Request) -> web.Response:
             f"<p>Please wait {retry_after} seconds, then run "
             "<strong>/compress</strong> again.</p>",
         )
-    job = active_job(request.match_info["token"])
-    if job is None or job.state is not JobState.OPEN:
-        return page(
-            "Link expired",
-            "<h1>Upload link unavailable</h1>"
-            "<p>This one-use link expired or was already opened. Run "
-            "<strong>/compress</strong> again.</p>",
+    token = request.match_info["token"]
+    job = active_job(token)
+    receipt = outcomes.get(token)
+    if receipt is not None and time.time() > receipt.expires_at:
+        outcomes.pop(token, None)
+        receipt = None
+    if job is not None and job.state is JobState.OPEN:
+        job.claim_secret = secrets.token_urlsafe(32)
+        job.browser_secret = secrets.token_urlsafe(32)
+        job.claimed_at = time.time()
+        job.expires_at = time.time() + ACTIVE_SESSION_TTL_SECONDS
+        job.state = JobState.CLAIMED
+        metrics.increment("sessions_opened")
+        schedule_owner_alert(
+            compression_progress_alert(
+                job,
+                "🔗 **Compressor link opened**",
+                "Stage: browser requested the page; no files selected yet.",
+            )
         )
-
-    job.claim_secret = secrets.token_urlsafe(32)
-    job.claimed_at = time.time()
-    job.expires_at = time.time() + ACTIVE_SESSION_TTL_SECONDS
-    job.state = JobState.CLAIMED
-    metrics.increment("sessions_opened")
-    schedule_owner_alert(
-        compression_progress_alert(
-            job,
-            "🔗 **Compressor link opened**",
-            "Stage: browser requested the page; no files selected yet.",
-        )
-    )
-    # Keep a small delivery reserve while letting the browser use nearly all of
-    # the attachment allowance. The encoder applies its own muxing reserve.
-    safe_target = compression_target(job.discord_limit)
+        response = compressor_page(job)
+        set_browser_cookie(response, token, job.browser_secret)
+        return response
+    if job is not None and browser_cookie_matches(request, job.browser_secret):
+        if job.state is JobState.CLAIMED:
+            # A fresh page supersedes any old tab holding the previous API secret.
+            job.claim_secret = secrets.token_urlsafe(32)
+            job.page_left = False
+            job.page_left_at = None
+            job.processing_until = 0
+            hard_deadline = (job.claimed_at or job.created_at) + max(
+                7200, ACTIVE_SESSION_TTL_SECONDS
+            )
+            job.expires_at = min(
+                time.time() + ACTIVE_SESSION_TTL_SECONDS, hard_deadline
+            )
+            return compressor_page(job, reopened=True)
+        return page("Delivery status", browser_delivery_status(job.claim_secret or ""))
+    if receipt is not None and browser_cookie_matches(request, receipt.browser_secret):
+        return page("Delivery status", browser_delivery_status(receipt.secret))
     return page(
-        "Professor Compressor",
-        browser_compressor(
-            MAX_CLIPS,
-            safe_target,
-            min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES),
-            job.claim_secret,
-            max(1, int(job.expires_at - time.time())),
-        ),
+        "Private link unavailable",
+        "<h1>Private link unavailable</h1>"
+        "<p>This link has expired or cannot be reopened in this browser. "
+        "If you switched browsers or cleared site data, run "
+        "<strong>/compress</strong> in Discord for a new link.</p>",
     )
 
 
@@ -695,6 +744,7 @@ def safe_result_name(name: str | None, number: int) -> str:
 def record_outcome(job: UploadJob, status: int, body: dict[str, object]) -> None:
     outcomes[job.token] = DeliveryOutcome(
         secret=job.claim_secret or "",
+        browser_secret=job.browser_secret or "",
         expires_at=time.time() + OUTCOME_TTL_SECONDS,
         status=status,
         body=body,
@@ -816,6 +866,7 @@ async def receive_browser_progress(request: web.Request) -> web.Response:
         first_selection = job.selected_count == 0
         job.selected_count = count
         job.page_left = False
+        job.page_left_at = None
         job.browser_cancelled = False
         if first_selection:
             schedule_owner_alert(
@@ -827,6 +878,7 @@ async def receive_browser_progress(request: web.Request) -> web.Response:
             )
     elif event == "started":
         job.page_left = False
+        job.page_left_at = None
         job.browser_cancelled = False
         if not job.compression_started:
             job.compression_started = True
@@ -840,6 +892,7 @@ async def receive_browser_progress(request: web.Request) -> web.Response:
     elif event == "cancelled":
         job.browser_cancelled = True
         job.page_left = False
+        job.page_left_at = None
         if not job.browser_cancel_reported:
             job.browser_cancel_reported = True
             schedule_owner_alert(
@@ -851,6 +904,7 @@ async def receive_browser_progress(request: web.Request) -> web.Response:
             )
     elif event == "page_left":
         job.page_left = True
+        job.page_left_at = time.time()
         if not job.page_left_reported:
             job.page_left_reported = True
             schedule_owner_alert(
@@ -1303,21 +1357,43 @@ async def compress(interaction: discord.Interaction) -> None:
         await interaction.response.send_message(problem, ephemeral=True)
         return
     discard_expired_jobs()
-    if any(
-        job.user_id == interaction.user.id
-        and (
-            job.state in {JobState.UPLOADING, JobState.QUEUED}
-            or job.processing_until > time.time()
-        )
-        for job in jobs.values()
-    ):
+    user_jobs = [job for job in jobs.values() if job.user_id == interaction.user.id]
+    if any(job.state in {JobState.UPLOADING, JobState.QUEUED} for job in user_jobs):
         await interaction.response.send_message(
-            "You already have a compressor session processing files. Finish or cancel it before starting another. If you closed its tab, wait 90 seconds and try again. Your existing session has not been replaced.",
+            "Your existing session is sending files to Discord. Check the original channel "
+            "for the result before starting another session. It has not been replaced.",
+            ephemeral=True,
+        )
+        return
+    now = time.time()
+    waiting_jobs = [
+        job
+        for job in user_jobs
+        if job.state is JobState.CLAIMED
+        and job.processing_until > now
+        and (
+            job.page_left_at is None or now < job.page_left_at + PAGE_EXIT_GRACE_SECONDS
+        )
+    ]
+    if waiting_jobs:
+        wait_until = max(
+            min(
+                job.processing_until,
+                job.page_left_at + PAGE_EXIT_GRACE_SECONDS
+                if job.page_left_at is not None
+                else job.processing_until,
+            )
+            for job in waiting_jobs
+        )
+        seconds = max(1, math.ceil(wait_until - now))
+        await interaction.response.send_message(
+            "Your existing compressor session may still be active. Return to its tab "
+            f"or wait {seconds} seconds and run /compress again. The current "
+            "session has not been replaced.",
             ephemeral=True,
         )
         return
     cooldown_key = (interaction.guild_id or 0, interaction.user.id)
-    now = time.time()
     previous_job_at = last_job_at.get(cooldown_key, 0.0)
     remaining = USER_COOLDOWN_SECONDS - (now - previous_job_at)
     if remaining > 0:

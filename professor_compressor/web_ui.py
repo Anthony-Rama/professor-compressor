@@ -21,14 +21,17 @@ def browser_compressor(
     max_batch_bytes: int,
     session_secret: str,
     expires_in_seconds: int,
+    *,
+    reopened: bool = False,
 ) -> str:
-    """Return the one-use page that encodes videos locally in the browser."""
+    """Return the browser-bound page that encodes videos locally."""
     template = r"""
 <img class="brand" src="/brand/professor-compressor.png"
   alt="Professor Compressor mascot">
 <h1>Compress videos for Discord</h1>
 <p class="intro">Choose up to __MAX_CLIPS__ videos. Finished videos are formatted
   for Discord's current upload limit.</p>
+__RECOVERY_NOTICE__
 <div class="stay-open">
   <span aria-hidden="true">⏱</span>
   <span><strong>Keep this page open and active until it finishes.</strong><br>
@@ -51,7 +54,7 @@ def browser_compressor(
   </label>
   <p id="selection" class="selection" aria-live="polite">No videos selected</p>
   <div class="session-note">
-    <span>Private, one-use session</span><span id="expires">Expires in --:--</span>
+    <span>Private session, bound to this browser</span><span id="expires">Expires in --:--</span>
   </div>
   <div id="files" class="file-list" hidden></div>
   <div class="controls">
@@ -1022,4 +1025,64 @@ expiryTimer = setInterval(updateExpiry, 1000);
         .replace("__MAX_BATCH_BYTES__", _json_script_value(max_batch_bytes))
         .replace("__SESSION_SECRET__", _json_script_value(session_secret))
         .replace("__EXPIRES_SECONDS__", _json_script_value(expires_in_seconds))
+        .replace(
+            "__RECOVERY_NOTICE__",
+            '<div class="message" role="status"><strong>Page refreshed.</strong> '
+            "Videos selected in the previous page are no longer available here. "
+            "Choose them again to restart local processing. Check Discord first "
+            "if you had already sent finished files.</div>"
+            if reopened
+            else "",
+        )
+    )
+
+
+def browser_delivery_status(session_secret: str) -> str:
+    """Show a status-only view while the relay owns the delivery."""
+    return (
+        '<img class="brand" src="/brand/professor-compressor.png" '
+        'alt="Professor Compressor mascot">'
+        "<h1>Checking Discord delivery</h1>"
+        '<p class="intro">Your browser may have refreshed while finished files '
+        "were being sent. The relay is checking the existing delivery. "
+        "Do not start another upload yet.</p>"
+        '<p id="delivery-status" class="message" role="status">Checking status…</p>'
+        '<p id="reselect" hidden>That upload did not complete. Videos held by '
+        "the previous page cannot be restored. "
+        '<a href="" id="return-to-compressor">Return to compressor</a> '
+        "and select them again.</p>"
+        '<p class="privacy"><a href="/privacy">Privacy Policy</a></p>'
+        "<script>\n"
+        f"const SESSION_SECRET = {_json_script_value(session_secret)};\n"
+        'const statusLine = document.getElementById("delivery-status");\n'
+        'const reselect = document.getElementById("reselect");\n'
+        "async function checkDelivery() {\n"
+        "  try {\n"
+        '    const response = await fetch(location.pathname + "/status", {\n'
+        '      headers: {"X-Upload-Session": SESSION_SECRET},\n'
+        '      cache: "no-store", signal: AbortSignal.timeout(10000)\n'
+        "    });\n"
+        "    const body = await response.json();\n"
+        "    if (body.pending) {\n"
+        '      statusLine.textContent = "Delivery is still in progress. Check Discord before starting a new session.";\n'
+        "      setTimeout(checkDelivery, 2000);\n"
+        "    } else if (body.ok) {\n"
+        '      statusLine.textContent = "Delivered to Discord. You can return to your channel.";\n'
+        '      statusLine.classList.add("success");\n'
+        "    } else if (body.ready) {\n"
+        '      statusLine.textContent = "The upload stopped before Discord delivery.";\n'
+        "      reselect.hidden = false;\n"
+        '    } else if (body.code === "discord_delivery_failed") {\n'
+        '      statusLine.textContent = "Discord rejected this delivery. Run /compress again or contact support if it keeps happening.";\n'
+        '      statusLine.classList.add("error");\n'
+        "    } else {\n"
+        '      statusLine.textContent = "Delivery could not be confirmed. Check Discord before running /compress again.";\n'
+        "    }\n"
+        "  } catch (_) {\n"
+        '    statusLine.textContent = "Connection lost while checking delivery. Retrying safely…";\n'
+        "    setTimeout(checkDelivery, 3000);\n"
+        "  }\n"
+        "}\n"
+        "void checkDelivery();\n"
+        "</script>"
     )

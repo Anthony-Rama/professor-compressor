@@ -28,6 +28,7 @@ class UploadJob:
     interaction: discord.Interaction = field(repr=False)
     state: JobState = JobState.OPEN
     claim_secret: str | None = field(default=None, repr=False)
+    browser_secret: str | None = field(default=None, repr=False)
     claimed_at: float | None = None
     browser_failure_reported: bool = False
     guild_id: int | None = None
@@ -42,6 +43,7 @@ class UploadJob:
     browser_cancel_reported: bool = False
     page_left: bool = False
     page_left_reported: bool = False
+    page_left_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,7 @@ class DeliveryOutcome:
     """Short-lived receipt; never retains media or interaction credentials."""
 
     secret: str = field(repr=False)
+    browser_secret: str = field(repr=False)
     expires_at: float
     status: int
     body: dict[str, object]

@@ -117,6 +117,57 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
                 await app.compress.callback(interaction)
                 self.assertEqual(job.token in app.jobs, active)
 
+    async def test_page_exit_grace_unlocks_stale_processing_session(self):
+        for seconds_since_exit, blocked in ((1, True), (6, False)):
+            interaction = self.make_interaction()
+            job = UploadJob(
+                "original",
+                789,
+                456,
+                time.time() + 600,
+                20_000_000,
+                interaction,
+                state=JobState.CLAIMED,
+                processing_until=time.time() + 90,
+                page_left_at=time.time() - seconds_since_exit,
+            )
+            with (
+                patch.object(app.client, "get_guild", return_value=interaction.guild),
+                patch.object(app, "jobs", {job.token: job}),
+                patch.object(app, "last_job_at", {}),
+                patch.object(app, "schedule_owner_alert"),
+            ):
+                await app.compress.callback(interaction)
+                self.assertEqual(job.token in app.jobs, blocked)
+                if blocked:
+                    self.assertIn(
+                        "wait 4 seconds",
+                        interaction.response.send_message.await_args.args[0],
+                    )
+
+    async def test_queued_delivery_cannot_be_replaced_after_page_exit(self):
+        interaction = self.make_interaction()
+        job = UploadJob(
+            "original",
+            789,
+            456,
+            time.time() + 600,
+            20_000_000,
+            interaction,
+            state=JobState.QUEUED,
+            page_left_at=time.time() - 60,
+        )
+        with (
+            patch.object(app.client, "get_guild", return_value=interaction.guild),
+            patch.object(app, "jobs", {job.token: job}),
+            patch.object(app, "last_job_at", {}),
+        ):
+            await app.compress.callback(interaction)
+            self.assertIn("original", app.jobs)
+            self.assertIn(
+                "sending files", interaction.response.send_message.await_args.args[0]
+            )
+
     async def test_drain_rejects_new_command(self):
         interaction = self.make_interaction()
         with patch.object(app, "draining", True), patch.object(app, "jobs", {}):

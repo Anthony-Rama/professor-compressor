@@ -142,9 +142,12 @@ def privacy_policy_html() -> str:
       policies.</p>
 
     <h2>7. Cookies and tracking</h2>
-    <p>The compressor does not use advertising trackers, third-party analytics,
-      or browser cookies. A random, short-lived session secret is used to
-      authorize delivery retries from the browser that opened the private link.</p>
+    <p>The compressor does not use advertising trackers or third-party analytics.
+      It uses one short-lived, first-party, HTTP-only browser cookie to let the
+      same browser reopen a claimed link after a refresh and check a delivery
+      already in progress. The cookie contains a random secret, not your name
+      or video, and expires after at most three hours. The relay also uses a
+      separate short-lived page secret to authorize uploads and status checks.</p>
 
     <h2>8. Security</h2>
     <p>The Service uses HTTPS, expiring single-use links, browser-bound session

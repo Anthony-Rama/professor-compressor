@@ -29,8 +29,10 @@ flowchart LR
 - The service does not write uploaded files to disk.
 - Discord stores the final message attachments according to Discord's own
   policies.
-- Session tokens are high entropy, short-lived, and single-use. Opening a link
-  replaces it with a separate browser-bound claim secret.
+- Session tokens are high entropy, short-lived, and can be claimed once. Opening
+  a link creates a path-scoped, secure, HTTP-only browser cookie and a separate
+  upload secret. A same-browser refresh rotates the upload secret; another
+  browser cannot reuse the claimed link.
 
 ## Request lifecycle
 
@@ -100,12 +102,15 @@ allowance. The command checks effective channel permissions before creating a
 link, and the worker checks permissions and the current bot allowance again
 before sending. Threads have separate send permissions.
 
-A HEAD inspection never claims a link. A GET still claims the one-use page;
-refreshing it does not open another session. During active encoding, authenticated
-heartbeats renew the browser lease up to a two-hour total lifetime (or a longer
-explicitly configured active-session lifetime). Idle sessions expire normally.
-A second command cannot replace a session actively encoding or delivering;
-abandoned encoding leases clear after 90 seconds without a heartbeat.
+A HEAD inspection never claims a link. The first GET claims it; later GETs from
+the same browser reopen the page while local encoding is active, but cannot
+restore selected files. Refreshing during relay upload or Discord delivery shows
+status only, so an accepted batch cannot be sent twice. Authenticated heartbeats
+renew an active lease up to a two-hour total lifetime (or a longer configured
+active-session lifetime). Idle sessions expire normally. A second command cannot
+replace a live encoding or delivery; a confirmed page exit shortens the wait to
+five seconds, while a lost exit signal leaves the lease to expire within 90
+seconds. The command reports the remaining wait rather than a fixed estimate.
 
 An accepted delivery is owned by the queue, not the browser connection. The HTTP
 request waits briefly, then returns 202 if work is pending. The browser polls an
