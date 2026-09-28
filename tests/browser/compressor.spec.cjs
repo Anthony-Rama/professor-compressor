@@ -59,6 +59,32 @@ async function deliver(page, files) {
   expect(await page.locator('#phase-title').textContent(), await page.locator('#message').textContent()).toBe('Delivered to Discord');
 }
 
+test('browser reports selection and start without filenames or media', async ({ page, request }) => {
+  const reports = [];
+  await page.route('**/upload/*/progress', async route => {
+    reports.push(JSON.parse(route.request().postData()));
+    await route.continue();
+  });
+  await openSession(page, request);
+  await deliver(page, join(fixtures, 'small.mp4'));
+  expect(reports).toContainEqual({event: 'selected', count: 1});
+  expect(reports).toContainEqual({event: 'started'});
+  expect(JSON.stringify(reports)).not.toContain('small.mp4');
+});
+
+test('page exit sends a best-effort leave report', async ({ page, request }) => {
+  let resolveReport;
+  const report = new Promise(resolve => { resolveReport = resolve; });
+  await page.route('**/upload/*/progress', async route => {
+    const body = JSON.parse(route.request().postData());
+    if (body.event === 'page_left') resolveReport(body);
+    await route.continue();
+  });
+  await openSession(page, request);
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  expect(await report).toEqual({event: 'page_left'});
+});
+
 test('oversized video loads WebAssembly and compresses under the real CSP', async ({ page, request }) => {
   await openSession(page, request);
   await expect(page.locator('#feedback-actions')).toBeHidden();

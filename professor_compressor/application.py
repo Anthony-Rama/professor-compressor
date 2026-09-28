@@ -37,6 +37,7 @@ from .metrics import RuntimeMetrics
 from .notifications import (
     botstats_report,
     compression_outcome_alert,
+    compression_progress_alert,
     guild_alert_message,
     safe_alert_text,
 )
@@ -399,16 +400,45 @@ def page(title: str, body: str) -> web.Response:
 def active_job(token: str) -> UploadJob | None:
     job = jobs.get(token)
     if (
-        job is None
-        or job.state is JobState.DONE
-        or (
-            time.time() > job.expires_at
-            and job.state not in {JobState.UPLOADING, JobState.QUEUED}
-        )
+        job is not None
+        and time.time() > job.expires_at
+        and job.state in {JobState.OPEN, JobState.CLAIMED}
     ):
+        expire_job(token, job)
+        return None
+    if job is None or job.state is JobState.DONE:
         jobs.pop(token, None)
         return None
     return job
+
+
+def expire_job(token: str, job: UploadJob) -> None:
+    """Retire an unfinished session once, with its last confirmed activity."""
+    if jobs.pop(token, None) is not job:
+        return
+    if job.browser_failure_reported:
+        return
+    if job.state is JobState.OPEN:
+        detail = "Last confirmed activity: link created; it was never opened."
+    elif job.page_left:
+        detail = (
+            "Last confirmed activity: browser reported the page was left or reloaded."
+        )
+    elif job.browser_cancelled:
+        detail = "Last confirmed activity: browser reported compression was cancelled."
+    elif job.relay_upload_started:
+        detail = "Last confirmed activity: relay upload was attempted; no valid completed batch reached the delivery queue."
+    elif job.compression_started:
+        detail = "Last confirmed activity: browser reported Compress was pressed; no finished files reached the relay."
+    elif job.selected_count:
+        detail = f"Last confirmed activity: browser reported {job.selected_count} file(s) selected; Compress was not reported."
+    else:
+        detail = "Last confirmed activity: link opened; no file selection was reported."
+    schedule_owner_alert(
+        compression_progress_alert(
+            job, "⌛ **Compression session expired without delivery**", detail
+        )
+    )
 
 
 def request_ip(request: web.Request) -> str:
@@ -457,7 +487,12 @@ def discard_expired_jobs() -> None:
         or (now > job.expires_at and job.state in {JobState.OPEN, JobState.CLAIMED})
     ]
     for token in expired_tokens:
-        jobs.pop(token, None)
+        job = jobs.get(token)
+        if job is not None:
+            if job.state is JobState.DONE:
+                jobs.pop(token, None)
+            else:
+                expire_job(token, job)
     for token, outcome in list(outcomes.items()):
         if now > outcome.expires_at:
             outcomes.pop(token, None)
@@ -625,6 +660,13 @@ async def upload_form(request: web.Request) -> web.Response:
     job.expires_at = time.time() + ACTIVE_SESSION_TTL_SECONDS
     job.state = JobState.CLAIMED
     metrics.increment("sessions_opened")
+    schedule_owner_alert(
+        compression_progress_alert(
+            job,
+            "🔗 **Compressor link opened**",
+            "Stage: browser requested the page; no files selected yet.",
+        )
+    )
     # Keep a small delivery reserve while letting the browser use nearly all of
     # the attachment allowance. The encoder applies its own muxing reserve.
     safe_target = compression_target(job.discord_limit)
@@ -748,6 +790,81 @@ async def pause_session(request: web.Request) -> web.Response:
     return await session_status(request)
 
 
+async def receive_browser_progress(request: web.Request) -> web.Response:
+    """Record a small, authenticated browser milestone, never filenames."""
+    job, response = session_access(request)
+    if response is not None:
+        return response
+    assert job is not None
+    if job.state is not JobState.CLAIMED:
+        return json_error(
+            "The session is already being delivered.", 409, "session_used"
+        )
+    try:
+        payload = await request.clone(client_max_size=4096).json()
+    except web.HTTPRequestEntityTooLarge:
+        return json_error("Progress report is too large.", 413, "report_too_large")
+    except (ValueError, TypeError):
+        return json_error("Expected a JSON object.", 400, "invalid_progress")
+    if not isinstance(payload, dict):
+        return json_error("Expected a JSON object.", 400, "invalid_progress")
+    event = payload.get("event")
+    if event == "selected":
+        count = payload.get("count")
+        if type(count) is not int or not 1 <= count <= MAX_CLIPS:
+            return json_error("Invalid file count.", 400, "invalid_progress")
+        first_selection = job.selected_count == 0
+        job.selected_count = count
+        job.page_left = False
+        job.browser_cancelled = False
+        if first_selection:
+            schedule_owner_alert(
+                compression_progress_alert(
+                    job,
+                    "📁 **Videos selected in browser**",
+                    f"Files selected: `{count}` (not uploaded yet).",
+                )
+            )
+    elif event == "started":
+        job.page_left = False
+        job.browser_cancelled = False
+        if not job.compression_started:
+            job.compression_started = True
+            schedule_owner_alert(
+                compression_progress_alert(
+                    job,
+                    "▶️ **Compress pressed**",
+                    "Stage: browser preparation/compression started; no finished files uploaded yet.",
+                )
+            )
+    elif event == "cancelled":
+        job.browser_cancelled = True
+        job.page_left = False
+        if not job.browser_cancel_reported:
+            job.browser_cancel_reported = True
+            schedule_owner_alert(
+                compression_progress_alert(
+                    job,
+                    "⏹️ **Compression cancelled in browser**",
+                    "Stage: user pressed Cancel; the same link can be retried while active.",
+                )
+            )
+    elif event == "page_left":
+        job.page_left = True
+        if not job.page_left_reported:
+            job.page_left_reported = True
+            schedule_owner_alert(
+                compression_progress_alert(
+                    job,
+                    "🚪 **Compressor page left**",
+                    "Browser reported navigation, reload, or tab close; delivery is not confirmed.",
+                )
+            )
+    else:
+        return json_error("Unknown progress event.", 400, "invalid_progress")
+    return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
+
+
 async def receive_results(request: web.Request) -> web.Response:
     global active_relay_uploads, delivery_bytes_held
     job, response = session_access(request)
@@ -791,6 +908,15 @@ async def receive_results(request: web.Request) -> web.Response:
     upload_slot_held = True
     job.state = JobState.UPLOADING
     active_relay_uploads += 1
+    if not job.relay_upload_started:
+        job.relay_upload_started = True
+        schedule_owner_alert(
+            compression_progress_alert(
+                job,
+                "📨 **Relay upload started**",
+                "Stage: browser began sending finished files; receipt is not yet confirmed.",
+            )
+        )
     try:
         if not request.content_type.startswith("multipart/"):
             raise ValueError("The upload format was invalid. Please try again.")
@@ -870,6 +996,13 @@ async def receive_results(request: web.Request) -> web.Response:
         active_relay_uploads -= 1
         upload_slot_held = False
         job.state = JobState.QUEUED
+        schedule_owner_alert(
+            compression_progress_alert(
+                job,
+                "📤 **Finished files reached relay**",
+                f"Files: `{result_count}`; queued for Discord delivery.",
+            )
+        )
         try:
             message = await asyncio.wait_for(
                 asyncio.shield(completion), timeout=DELIVERY_RESPONSE_WAIT_SECONDS
@@ -1206,6 +1339,13 @@ async def compress(interaction: discord.Interaction) -> None:
     for old_token, old_job in list(jobs.items()):
         if old_job.user_id == interaction.user.id:
             jobs.pop(old_token, None)
+            schedule_owner_alert(
+                compression_progress_alert(
+                    old_job,
+                    "🔄 **Compression session replaced**",
+                    "A new /compress command replaced this unfinished link.",
+                )
+            )
     last_job_at[cooldown_key] = now
 
     token = secrets.token_urlsafe(32)
@@ -1311,6 +1451,7 @@ def create_web_application() -> web.Application:
     application.router.add_get("/upload/{token}/status", session_status)
     application.router.add_post("/upload/{token}/heartbeat", renew_session)
     application.router.add_post("/upload/{token}/pause", pause_session)
+    application.router.add_post("/upload/{token}/progress", receive_browser_progress)
     application.router.add_post(
         "/upload/{token}/failure",
         receive_browser_failure,

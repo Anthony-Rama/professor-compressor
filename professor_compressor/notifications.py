@@ -67,6 +67,20 @@ def compression_outcome_alert(
     return "\n".join(lines)
 
 
+def compression_progress_alert(job: UploadJob, title: str, detail: str) -> str:
+    """Report a confirmed session milestone without media or session secrets."""
+    return "\n".join(
+        (
+            f"{title}",
+            f"Server: **{safe_alert_text(job.guild_name or 'Unknown server')}**",
+            f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
+            f"Username: **{safe_alert_text('@' + (job.username or 'unknown'))}**",
+            f"User ID: `{job.user_id}`",
+            detail,
+        )
+    )
+
+
 def botstats_report(
     guilds: Iterable[discord.Guild],
     snapshot: dict[str, int],

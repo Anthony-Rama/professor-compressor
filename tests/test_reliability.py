@@ -71,13 +71,140 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
     async def test_head_does_not_claim_or_extend_link(self):
         job = self.job(JobState.OPEN)
         expiry = job.expires_at
-        response = await self.http.head("/upload/audit")
-        self.assertEqual(response.status, 200)
-        self.assertIs(job.state, JobState.OPEN)
-        self.assertEqual(job.expires_at, expiry)
-        response = await self.http.get("/upload/audit")
-        self.assertIn('id="submit"', await response.text())
-        self.assertIs(job.state, JobState.CLAIMED)
+        with patch.object(app, "schedule_owner_alert") as alert:
+            response = await self.http.head("/upload/audit")
+            self.assertEqual(response.status, 200)
+            self.assertIs(job.state, JobState.OPEN)
+            self.assertEqual(job.expires_at, expiry)
+            alert.assert_not_called()
+            response = await self.http.get("/upload/audit")
+            self.assertIn('id="submit"', await response.text())
+            self.assertIs(job.state, JobState.CLAIMED)
+            self.assertIn("link opened", alert.call_args.args[0])
+
+    async def test_progress_reports_are_authenticated_bounded_and_deduplicated(self):
+        job = self.job()
+        url = "/upload/audit/progress"
+        headers = {"X-Upload-Session": "private"}
+        with patch.object(app, "schedule_owner_alert") as alert:
+            self.assertEqual(
+                (await self.http.post(url, json={"event": "started"})).status, 403
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "selected", "count": 11}
+                    )
+                ).status,
+                400,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "selected", "count": True}
+                    )
+                ).status,
+                400,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "unknown"}
+                    )
+                ).status,
+                400,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url,
+                        headers=headers,
+                        json={
+                            "event": "selected",
+                            "count": 2,
+                            "filename": "private.mov",
+                        },
+                    )
+                ).status,
+                200,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "selected", "count": 1}
+                    )
+                ).status,
+                200,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "started"}
+                    )
+                ).status,
+                200,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "started"}
+                    )
+                ).status,
+                200,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "cancelled"}
+                    )
+                ).status,
+                200,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "page_left"}
+                    )
+                ).status,
+                200,
+            )
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        url, headers=headers, json={"event": "page_left"}
+                    )
+                ).status,
+                200,
+            )
+            self.assertEqual(alert.call_count, 4)
+            self.assertTrue(job.page_left)
+            self.assertEqual(job.selected_count, 1)
+            self.assertNotIn(
+                "private.mov", "\n".join(call.args[0] for call in alert.call_args_list)
+            )
+
+    async def test_expiry_reports_last_confirmed_stage_once(self):
+        job = self.job(JobState.OPEN)
+        with patch.object(app, "schedule_owner_alert") as alert:
+            job.expires_at = time.time() - 1
+            self.assertIsNone(app.active_job(job.token))
+            app.discard_expired_jobs()
+            self.assertEqual(alert.call_count, 1)
+            self.assertIn("never opened", alert.call_args.args[0])
+
+            job = self.job()
+            job.selected_count = 2
+            job.compression_started = True
+            job.expires_at = time.time() - 1
+            app.discard_expired_jobs()
+            self.assertEqual(alert.call_count, 2)
+            self.assertIn("Compress was pressed", alert.call_args.args[0])
+
+            job = self.job()
+            job.browser_failure_reported = True
+            job.expires_at = time.time() - 1
+            app.discard_expired_jobs()
+            self.assertEqual(alert.call_count, 2)
 
     async def test_pending_request_survives_http_wait_and_expiry(self):
         job = self.job()
@@ -94,12 +221,18 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 app, "deliver_browser_results", AsyncMock(side_effect=deliver)
             ) as sender,
-            patch.object(app, "schedule_owner_alert"),
+            patch.object(app, "schedule_owner_alert") as alert,
         ):
             worker = asyncio.create_task(app.delivery_worker(1))
             try:
                 response = await self.post_video()
                 self.assertEqual(response.status, 202)
+                self.assertTrue(
+                    any(
+                        "Relay upload started" in call.args[0]
+                        for call in alert.call_args_list
+                    )
+                )
                 await started.wait()
                 job.expires_at = time.time() - 1
                 app.discard_expired_jobs()

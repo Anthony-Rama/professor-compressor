@@ -35,6 +35,13 @@ class UploadJob:
     username: str = ""
     created_at: float = field(default_factory=time.time)
     processing_until: float = 0
+    selected_count: int = 0
+    compression_started: bool = False
+    relay_upload_started: bool = False
+    browser_cancelled: bool = False
+    browser_cancel_reported: bool = False
+    page_left: bool = False
+    page_left_reported: bool = False
 
 
 @dataclass(frozen=True, slots=True)

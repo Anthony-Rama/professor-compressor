@@ -2,7 +2,7 @@
 
 from html import escape
 
-EFFECTIVE_DATE = "September 27, 2026"
+EFFECTIVE_DATE = "September 28, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
@@ -89,10 +89,13 @@ def privacy_policy_html() -> str:
         sessions, queued files, delivered bytes, failures, and rate-limited
         requests. Installation notifications sent privately to the operator
         may include a server name, server identifier, member count, and totals.
-        Private compression-session and outcome notifications also include the
-        command user's Discord username and user ID so the operator can
-        correlate a session with a delivery issue. These alerts do not include
-        filenames or video files.</li>
+        Private compression-session, browser progress, expiration, and outcome
+        notifications also include the command user's Discord username and user ID
+        so the operator can correlate a session with a delivery issue.
+        Browser progress reports cover link opening, file selection count,
+        pressing Compress, cancellation, and page exit or reload. A page-exit
+        report is best-effort and may not arrive if the browser or connection
+        fails. These alerts do not include filenames or video files.</li>
       <li><strong>Optional feedback:</strong> email feedback and support links
         open your email application. No feedback is sent unless you choose to
         send an email. If you do, the operator receives the email address and

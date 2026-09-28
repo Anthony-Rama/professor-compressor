@@ -156,6 +156,33 @@ let heartbeatTimer = null;
 let preparedResults = null;
 let recoveryURLs = [];
 let pauseRequest = Promise.resolve();
+let deliveryComplete = false;
+let pageIsLeaving = false;
+let progressQueue = Promise.resolve();
+
+function reportProgress(event, count) {
+  const body = count === undefined ? {event} : {event, count};
+  // Observability must never hold up local compression or expose file details.
+  const send = () => fetch(window.location.pathname + "/progress", {
+    method: "POST",
+    headers: {"X-Upload-Session": SESSION_SECRET, "Content-Type": "application/json"},
+    body: JSON.stringify(body),
+    cache: "no-store",
+    keepalive: true,
+    signal: event === "page_left" ? undefined : AbortSignal.timeout(5000)
+  }).catch(() => {});
+  if (event === "page_left") {
+    void send();
+  } else {
+    progressQueue = progressQueue.then(() => pageIsLeaving ? undefined : send());
+  }
+}
+
+window.addEventListener("pagehide", () => {
+  pageIsLeaving = true;
+  if (!deliveryComplete && !sessionExpired()) reportProgress("page_left");
+});
+window.addEventListener("pageshow", () => { pageIsLeaving = false; });
 
 function sessionExpired() { return Date.now() >= sessionDeadline; }
 
@@ -392,6 +419,7 @@ function renderSelection() {
       " selected · " + readableSize(totalBytes);
   }
   renderSelectedFiles(files);
+  if (validCount) reportProgress("selected", files.length);
 }
 
 clips.addEventListener("change", renderSelection);
@@ -848,6 +876,7 @@ function finishRun() {
 cancelButton.addEventListener("click", () => {
   if (!running) return;
   cancelled = true;
+  reportProgress("cancelled");
   if (uploadRequest) uploadRequest.abort();
   if (ffmpeg) {
     ffmpeg.terminate();
@@ -874,6 +903,7 @@ form.addEventListener("submit", async (event) => {
     showMessage("Choose between 1 and " + MAX_CLIPS + " videos.");
     return;
   }
+  reportProgress("started");
   cancelled = false;
   running = true;
   submit.disabled = true;
@@ -938,6 +968,7 @@ form.addEventListener("submit", async (event) => {
     setRunDetail("Complete");
     setPhase("done", "Delivered to Discord", response.message);
     showMessage("Compression complete. You can close this page and return to Discord.", "success");
+    deliveryComplete = true;
     showFeedback("success");
     clips.disabled = true;
     submit.hidden = true;
