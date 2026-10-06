@@ -100,7 +100,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         send_batch.assert_awaited_once_with(
             channel.send,
             results,
-            "✅ **Compression complete!** <@123>",
+            "🎬 **Clip from** <@123>",
         )
         self.assertEqual(
             response,
@@ -120,7 +120,10 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         )
         channel = Mock()
         channel.send = AsyncMock()
-        results = [BrowserResult(name="clip.mp4", data=b"video")]
+        results = [
+            BrowserResult(name="clip-1.mp4", data=b"video"),
+            BrowserResult(name="clip-2.mp4", data=b"video"),
+        ]
         with (
             patch(
                 "professor_compressor.application.client.get_guild",
@@ -137,8 +140,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         sent = channel.send.await_args.kwargs
         self.assertEqual(
             sent["content"],
-            "✅ **Compression complete!** <@123>"
-            "\n\nClips from yesterday @everyone <@456>",
+            "🎬 **Clips from** <@123>\n\nClips from yesterday @everyone <@456>",
         )
         self.assertFalse(sent["allowed_mentions"].everyone)
         self.assertFalse(sent["allowed_mentions"].roles)

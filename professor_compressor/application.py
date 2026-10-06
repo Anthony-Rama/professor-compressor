@@ -1237,7 +1237,8 @@ async def deliver_browser_results(
     channel: discord.abc.Messageable | None = None
     try:
         channel = await get_channel(job)
-        message = f"✅ **Compression complete!** <@{job.user_id}>"
+        clip_label = "Clip" if len(results) == 1 else "Clips"
+        message = f"🎬 **{clip_label} from** <@{job.user_id}>"
         if caption:
             message += f"\n\n{caption}"
         if channel is None:
