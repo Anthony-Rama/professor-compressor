@@ -115,6 +115,7 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   await expect(page.locator('#page-heading')).toHaveText('Upload complete');
   await expect(page.locator('#page-intro')).toBeHidden();
   await expect(page.locator('#drop-zone')).toBeHidden();
+  await expect(page.locator('#clear-selection')).toBeHidden();
   await expect(page.locator('#selection')).toBeHidden();
   await expect(page.locator('#session-note')).toBeHidden();
   await expect(page.locator('#stay-open')).toBeHidden();
@@ -287,6 +288,27 @@ test('dropped videos populate the input and deliver together', async ({ page, re
   await expect(page.locator('.file-card')).toHaveCount(2);
 });
 
+test('trash button clears chosen or dropped videos before processing', async ({ page, request }) => {
+  await openSession(page, request);
+  const clear = page.getByRole('button', {name: 'Clear selected videos'});
+  await expect(clear).toBeDisabled();
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await expect(clear).toBeEnabled();
+  await expect(page.locator('.file-card')).toHaveCount(1);
+  await clear.click();
+  await expect(page.locator('#selection')).toHaveText('No videos selected');
+  await expect(page.locator('.file-card')).toHaveCount(0);
+  await expect(page.locator('#submit')).toBeDisabled();
+  await expect(clear).toBeDisabled();
+  expect(await page.locator('#clips').evaluate(input => input.files.length)).toBe(0);
+  await dropFiles(page, 2);
+  await expect(page.locator('.file-card')).toHaveCount(2);
+  await clear.click();
+  await expect(page.locator('#selection')).toHaveText('No videos selected');
+  await expect(page.locator('.file-card')).toHaveCount(0);
+  await expect(page.locator('#submit')).toBeDisabled();
+});
+
 test('too many dropped files preserves the existing selection', async ({ page, request }) => {
   await openSession(page, request);
   await dropFiles(page, 1);
@@ -319,6 +341,7 @@ test('drops cannot replace files while compression is running', async ({ page, r
   await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
   await page.locator('#submit').click();
   await expect(page.locator('#clips')).toBeDisabled();
+  await expect(page.locator('#clear-selection')).toBeDisabled();
   await expect(page.locator('#phase-title')).toHaveText('Loading video engine');
   await expect(page.locator('#run-detail')).toHaveText('Starting video engine');
   await expect(page.locator('.file-status')).toHaveText('Loading video engine');

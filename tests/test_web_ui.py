@@ -47,6 +47,11 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('href="/privacy"', self.page)
         self.assertIn('href="/terms"', self.page)
 
+    def test_picker_has_clear_button_instead_of_replacement_hint(self) -> None:
+        self.assertIn('id="clear-selection" type="button"', self.page)
+        self.assertIn('aria-label="Clear selected videos"', self.page)
+        self.assertNotIn("a new selection replaces the previous one", self.page)
+
     def test_feedback_is_optional_and_has_a_support_link(self) -> None:
         self.assertIn(
             'id="feedback-actions" class="feedback-actions contact-actions" hidden',

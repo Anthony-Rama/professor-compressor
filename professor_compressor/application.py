@@ -297,14 +297,15 @@ def page(title: str, body: str) -> web.Response:
     .file-input {{ position: absolute; width: 1px; height: 1px; padding: 0;
                    margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
                    white-space: nowrap; border: 0; }}
-    .file-picker {{ display: flex; gap: 14px; align-items: center; padding: 18px;
+    .picker-row {{ display: flex; gap: 10px; align-items: stretch; }}
+    .file-picker {{ display: flex; flex: 1; min-width: 0; gap: 14px; align-items: center; padding: 18px;
                     border: 1px dashed #59677d; border-radius: 14px;
                     background: #111a2a; cursor: pointer; transition: .18s ease; }}
     .file-picker:hover {{ border-color: #8991ff; background: #151f33; }}
     .file-picker.drag-over {{ border-color: #a5b4fc; background: #26345b;
       outline: 3px solid rgba(124, 131, 255, .35); }}
-    .file-input:focus + .file-picker {{ outline: 3px solid rgba(124, 131, 255, .28);
-                                       outline-offset: 2px; }}
+    .file-input:focus + .picker-row .file-picker {{ outline: 3px solid rgba(124, 131, 255, .28);
+                                                   outline-offset: 2px; }}
     .picker-plus {{ width: 38px; height: 38px; display: grid; place-items: center;
                     flex: 0 0 auto; border-radius: 10px; background: #283452;
                     color: #aeb4ff; font-size: 26px; line-height: 1; }}
@@ -328,6 +329,12 @@ def page(title: str, body: str) -> web.Response:
               box-shadow: 0 10px 28px rgba(88, 101, 242, .24); }}
     button:hover:not(:disabled) {{ filter: brightness(1.08); }}
     button:disabled {{ opacity: .45; cursor: not-allowed; box-shadow: none; }}
+    .clear-selection {{ flex: 0 0 54px; width: 54px; margin: 0; padding: 0;
+                        display: grid; place-items: center; border: 1px solid #59677d;
+                        border-radius: 14px; background: #1c2940; color: #dbe2ed;
+                        box-shadow: none; }}
+    .clear-selection:focus-visible {{ outline: 3px solid rgba(124, 131, 255, .5);
+                                     outline-offset: 2px; }}
     .work {{ margin-top: 20px; }}
     progress {{ width: 100%; height: 10px; overflow: hidden;
                 border: 0; border-radius: 999px; accent-color: #6873ff; }}
@@ -1492,8 +1499,7 @@ async def compress(interaction: discord.Interaction) -> None:
     view.add_item(discord.ui.Button(label="Open compressor", url=upload_url))
     await interaction.response.send_message(
         f"Choose up to {MAX_CLIPS} videos. Keep the compressor page open "
-        f"until they are sent back here. Compression runs locally; fitting MP4s "
-        f"may be sent unchanged. "
+        f"until they are sent back here. Compression runs locally. "
         f"The link expires in {JOB_TTL_SECONDS // 60} minutes.",
         view=view,
         ephemeral=True,

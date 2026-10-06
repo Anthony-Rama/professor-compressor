@@ -66,6 +66,9 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("<@789>", alert.call_args.args[0])
 
         interaction.response.send_message.assert_awaited_once()
+        response_text = interaction.response.send_message.await_args.args[0]
+        self.assertIn("Compression runs locally.", response_text)
+        self.assertNotIn("fitting MP4s", response_text)
 
     async def test_user_nitro_allowance_does_not_set_bot_upload_limit(self):
         interaction = self.make_interaction()

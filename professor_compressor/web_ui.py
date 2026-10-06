@@ -40,10 +40,20 @@ __RECOVERY_NOTICE__
 <form id="upload">
   <input class="file-input" id="clips" name="clips" type="file"
     accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.mpeg,.mpg,.ogv,.ogg,.flv,.ts,.mts,.m2ts,.3gp,.3g2,.wmv,.asf" multiple required>
-  <label class="file-picker" id="drop-zone" for="clips">
-    <span class="picker-plus" aria-hidden="true">+</span>
-    <span><strong>Choose videos or drag them here</strong><small>Select up to __MAX_CLIPS__ files; a new selection replaces the previous one</small></span>
-  </label>
+  <div class="picker-row" id="picker-row">
+    <label class="file-picker" id="drop-zone" for="clips">
+      <span class="picker-plus" aria-hidden="true">+</span>
+      <span><strong>Choose videos or drag them here</strong><small>Select up to __MAX_CLIPS__ files</small></span>
+    </label>
+    <button class="clear-selection" id="clear-selection" type="button"
+      aria-label="Clear selected videos" title="Clear selected videos" disabled>
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+        stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6"/>
+      </svg>
+    </button>
+  </div>
   <p id="selection" class="selection" aria-live="polite">No videos selected</p>
   <label class="caption-label" for="caption">Add a message (optional)</label>
   <textarea id="caption" name="caption" maxlength="1000" rows="3"
@@ -122,6 +132,7 @@ const MULTI_CORE_BASE = "__ASSET_PREFIX__/core-mt-esm";
 
 const form = document.getElementById("upload");
 const clips = document.getElementById("clips");
+const clearSelectionButton = document.getElementById("clear-selection");
 const caption = document.getElementById("caption");
 const submit = document.getElementById("submit");
 const cancelButton = document.getElementById("cancel");
@@ -417,6 +428,7 @@ function renderSelectedFiles(files) {
 function renderSelection() {
   clearPreparedFiles();
   const files = Array.from(clips.files);
+  clearSelectionButton.disabled = files.length === 0 || running || clips.disabled;
   const validCount = files.length >= 1 && files.length <= MAX_CLIPS;
   submit.disabled = !validCount || running || sessionExpired();
   submit.textContent = "Compress and send to Discord";
@@ -435,6 +447,12 @@ function renderSelection() {
 }
 
 clips.addEventListener("change", renderSelection);
+clearSelectionButton.addEventListener("click", () => {
+  if (running || clips.disabled) return;
+  clips.value = "";
+  hideMessage();
+  renderSelection();
+});
 
 const dropZone = document.getElementById("drop-zone");
 let dragDepth = 0;
@@ -880,6 +898,7 @@ function finishRun() {
   renderDocumentTitle();
   cancelButton.hidden = true;
   clips.disabled = preparedResults !== null;
+  clearSelectionButton.disabled = clips.disabled || clips.files.length === 0;
   caption.disabled = preparedResults !== null;
   submit.disabled = sessionExpired() && !preparedResults;
   submit.textContent = preparedResults ? "Check delivery / retry" : "Try again";
@@ -922,6 +941,7 @@ form.addEventListener("submit", async (event) => {
   running = true;
   submit.disabled = true;
   clips.disabled = true;
+  clearSelectionButton.disabled = true;
   caption.disabled = true;
   cancelButton.hidden = Boolean(preparedResults);
   cancelButton.disabled = false;
@@ -987,7 +1007,7 @@ form.addEventListener("submit", async (event) => {
     showFeedback("success");
     pageHeading.textContent = "Upload complete";
     pageIntro.hidden = true;
-    dropZone.hidden = true;
+    document.getElementById("picker-row").hidden = true;
     selection.hidden = true;
     document.querySelector(".caption-label").hidden = true;
     caption.hidden = true;
@@ -1017,6 +1037,7 @@ form.addEventListener("submit", async (event) => {
     if ([403, 409, 410].includes(error.status) || error.code === "discord_delivery_failed") {
       submit.hidden = true;
       clips.disabled = true;
+      clearSelectionButton.disabled = true;
     }
   }
 });
