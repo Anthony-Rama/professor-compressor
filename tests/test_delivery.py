@@ -135,8 +135,11 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 job, results, "Clips from yesterday @everyone <@456>"
             )
         sent = channel.send.await_args.kwargs
-        self.assertIn("**Uploader's message:** Clips from yesterday", sent["content"])
-        self.assertIn("<@123>", sent["content"])
+        self.assertEqual(
+            sent["content"],
+            "✅ **Compression complete!** <@123>, your compressed video is ready."
+            "\n\nClips from yesterday @everyone <@456>",
+        )
         self.assertFalse(sent["allowed_mentions"].everyone)
         self.assertFalse(sent["allowed_mentions"].roles)
         self.assertTrue(sent["allowed_mentions"].users)

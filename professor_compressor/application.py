@@ -1230,7 +1230,7 @@ async def deliver_browser_results(
             result_summary = f"your {result_count} compressed videos are ready."
         message = f"✅ **Compression complete!** <@{job.user_id}>, {result_summary}"
         if caption:
-            message += f"\n**Uploader's message:** {caption}"
+            message += f"\n\n{caption}"
         if channel is None:
             raise RuntimeError(
                 "The bot cannot access the channel where compression started."
