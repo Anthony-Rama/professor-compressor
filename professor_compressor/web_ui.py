@@ -45,6 +45,10 @@ __RECOVERY_NOTICE__
     <span><strong>Choose videos or drag them here</strong><small>Select up to __MAX_CLIPS__ files; a new selection replaces the previous one</small></span>
   </label>
   <p id="selection" class="selection" aria-live="polite">No videos selected</p>
+  <label class="caption-label" for="caption">Add a message (optional)</label>
+  <textarea id="caption" name="caption" maxlength="200" rows="2"
+    placeholder="Clips from yesterday"></textarea>
+  <p class="caption-help">Shown with the finished videos in Discord. Up to 200 characters; one message per batch. Plain @names are text, not Discord mentions.</p>
   <div class="session-note" id="session-note">
     <span>Private session, bound to this browser</span><span id="expires">Expires in --:--</span>
   </div>
@@ -118,6 +122,7 @@ const MULTI_CORE_BASE = "__ASSET_PREFIX__/core-mt-esm";
 
 const form = document.getElementById("upload");
 const clips = document.getElementById("clips");
+const caption = document.getElementById("caption");
 const submit = document.getElementById("submit");
 const cancelButton = document.getElementById("cancel");
 const selection = document.getElementById("selection");
@@ -734,6 +739,7 @@ async function compressWithRetry(state) {
 function xhrUpload(results) {
   return new Promise((resolve, reject) => {
     const data = new FormData();
+    data.append("caption", caption.value.trim());
     for (const result of results) data.append("clips", result.blob, result.name);
     const request = new XMLHttpRequest();
     uploadRequest = request;
@@ -874,6 +880,7 @@ function finishRun() {
   renderDocumentTitle();
   cancelButton.hidden = true;
   clips.disabled = preparedResults !== null;
+  caption.disabled = preparedResults !== null;
   submit.disabled = sessionExpired() && !preparedResults;
   submit.textContent = preparedResults ? "Check delivery / retry" : "Try again";
   showPreparedFiles();
@@ -915,6 +922,7 @@ form.addEventListener("submit", async (event) => {
   running = true;
   submit.disabled = true;
   clips.disabled = true;
+  caption.disabled = true;
   cancelButton.hidden = Boolean(preparedResults);
   cancelButton.disabled = false;
   work.hidden = false;
@@ -981,6 +989,9 @@ form.addEventListener("submit", async (event) => {
     pageIntro.hidden = true;
     dropZone.hidden = true;
     selection.hidden = true;
+    document.querySelector(".caption-label").hidden = true;
+    caption.hidden = true;
+    document.querySelector(".caption-help").hidden = true;
     sessionNote.hidden = true;
     stayOpen.hidden = true;
     performanceHelp.hidden = true;

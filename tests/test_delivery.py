@@ -108,6 +108,39 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(interaction.followup.send.called)
 
+    async def test_caption_can_ping_people_but_not_everyone_or_roles(self) -> None:
+        job = UploadJob(
+            token="caption-test",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20_000_000,
+            interaction=Mock(),
+            guild_id=789,
+        )
+        channel = Mock()
+        channel.send = AsyncMock()
+        results = [BrowserResult(name="clip.mp4", data=b"video")]
+        with (
+            patch(
+                "professor_compressor.application.client.get_guild",
+                return_value=Mock(filesize_limit=20_000_000),
+            ),
+            patch(
+                "professor_compressor.application.get_channel",
+                AsyncMock(return_value=channel),
+            ),
+        ):
+            await deliver_browser_results(
+                job, results, "Clips from yesterday @everyone <@456>"
+            )
+        sent = channel.send.await_args.kwargs
+        self.assertIn("**Uploader's message:** Clips from yesterday", sent["content"])
+        self.assertIn("<@123>", sent["content"])
+        self.assertFalse(sent["allowed_mentions"].everyone)
+        self.assertFalse(sent["allowed_mentions"].roles)
+        self.assertTrue(sent["allowed_mentions"].users)
+
 
 if __name__ == "__main__":
     unittest.main()

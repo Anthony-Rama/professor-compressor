@@ -82,6 +82,11 @@ def privacy_policy_html() -> str:
         MP4s sent unchanged, and their
         filenames are transmitted over HTTPS and held temporarily in server
         memory while they are validated and delivered to Discord.</li>
+      <li><strong>Optional message:</strong> if you add a message for the finished
+        videos, its text is held temporarily in server memory and sent with the
+        finished files to the original Discord channel. The Service does not
+        intentionally write that text to disk; Discord retains the delivered
+        message under its own policies.</li>
       <li><strong>Security data:</strong> an IP address is processed temporarily
         in memory to enforce request-rate limits and protect the Service from
         abuse.</li>

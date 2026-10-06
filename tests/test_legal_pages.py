@@ -14,6 +14,8 @@ class LegalPageTests(unittest.TestCase):
         self.assertNotIn("open-source", document)
         self.assertIn("mailto:professorcompressor.support@gmail.com", document)
         self.assertIn("held temporarily in server\n        memory", document)
+        self.assertIn("Optional message", document)
+        self.assertIn("sent with the\n        finished files", document)
         self.assertIn("does not intentionally write video files to disk", document)
         self.assertIn("IP address", document)
         self.assertIn("does not sell personal information", document)

@@ -313,6 +313,15 @@ def page(title: str, body: str) -> web.Response:
                          font-size: 13px; }}
     .selection {{ min-height: 22px; margin: 10px 2px 0; font-size: 13px;
                   color: #93a0b2; }}
+    .caption-label {{ display: block; margin: 18px 2px 8px; color: #e6e9ff;
+                      font-size: 14px; font-weight: 700; }}
+    #caption {{ display: block; width: 100%; min-height: 70px; padding: 12px 14px;
+                resize: vertical; border: 1px solid #59677d; border-radius: 11px;
+                background: #111a2a; color: #f8fafc; font: inherit; line-height: 1.4; }}
+    #caption:focus-visible {{ outline: 3px solid rgba(124, 131, 255, .35);
+                              outline-offset: 2px; }}
+    #caption::placeholder {{ color: #8290a4; }}
+    .caption-help {{ margin: 6px 2px 0; color: #93a0b2; font-size: 12px; }}
     button {{ margin-top: 16px; width: 100%; padding: 14px 18px; border: 0;
               border-radius: 12px; background: linear-gradient(135deg, #6873ff, #5865f2);
               color: white; font-size: 15px; font-weight: 750; cursor: pointer;
@@ -958,6 +967,8 @@ async def receive_results(request: web.Request) -> web.Response:
         )
 
     results: list[BrowserResult] = []
+    caption = ""
+    caption_received = False
     total_size = 0
     upload_slot_held = True
     job.state = JobState.UPLOADING
@@ -983,6 +994,24 @@ async def receive_results(request: web.Request) -> web.Response:
             )
             if field is None:
                 break
+            if field.name == "caption":
+                if caption_received or results:
+                    raise ValueError("The message field was repeated or out of order.")
+                caption_received = True
+                caption_data = bytearray()
+                while chunk := await field.read_chunk(1024):
+                    caption_data.extend(chunk)
+                    if len(caption_data) > 800:
+                        break
+                if len(caption_data) > 800:
+                    raise ValueError("The message is too long.")
+                try:
+                    caption = " ".join(caption_data.decode("utf-8").split())
+                except UnicodeDecodeError as error:
+                    raise ValueError("The message contains invalid text.") from error
+                if len(caption) > 200:
+                    raise ValueError("The message must be 200 characters or fewer.")
+                continue
             if field.name != "clips" or not field.filename:
                 raise ValueError("Only video file fields are accepted.")
             if len(results) >= MAX_CLIPS:
@@ -1033,7 +1062,9 @@ async def receive_results(request: web.Request) -> web.Response:
         completion.add_done_callback(
             lambda future: future.exception() if not future.cancelled() else None
         )
-        delivery = DeliveryRequest(job=job, results=results, completed=completion)
+        delivery = DeliveryRequest(
+            job=job, results=results, completed=completion, caption=caption
+        )
         try:
             delivery_queue.put_nowait(delivery)
         except asyncio.QueueFull:
@@ -1172,7 +1203,13 @@ async def send_result_batch(
         for result in results
     ]
     try:
-        await sender(content=message, files=attachments)
+        await sender(
+            content=message,
+            files=attachments,
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False, roles=False, users=True
+            ),
+        )
     finally:
         for attachment in attachments:
             attachment.close()
@@ -1181,6 +1218,7 @@ async def send_result_batch(
 async def deliver_browser_results(
     job: UploadJob,
     results: list[BrowserResult],
+    caption: str = "",
 ) -> str:
     channel: discord.abc.Messageable | None = None
     try:
@@ -1191,6 +1229,8 @@ async def deliver_browser_results(
         else:
             result_summary = f"your {result_count} compressed videos are ready."
         message = f"✅ **Compression complete!** <@{job.user_id}>, {result_summary}"
+        if caption:
+            message += f"\n**Uploader's message:** {caption}"
         if channel is None:
             raise RuntimeError(
                 "The bot cannot access the channel where compression started."
@@ -1240,7 +1280,10 @@ async def delivery_worker(worker_number: int) -> None:
         delivery = await delivery_queue.get()
         try:
             message = await asyncio.wait_for(
-                deliver_browser_results(delivery.job, delivery.results), timeout=120
+                deliver_browser_results(
+                    delivery.job, delivery.results, delivery.caption
+                ),
+                timeout=120,
             )
             total_bytes = sum(len(result.data) for result in delivery.results)
             metrics.increment("deliveries_succeeded")

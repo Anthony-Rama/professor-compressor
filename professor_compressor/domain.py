@@ -57,6 +57,7 @@ class DeliveryRequest:
     job: UploadJob
     results: list[BrowserResult]
     completed: asyncio.Future[str]
+    caption: str = ""
 
 
 @dataclass(frozen=True, slots=True)

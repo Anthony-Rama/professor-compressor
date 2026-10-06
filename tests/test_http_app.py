@@ -184,6 +184,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             queue.task_done()
 
         form = FormData()
+        form.add_field("caption", "Clips from yesterday")
         form.add_field(
             "clips",
             valid_test_mp4(),
@@ -202,9 +203,42 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual((await response.json())["message"], "Delivered in test")
         self.assertEqual(len(received[0].results), 1)
+        self.assertEqual(received[0].caption, "Clips from yesterday")
         self.assertTrue(received[0].results[0].name.endswith(".mp4"))
         self.assertNotIn("/", received[0].results[0].name)
         self.assertIs(job.state, JobState.DONE)
+
+    async def test_rejects_oversized_caption_before_delivery(self) -> None:
+        import professor_compressor.application as application
+
+        token = "long-caption"
+        job = UploadJob(
+            token=token,
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20_000_000,
+            interaction=Mock(),
+            state=JobState.CLAIMED,
+            claim_secret="claim-secret",
+        )
+        jobs[token] = job
+        queue = asyncio.Queue(maxsize=1)
+        form = FormData()
+        form.add_field("caption", "x" * 201)
+        form.add_field(
+            "clips", valid_test_mp4(), filename="clip.mp4", content_type="video/mp4"
+        )
+        with patch.object(application, "delivery_queue", queue):
+            response = await self.client.post(
+                f"/upload/{token}",
+                data=form,
+                headers={"X-Upload-Session": "claim-secret"},
+            )
+        self.assertEqual(response.status, 400)
+        self.assertIn("200 characters", (await response.json())["error"])
+        self.assertTrue(queue.empty())
+        self.assertIs(job.state, JobState.CLAIMED)
 
     async def test_refresh_requires_browser_cookie_and_revokes_old_page(self) -> None:
         token = "refresh-test"

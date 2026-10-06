@@ -72,6 +72,25 @@ test('browser reports selection and start without filenames or media', async ({ 
   expect(JSON.stringify(reports)).not.toContain('small.mp4');
 });
 
+test('optional caption travels with the delivered batch and disappears on completion', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) {
+        window.sentCaption = body.get('caption');
+      }
+      return originalSend.call(this, body);
+    };
+  });
+  await openSession(page, request);
+  await page.locator('#caption').fill('Clips from yesterday');
+  await deliver(page, join(fixtures, 'small.mp4'));
+  expect(await page.evaluate(() => window.sentCaption)).toBe('Clips from yesterday');
+  await expect(page.locator('#caption')).toBeHidden();
+  await expect(page.locator('.caption-label')).toBeHidden();
+  await expect(page.locator('.caption-help')).toBeHidden();
+});
+
 test('page exit sends a best-effort leave report', async ({ page, request }) => {
   let resolveReport;
   const report = new Promise(resolve => { resolveReport = resolve; });
