@@ -1230,12 +1230,7 @@ async def deliver_browser_results(
     channel: discord.abc.Messageable | None = None
     try:
         channel = await get_channel(job)
-        result_count = len(results)
-        if result_count == 1:
-            result_summary = "your compressed video is ready."
-        else:
-            result_summary = f"your {result_count} compressed videos are ready."
-        message = f"✅ **Compression complete!** <@{job.user_id}>, {result_summary}"
+        message = f"✅ **Compression complete!** <@{job.user_id}>"
         if caption:
             message += f"\n\n{caption}"
         if channel is None:

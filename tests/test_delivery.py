@@ -100,7 +100,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         send_batch.assert_awaited_once_with(
             channel.send,
             results,
-            "✅ **Compression complete!** <@123>, your compressed video is ready.",
+            "✅ **Compression complete!** <@123>",
         )
         self.assertEqual(
             response,
@@ -137,7 +137,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         sent = channel.send.await_args.kwargs
         self.assertEqual(
             sent["content"],
-            "✅ **Compression complete!** <@123>, your compressed video is ready."
+            "✅ **Compression complete!** <@123>"
             "\n\nClips from yesterday @everyone <@456>",
         )
         self.assertFalse(sent["allowed_mentions"].everyone)
