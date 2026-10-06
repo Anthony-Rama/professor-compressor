@@ -184,7 +184,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             queue.task_done()
 
         form = FormData()
-        form.add_field("caption", "Clips from yesterday")
+        form.add_field("caption", "x" * 1000)
         form.add_field(
             "clips",
             valid_test_mp4(),
@@ -203,7 +203,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual((await response.json())["message"], "Delivered in test")
         self.assertEqual(len(received[0].results), 1)
-        self.assertEqual(received[0].caption, "Clips from yesterday")
+        self.assertEqual(received[0].caption, "x" * 1000)
         self.assertTrue(received[0].results[0].name.endswith(".mp4"))
         self.assertNotIn("/", received[0].results[0].name)
         self.assertIs(job.state, JobState.DONE)
@@ -225,7 +225,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         jobs[token] = job
         queue = asyncio.Queue(maxsize=1)
         form = FormData()
-        form.add_field("caption", "x" * 501)
+        form.add_field("caption", "x" * 1001)
         form.add_field(
             "clips", valid_test_mp4(), filename="clip.mp4", content_type="video/mp4"
         )
@@ -236,7 +236,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                 headers={"X-Upload-Session": "claim-secret"},
             )
         self.assertEqual(response.status, 400)
-        self.assertIn("500 characters", (await response.json())["error"])
+        self.assertIn("1,000 characters", (await response.json())["error"])
         self.assertTrue(queue.empty())
         self.assertIs(job.state, JobState.CLAIMED)
 
