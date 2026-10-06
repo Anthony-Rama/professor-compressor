@@ -225,7 +225,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         jobs[token] = job
         queue = asyncio.Queue(maxsize=1)
         form = FormData()
-        form.add_field("caption", "x" * 201)
+        form.add_field("caption", "x" * 501)
         form.add_field(
             "clips", valid_test_mp4(), filename="clip.mp4", content_type="video/mp4"
         )
@@ -236,7 +236,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                 headers={"X-Upload-Session": "claim-secret"},
             )
         self.assertEqual(response.status, 400)
-        self.assertIn("200 characters", (await response.json())["error"])
+        self.assertIn("500 characters", (await response.json())["error"])
         self.assertTrue(queue.empty())
         self.assertIs(job.state, JobState.CLAIMED)
 

@@ -1001,16 +1001,16 @@ async def receive_results(request: web.Request) -> web.Response:
                 caption_data = bytearray()
                 while chunk := await field.read_chunk(1024):
                     caption_data.extend(chunk)
-                    if len(caption_data) > 800:
+                    if len(caption_data) > 2000:
                         break
-                if len(caption_data) > 800:
+                if len(caption_data) > 2000:
                     raise ValueError("The message is too long.")
                 try:
                     caption = " ".join(caption_data.decode("utf-8").split())
                 except UnicodeDecodeError as error:
                     raise ValueError("The message contains invalid text.") from error
-                if len(caption) > 200:
-                    raise ValueError("The message must be 200 characters or fewer.")
+                if len(caption) > 500:
+                    raise ValueError("The message must be 500 characters or fewer.")
                 continue
             if field.name != "clips" or not field.filename:
                 raise ValueError("Only video file fields are accepted.")

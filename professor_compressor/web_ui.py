@@ -46,9 +46,9 @@ __RECOVERY_NOTICE__
   </label>
   <p id="selection" class="selection" aria-live="polite">No videos selected</p>
   <label class="caption-label" for="caption">Add a message (optional)</label>
-  <textarea id="caption" name="caption" maxlength="200" rows="2"
+  <textarea id="caption" name="caption" maxlength="500" rows="3"
     placeholder="Clips from yesterday"></textarea>
-  <p class="caption-help">Shown with the finished videos in Discord. Up to 200 characters; one message per batch. Plain @names are text, not Discord mentions.</p>
+  <p class="caption-help">Shown with the finished videos in Discord. Up to 500 characters; one message per batch. Plain @names are text, not Discord mentions.</p>
   <div class="session-note" id="session-note">
     <span>Private session, bound to this browser</span><span id="expires">Expires in --:--</span>
   </div>

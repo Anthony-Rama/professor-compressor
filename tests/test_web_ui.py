@@ -60,7 +60,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('showFeedback("failure")', self.page)
 
     def test_optional_caption_is_bounded_and_sent_with_batch(self) -> None:
-        self.assertIn('id="caption" name="caption" maxlength="200"', self.page)
+        self.assertIn('id="caption" name="caption" maxlength="500"', self.page)
         self.assertIn('data.append("caption", caption.value.trim())', self.page)
         self.assertIn("caption.disabled = true", self.page)
         self.assertIn("caption.hidden = true", self.page)
