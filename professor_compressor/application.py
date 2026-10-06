@@ -355,6 +355,13 @@ def page(title: str, body: str) -> web.Response:
                   overflow: hidden; text-overflow: ellipsis;
                   white-space: nowrap; font-size: 14px; font-weight: 700; }}
     .file-status {{ flex: 0 0 auto; color: #aab5c5; font-size: 12px; }}
+    .file-actions {{ display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }}
+    .remove-file {{ width: 40px; height: 40px; margin: 0; padding: 0;
+                    display: grid; place-items: center; border: 1px solid #59677d;
+                    border-radius: 8px; background: #1c2940; color: #dbe2ed;
+                    box-shadow: none; }}
+    .remove-file:focus-visible {{ outline: 3px solid rgba(124, 131, 255, .5);
+                                  outline-offset: 2px; }}
     .file-card progress {{ height: 7px; margin-top: 10px; }}
     .file-meta {{ margin-top: 7px; color: #7f8da1; font-size: 11px; }}
     .phase-panel {{ padding: 16px; border: 1px solid #3a4861; border-radius: 14px;

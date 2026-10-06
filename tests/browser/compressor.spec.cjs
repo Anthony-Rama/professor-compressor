@@ -177,7 +177,10 @@ test('reloading a failed encoder keeps completed file progress intact', async ({
 test('ten fitting MP4s deliver together without loading an encoder', async ({ page, request }) => {
   await page.route('**/assets/**/core*-esm/**', () => { throw new Error('Unexpected encoding'); });
   await openSession(page, request);
-  await deliver(page, Array(10).fill(join(fixtures, 'small.mp4')));
+  const bytes = readFileSync(join(fixtures, 'small.mp4'));
+  await deliver(page, Array.from({length:10}, (_, index) => ({
+    name:`clip-${index}.mp4`, mimeType:'video/mp4', buffer:bytes,
+  })));
   await expect(page.locator('#phase-copy')).toContainText('10 file(s)');
 });
 
@@ -263,6 +266,7 @@ test('unsupported AV1 fails without uploading and allows a supported replacement
   await expect(page.getByRole('link', {name: 'Contact Us'})).toBeVisible();
   await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(failure\)/);
   expect(uploads).toBe(0);
+  await page.getByRole('button', {name: 'Remove av1.mkv'}).click();
   await deliver(page, join(fixtures, 'small.mp4'));
   await expect(page.locator('#format-help')).toBeHidden();
   await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
@@ -286,6 +290,74 @@ test('dropped videos populate the input and deliver together', async ({ page, re
   await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
   await dropFiles(page, 1);
   await expect(page.locator('.file-card')).toHaveCount(2);
+});
+
+test('later selections add to the batch and per-file removal keeps the rest', async ({ page, request }) => {
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mov'));
+  await expect(page.locator('.file-name')).toHaveText(['small.mp4', 'small.mov']);
+  await expect(page.locator('#selection')).toContainText('2 videos selected');
+  await page.getByRole('button', {name: 'Remove small.mp4'}).click();
+  await expect(page.locator('.file-name')).toHaveText(['small.mov']);
+  await expect(page.getByRole('button', {name: 'Remove small.mov'})).toBeFocused();
+  expect(await page.locator('#clips').evaluate(input => Array.from(input.files, file => file.name))).toEqual(['small.mov']);
+  await page.locator('#submit').click();
+  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
+  await expect(page.locator('.remove-file')).toBeHidden();
+});
+
+test('file picker and drag-and-drop both append without duplicating a selected file', async ({ page, request }) => {
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await dropFiles(page, 2);
+  await expect(page.locator('.file-card')).toHaveCount(3);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await expect(page.locator('.file-card')).toHaveCount(3);
+  await expect(page.locator('#message')).toContainText('already selected');
+  await page.getByRole('button', {name: 'Remove clip-0.mp4'}).click();
+  await expect(page.locator('.file-name')).toHaveText(['small.mp4', 'clip-1.mp4']);
+  await expect(page.locator('#submit')).toBeEnabled();
+});
+
+test('canceling a later file selection keeps the current batch', async ({ page, request }) => {
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await page.locator('#clips').setInputFiles([]);
+  await expect(page.locator('.file-name')).toHaveText(['small.mp4']);
+  expect(await page.locator('#clips').evaluate(input => Array.from(input.files, file => file.name))).toEqual(['small.mp4']);
+  await expect(page.locator('#submit')).toBeEnabled();
+});
+
+test('duplicate videos within one selection appear only once', async ({ page, request }) => {
+  await openSession(page, request);
+  const bytes = Array.from(readFileSync(join(fixtures, 'small.mp4')));
+  await page.evaluate(bytes => {
+    const transfer = new DataTransfer();
+    for (let i = 0; i < 2; i++) {
+      transfer.items.add(new File([new Uint8Array(bytes)], 'same.mp4',
+        {type:'video/mp4', lastModified:123}));
+    }
+    document.getElementById('drop-zone').dispatchEvent(
+      new DragEvent('drop', {dataTransfer:transfer, bubbles:true, cancelable:true}));
+  }, bytes);
+  await expect(page.locator('.file-card')).toHaveCount(1);
+  await expect(page.locator('#selection')).toContainText('1 video selected');
+});
+
+test('adding past the ten-file limit preserves the existing batch', async ({ page, request }) => {
+  await openSession(page, request);
+  await dropFiles(page, 9);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await expect(page.locator('.file-card')).toHaveCount(10);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mov'));
+  await expect(page.locator('#message')).toContainText('no more than 10');
+  await expect(page.locator('.file-card')).toHaveCount(10);
+  await expect(page.locator('.file-name').last()).toHaveText('small.mp4');
+  await page.getByRole('button', {name: 'Remove clip-0.mp4'}).click();
+  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mov'));
+  await expect(page.locator('.file-card')).toHaveCount(10);
+  await expect(page.locator('.file-name').last()).toHaveText('small.mov');
 });
 
 test('trash button clears chosen or dropped videos before processing', async ({ page, request }) => {
@@ -323,10 +395,12 @@ test('audio-only and damaged containers fail clearly and allow another selection
   await page.locator('#clips').setInputFiles(join(fixtures, 'audio.webm'));
   await page.locator('#submit').click();
   await expect(page.locator('#message')).toContainText('No video stream', { timeout: 30000 });
+  await page.getByRole('button', {name: 'Remove audio.webm'}).click();
   await page.locator('#clips').setInputFiles({name:'broken.mkv', mimeType:'video/x-matroska',
     buffer:Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0])});
   await page.locator('#submit').click();
   await expect(page.locator('#message')).toContainText('Could not determine video metadata', { timeout: 30000 });
+  await page.getByRole('button', {name: 'Remove broken.mkv'}).click();
   await deliver(page, join(fixtures, 'small.mp4'));
 });
 
@@ -342,6 +416,8 @@ test('drops cannot replace files while compression is running', async ({ page, r
   await page.locator('#submit').click();
   await expect(page.locator('#clips')).toBeDisabled();
   await expect(page.locator('#clear-selection')).toBeDisabled();
+  await expect(page.locator('#clear-selection')).toBeHidden();
+  await expect(page.locator('.remove-file')).toBeHidden();
   await expect(page.locator('#phase-title')).toHaveText('Loading video engine');
   await expect(page.locator('#run-detail')).toHaveText('Starting video engine');
   await expect(page.locator('.file-status')).toHaveText('Loading video engine');
@@ -370,11 +446,12 @@ test('folder drops are rejected and outside drops do not navigate away', async (
   expect(page.url()).toBe(url);
 });
 
-test('invalid input can be replaced and retried in the same session', async ({ page, request }) => {
+test('invalid input can be removed and retried in the same session', async ({ page, request }) => {
   await openSession(page, request);
   await page.locator('#clips').setInputFiles({name:'bad.mp4', mimeType:'video/mp4', buffer:Buffer.from('not video')});
   await page.locator('#submit').click();
   await expect(page.locator('#phase-title')).toHaveText('Action needed');
+  await page.getByRole('button', {name: 'Remove bad.mp4'}).click();
   await deliver(page, join(fixtures, 'small.mp4'));
 });
 
@@ -388,6 +465,7 @@ test('cancel during engine loading settles before another attempt', async ({ pag
   await page.locator('#submit').click();
   await page.locator('#cancel').click();
   await expect(page.locator('#submit')).toBeEnabled({timeout:30000});
+  await page.getByRole('button', {name: 'Remove large.mp4'}).click();
   await deliver(page, join(fixtures, 'small.mp4'));
 });
 
@@ -562,7 +640,25 @@ test('manual relay retry reuses prepared files and offers local recovery', async
 test('narrow screens contain a ten-file selection', async ({ page, request }) => {
   await page.setViewportSize({width:375, height:812});
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(Array(10).fill(join(fixtures, 'small.mp4')));
+  const bytes = readFileSync(join(fixtures, 'small.mp4'));
+  await page.locator('#clips').setInputFiles(Array.from({length:10}, (_, index) => ({
+    name:`clip-${index}.mp4`, mimeType:'video/mp4', buffer:bytes,
+  })));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('long filenames leave room for per-file removal on a narrow screen', async ({ page, request }) => {
+  await page.setViewportSize({width:375, height:812});
+  await openSession(page, request);
+  await page.locator('#clips').setInputFiles({
+    name:'A-very-long-video-name-that-should-not-overlap-the-status-or-remove-button.mp4',
+    mimeType:'video/mp4', buffer:Buffer.from('test'),
+  });
+  const card = await page.locator('.file-card').boundingBox();
+  const name = await page.locator('.file-name').boundingBox();
+  const remove = await page.locator('.remove-file').boundingBox();
+  expect(name.x + name.width).toBeLessThanOrEqual(remove.x);
+  expect(remove.x + remove.width).toBeLessThanOrEqual(card.x + card.width);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 

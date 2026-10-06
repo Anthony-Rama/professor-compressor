@@ -43,7 +43,7 @@ __RECOVERY_NOTICE__
   <div class="picker-row" id="picker-row">
     <label class="file-picker" id="drop-zone" for="clips">
       <span class="picker-plus" aria-hidden="true">+</span>
-      <span><strong>Choose videos or drag them here</strong><small>Select up to __MAX_CLIPS__ files</small></span>
+      <span><strong>Choose videos or drag them here</strong><small>Add videos in batches, up to __MAX_CLIPS__ total</small></span>
     </label>
     <button class="clear-selection" id="clear-selection" type="button"
       aria-label="Clear selected videos" title="Clear selected videos" disabled>
@@ -411,7 +411,20 @@ function renderSelectedFiles(files) {
     const status = document.createElement("span");
     status.className = "file-status";
     status.textContent = "Ready";
-    head.append(name, status);
+    const actions = document.createElement("div");
+    actions.className = "file-actions";
+    const remove = document.createElement("button");
+    remove.className = "remove-file";
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove " + file.name);
+    remove.title = "Remove " + file.name;
+    const icon = clearSelectionButton.querySelector("svg").cloneNode(true);
+    icon.setAttribute("width", "18");
+    icon.setAttribute("height", "18");
+    remove.append(icon);
+    remove.addEventListener("click", () => removeSelectedFile(index));
+    actions.append(status, remove);
+    head.append(name, actions);
     const progress = document.createElement("progress");
     progress.max = 100;
     progress.value = 0;
@@ -446,12 +459,62 @@ function renderSelection() {
   if (validCount) reportProgress("selected", files.length);
 }
 
-clips.addEventListener("change", renderSelection);
+function setSelectedFiles(files) {
+  const transfer = new DataTransfer();
+  for (const file of files) transfer.items.add(file);
+  clips.files = transfer.files;
+}
+
+function fileIdentity(file) {
+  return [file.name, file.size, file.lastModified, file.type].join("\u0000");
+}
+
+function addSelectedFiles(incoming) {
+  if (running || clips.disabled) return;
+  const current = selectedFiles.map((state) => state.file);
+  if (!incoming.length) {
+    setSelectedFiles(current);
+    return;
+  }
+  const existing = new Set(current.map(fileIdentity));
+  const additions = incoming.filter((file) => {
+    const identity = fileIdentity(file);
+    if (existing.has(identity)) return false;
+    existing.add(identity);
+    return true;
+  });
+  if (current.length + additions.length > MAX_CLIPS) {
+    setSelectedFiles(current);
+    showMessage("Choose no more than " + MAX_CLIPS + " videos total. Remove some before adding more.", "error");
+    return;
+  }
+  if (!additions.length) {
+    setSelectedFiles(current);
+    showMessage("Those videos are already selected.", "error");
+    return;
+  }
+  setSelectedFiles([...current, ...additions]);
+  hideMessage();
+  renderSelection();
+}
+
+function removeSelectedFile(index) {
+  if (running || clips.disabled) return;
+  setSelectedFiles(selectedFiles.filter((_, position) => position !== index).map((state) => state.file));
+  hideMessage();
+  renderSelection();
+  const remaining = filesElement.querySelectorAll(".remove-file");
+  if (remaining.length) remaining[Math.min(index, remaining.length - 1)].focus();
+  else clips.focus();
+}
+
+clips.addEventListener("change", () => addSelectedFiles(Array.from(clips.files)));
 clearSelectionButton.addEventListener("click", () => {
   if (running || clips.disabled) return;
   clips.value = "";
   hideMessage();
   renderSelection();
+  clips.focus();
 });
 
 const dropZone = document.getElementById("drop-zone");
@@ -492,13 +555,7 @@ dropZone.addEventListener("drop", (event) => {
   }
   const files = Array.from(event.dataTransfer.files);
   if (!files.length) return;
-  if (files.length > MAX_CLIPS) {
-    showMessage("Choose no more than " + MAX_CLIPS + " videos.", "error");
-    return;
-  }
-  clips.files = event.dataTransfer.files;
-  hideMessage();
-  renderSelection();
+  addSelectedFiles(files);
 });
 
 function createEncoder() {
@@ -899,6 +956,10 @@ function finishRun() {
   cancelButton.hidden = true;
   clips.disabled = preparedResults !== null;
   clearSelectionButton.disabled = clips.disabled || clips.files.length === 0;
+  clearSelectionButton.hidden = clips.disabled;
+  for (const remove of filesElement.querySelectorAll(".remove-file")) {
+    remove.hidden = clips.disabled;
+  }
   caption.disabled = preparedResults !== null;
   submit.disabled = sessionExpired() && !preparedResults;
   submit.textContent = preparedResults ? "Check delivery / retry" : "Try again";
@@ -942,6 +1003,8 @@ form.addEventListener("submit", async (event) => {
   submit.disabled = true;
   clips.disabled = true;
   clearSelectionButton.disabled = true;
+  clearSelectionButton.hidden = true;
+  for (const remove of filesElement.querySelectorAll(".remove-file")) remove.hidden = true;
   caption.disabled = true;
   cancelButton.hidden = Boolean(preparedResults);
   cancelButton.disabled = false;
@@ -1038,6 +1101,8 @@ form.addEventListener("submit", async (event) => {
       submit.hidden = true;
       clips.disabled = true;
       clearSelectionButton.disabled = true;
+      clearSelectionButton.hidden = true;
+      for (const remove of filesElement.querySelectorAll(".remove-file")) remove.hidden = true;
     }
   }
 });
