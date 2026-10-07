@@ -58,6 +58,7 @@ class CompressionDiagnostic:
     duration_seconds: float | None
     video_kbps: int | None
     copied: bool
+    input_format: str | None = None
 
 
 @dataclass(slots=True)

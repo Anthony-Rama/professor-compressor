@@ -38,6 +38,18 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             )[0].video_kbps,
             None,
         )
+        self.assertEqual(
+            parse_compression_diagnostics(
+                b'[{"input_bytes":10,"duration_seconds":null,"video_kbps":null,"copied":true,"input_format":"mov"}]'
+            )[0].input_format,
+            "mov",
+        )
+        self.assertEqual(
+            parse_compression_diagnostics(
+                b'[{"input_bytes":10,"duration_seconds":null,"video_kbps":null,"copied":true,"input_format":"secret.mp4"}]'
+            ),
+            [],
+        )
 
     def test_safe_alert_text_escapes_markdown_and_backticks(self) -> None:
         self.assertEqual(safe_alert_text("**name** `ping`"), "\\*\\*name\\*\\* 'ping'")
@@ -104,7 +116,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             interaction=Mock(),
         )
         result = BrowserResult("private-clip.mp4", b"x" * 1024)
-        diagnostic = CompressionDiagnostic(84 * 1024 * 1024, 74.3, 2010, False)
+        diagnostic = CompressionDiagnostic(84 * 1024 * 1024, 74.3, 2010, False, "mov")
         message = compression_outcome_alert(
             job,
             succeeded=True,
@@ -117,12 +129,37 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             elapsed_seconds=1,
         )
         self.assertIn("Input size: `84.0 MiB`", message)
+        self.assertIn("Format: `MOV → MP4`", message)
+        self.assertNotIn("Finished size:", message)
         self.assertIn("Discord limit: `20.0 MiB`", message)
         self.assertIn("Effective target per file: `19.6 MiB`", message)
         self.assertIn("Detected duration: `74.3 sec`", message)
         self.assertIn("Calculated video bitrate: `2010 kbps`", message)
         self.assertIn("Actual output: `0.0 MiB`", message)
         self.assertNotIn("private-clip", message)
+
+    def test_size_reduction_uses_original_and_server_measured_output(self) -> None:
+        job = UploadJob(
+            token="token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20 * 1024 * 1024,
+            interaction=Mock(),
+        )
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=1,
+            results=[BrowserResult("secret.mp4", b"x" * 1024)],
+            diagnostics=[CompressionDiagnostic(2048, 5.0, 1000, False, "mov")],
+            effective_target=19 * 1024 * 1024,
+            unchanged_limit=20 * 1024 * 1024,
+            elapsed_seconds=1,
+        )
+        self.assertIn("Format: `MOV → MP4`", message)
+        self.assertIn("Size reduction: `50.0%`", message)
+        self.assertNotIn("secret.mp4", message)
 
     def test_batch_diagnostics_fit_discord_alert_limit(self) -> None:
         job = UploadJob(
@@ -132,9 +169,13 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             expires_at=9999999999,
             discord_limit=20 * 1024 * 1024,
             interaction=Mock(),
+            guild_name="G" * 100,
+            username="u" * 100,
         )
         results = [BrowserResult(f"private-{i}.mp4", b"x") for i in range(10)]
-        diagnostics = [CompressionDiagnostic(1000, None, None, True) for _ in results]
+        diagnostics = [
+            CompressionDiagnostic(1000, None, None, True, "asf/wmv") for _ in results
+        ]
         message = compression_outcome_alert(
             job,
             succeeded=True,
@@ -148,6 +189,38 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(message), 2000)
         self.assertIn("File 10:", message)
         self.assertIn("already fit", message)
+        self.assertIn("ASF/WMV→MP4", message)
+        self.assertIn("99.9% smaller", message)
+        self.assertNotIn("private-", message)
+
+    def test_10_encoded_file_diagnostics_fit_discord_alert_limit(self) -> None:
+        job = UploadJob(
+            token="token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20 * 1024 * 1024,
+            interaction=Mock(),
+            guild_name="G" * 100,
+            username="u" * 100,
+        )
+        results = [BrowserResult(f"private-{i}.mp4", b"x" * 1024) for i in range(10)]
+        diagnostics = [
+            CompressionDiagnostic(10**12, 86400.0, 10**9, False, "asf/wmv")
+            for _ in results
+        ]
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=10,
+            results=results,
+            diagnostics=diagnostics,
+            effective_target=19 * 1024 * 1024,
+            unchanged_limit=20 * 1024 * 1024,
+            elapsed_seconds=1,
+        )
+        self.assertLessEqual(len(message), 2000)
+        self.assertIn("File 10:", message)
         self.assertNotIn("private-", message)
 
     def test_fitting_mp4_uses_discord_limit_in_utilization(self) -> None:

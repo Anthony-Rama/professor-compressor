@@ -97,7 +97,7 @@ test('optional caption travels with the delivered batch and disappears on comple
   expect(await page.evaluate(() => window.sentCaption)).toBe('Clips from yesterday');
   expect(await page.evaluate(() => window.sentDiagnostics)).toEqual([{
     input_bytes: expect.any(Number), duration_seconds: null,
-    video_kbps: null, copied: true,
+    video_kbps: null, copied: true, input_format: 'mp4',
   }]);
   await expect(page.locator('#caption')).toBeHidden();
   await expect(page.locator('.caption-label')).toBeHidden();
@@ -243,6 +243,7 @@ test('small QuickTime MOV is converted to an actual MP4', async ({ page, request
   await deliver(page, join(fixtures, 'small.mov'));
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeNull();
   expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(true);
+  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('mov');
 });
 
 test('WebM conversion uses quality encoding when streams cannot be copied', async ({ page, request }) => {
@@ -259,6 +260,23 @@ test('WebM conversion uses quality encoding when streams cannot be copied', asyn
   await deliver(page, join(fixtures, 'sample.webm'));
   expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(false);
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeNull();
+  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('webm');
+});
+
+test('Matroska header is identified as MKV without sending a filename', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) {
+        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+      }
+      return originalSend.call(this, body);
+    };
+  });
+  await openSession(page, request);
+  await deliver(page, join(fixtures, 'sample.mkv'));
+  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('mkv');
+  expect(JSON.stringify(await page.evaluate(() => window.sentDiagnostics))).not.toContain('sample.mkv');
 });
 
 test('oversized MOV conversion falls back to size-targeted encoding', async ({ page, request }) => {

@@ -194,6 +194,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                         "duration_seconds": 2.5,
                         "video_kbps": 1000,
                         "copied": False,
+                        "input_format": "mov",
                     }
                 ]
             ),
@@ -218,6 +219,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(received[0].results), 1)
         self.assertEqual(received[0].caption, "x" * 1000)
         self.assertEqual(received[0].diagnostics[0].input_bytes, 1000)
+        self.assertEqual(received[0].diagnostics[0].input_format, "mov")
         self.assertTrue(received[0].results[0].name.endswith(".mp4"))
         self.assertNotIn("/", received[0].results[0].name)
         self.assertIs(job.state, JobState.DONE)

@@ -100,9 +100,10 @@ def privacy_policy_html() -> str:
         Browser progress reports cover link opening, file selection count,
         pressing Compress, cancellation, and page exit or reload. A page-exit
         report is best-effort and may not arrive if the browser or connection
-        fails. Outcome alerts may include numeric original and output file sizes,
-        detected duration, calculated encoding bitrate, and target utilization
-        to help diagnose compression quality. These alerts do not include
+        fails. Outcome alerts may include the detected input container type,
+        numeric original and output file sizes, size reduction, detected duration,
+        calculated encoding bitrate, and target utilization to help diagnose
+        compression quality. These alerts do not include
         filenames or video files.</li>
       <li><strong>Optional feedback:</strong> email feedback and support links
         open your email application. No feedback is sent unless you choose to

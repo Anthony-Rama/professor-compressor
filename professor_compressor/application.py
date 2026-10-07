@@ -213,6 +213,21 @@ def compression_target(discord_limit: int) -> int:
 
 def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
     """Accept optional, bounded browser measurements; never trust them for delivery."""
+    allowed_formats = {
+        "mp4",
+        "mov",
+        "3gp",
+        "webm",
+        "mkv",
+        "webm/mkv",
+        "avi",
+        "ogg",
+        "flv",
+        "asf/wmv",
+        "mpeg",
+        "ts",
+        "m2ts",
+    }
     try:
         values = json.loads(raw)
         if not isinstance(values, list) or not 1 <= len(values) <= MAX_CLIPS:
@@ -225,6 +240,9 @@ def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
             duration = value.get("duration_seconds")
             video_kbps = value.get("video_kbps")
             copied = value.get("copied")
+            input_format = value.get("input_format")
+            if input_format is not None and input_format not in allowed_formats:
+                return []
             if (
                 type(input_bytes) is not int
                 or not 0 < input_bytes <= 10**12
@@ -260,6 +278,7 @@ def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
                     float(duration) if duration is not None else None,
                     video_kbps,
                     copied,
+                    input_format,
                 )
             )
         return diagnostics

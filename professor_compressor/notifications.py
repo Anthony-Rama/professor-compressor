@@ -10,6 +10,22 @@ import discord
 from .config import MIB
 from .domain import BrowserResult, CompressionDiagnostic, UploadJob
 
+INPUT_FORMAT_LABELS = {
+    "mp4": "MP4",
+    "mov": "MOV",
+    "3gp": "3GP",
+    "webm": "WebM",
+    "mkv": "MKV",
+    "webm/mkv": "WebM/MKV",
+    "avi": "AVI",
+    "ogg": "Ogg",
+    "flv": "FLV",
+    "asf/wmv": "ASF/WMV",
+    "mpeg": "MPEG",
+    "ts": "TS",
+    "m2ts": "M2TS",
+}
+
 
 def safe_alert_text(value: str, limit: int = 100) -> str:
     """Escape untrusted Discord names before placing them in Markdown."""
@@ -63,9 +79,7 @@ def compression_outcome_alert(
         f"User ID: `{job.user_id}`",
         f"Files: `{file_count}`",
     ]
-    if total_bytes:
-        lines.append(f"Finished size: `{total_bytes / MIB:.1f} MiB`")
-    if (
+    has_diagnostics = bool(
         results
         and diagnostics
         and len(results) == len(diagnostics)
@@ -73,7 +87,10 @@ def compression_outcome_alert(
         and effective_target > 0
         and unchanged_limit
         and unchanged_limit > 0
-    ):
+    )
+    if total_bytes and (file_count != 1 or not has_diagnostics):
+        lines.append(f"Finished size: `{total_bytes / MIB:.1f} MiB`")
+    if has_diagnostics:
         lines.append(f"Discord limit: `{job.discord_limit / MIB:.1f} MiB`")
         if len(results) > 1:
             lines.append(
@@ -94,6 +111,13 @@ def compression_outcome_alert(
         ):
             output_mib = len(result.data) / MIB
             input_mib = diagnostic.input_bytes / MIB
+            input_format = INPUT_FORMAT_LABELS.get(diagnostic.input_format or "")
+            size_change = (len(result.data) / diagnostic.input_bytes - 1) * 100
+            size_description = (
+                f"{-size_change:.1f}% smaller"
+                if size_change <= 0
+                else f"{size_change:.1f}% larger"
+            )
             file_target = (
                 effective_target
                 if diagnostic.video_kbps is not None
@@ -118,10 +142,15 @@ def compression_outcome_alert(
                     )
                 )
                 lines.append(
-                    f"File {index}: `{input_mib:.1f} → {output_mib:.1f} MiB`"
+                    f"File {index}: "
+                    + (f"{input_format}→MP4 · " if input_format else "")
+                    + f"`{input_mib:.1f} → {output_mib:.1f} MiB`"
+                    + f" · `{size_description}`"
                     f" · `{utilization:.1f}% target` · {detail}"
                 )
                 continue
+            if input_format:
+                lines.append(f"Format: `{input_format} → MP4`")
             lines.append(f"Input size: `{input_mib:.1f} MiB`")
             if diagnostic.copied:
                 lines.append(
@@ -142,6 +171,10 @@ def compression_outcome_alert(
                         f"Calculated video bitrate: `{diagnostic.video_kbps} kbps`"
                     )
             lines.append(f"Actual output: `{output_mib:.1f} MiB`")
+            if size_change <= 0:
+                lines.append(f"Size reduction: `{-size_change:.1f}%`")
+            else:
+                lines.append(f"Size increase: `{size_change:.1f}%`")
             lines.append(f"Target utilization: `{utilization:.1f}%`")
     if stage:
         lines.append(f"Stage: `{safe_alert_text(stage, limit=60)}`")

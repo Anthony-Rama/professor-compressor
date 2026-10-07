@@ -686,7 +686,12 @@ async function videoSignature(file) {
       "Choose a supported video format listed below the upload controls.");
   }
   if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 &&
-      bytes[2] === 0xdf && bytes[3] === 0xa3) return "webm/mkv";
+      bytes[2] === 0xdf && bytes[3] === 0xa3) {
+    const header = ascii(0, bytes.length).toLowerCase();
+    if (header.includes("matroska")) return "mkv";
+    if (header.includes("webm")) return "webm";
+    return "webm/mkv";
+  }
   if (bytes.length >= 12 && ascii(0, 4) === "RIFF" && ascii(8, 4) === "AVI ") return "avi";
   if (bytes.length >= 4 && ascii(0, 4) === "OggS") return "ogg";
   if (bytes.length >= 3 && ascii(0, 3) === "FLV") return "flv";
@@ -714,7 +719,7 @@ async function compressOne(state) {
     updateFileSizes(state, file.size);
     return { blob: file, name: safeOriginalName(file.name, state.index), state,
       diagnostic: { input_bytes: file.size, duration_seconds: null,
-        video_kbps: null, copied: true } };
+        video_kbps: null, copied: true, input_format: format } };
   }
   // Probe using the same decoder as conversion rather than HTML video support.
   // Browsers cannot read metadata for many otherwise decodable MKV/AVI files.
@@ -773,7 +778,7 @@ async function compressOne(state) {
             updateFileSizes(state, blob.size);
             return { blob, name: safeStem(file.name, state.index) + "-converted.mp4", state,
               diagnostic: { input_bytes: file.size, duration_seconds: duration,
-                video_kbps: null, copied: true } };
+                video_kbps: null, copied: true, input_format: format } };
           }
           remuxTooLarge = true;
         }
@@ -799,7 +804,7 @@ async function compressOne(state) {
           updateFileSizes(state, blob.size);
           return { blob, name: safeStem(file.name, state.index) + "-converted.mp4", state,
             diagnostic: { input_bytes: file.size, duration_seconds: duration,
-              video_kbps: null, copied: false } };
+              video_kbps: null, copied: false, input_format: format } };
         }
         await removeVirtualFile(outputName);
       }
@@ -850,7 +855,7 @@ async function compressOne(state) {
     updateFileSizes(state, blob.size);
     return { blob, name: safeStem(file.name, state.index) + "-compressed.mp4", state,
       diagnostic: { input_bytes: file.size, duration_seconds: duration,
-        video_kbps: videoKbps, copied: false } };
+        video_kbps: videoKbps, copied: false, input_format: format } };
   } finally {
     await removeVirtualFile(inputName);
     await removeVirtualFile(outputName);
