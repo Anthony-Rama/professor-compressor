@@ -22,6 +22,7 @@ def browser_compressor(
     session_secret: str,
     expires_in_seconds: int,
     *,
+    discord_limit_bytes: int | None = None,
     reopened: bool = False,
 ) -> str:
     """Return the browser-bound page that encodes videos locally."""
@@ -123,6 +124,7 @@ import { fetchFile } from "__ASSET_PREFIX__/util-esm/index.js";
 
 const MAX_CLIPS = __MAX_CLIPS__;
 const TARGET_BYTES = __TARGET_BYTES__;
+const DISCORD_LIMIT_BYTES = __DISCORD_LIMIT_BYTES__;
 const MAX_BATCH_BYTES = __MAX_BATCH_BYTES__;
 const SESSION_SECRET = __SESSION_SECRET__;
 const SESSION_EXPIRES_SECONDS = __EXPIRES_SECONDS__;
@@ -295,6 +297,13 @@ function outputTargetBytes() {
     MAX_BATCH_BYTES / Math.max(1, selectedFiles.length)
   );
   return Math.min(TARGET_BYTES, batchTargetBytes);
+}
+
+function unchangedLimitBytes() {
+  const batchTargetBytes = Math.floor(
+    MAX_BATCH_BYTES / Math.max(1, selectedFiles.length)
+  );
+  return Math.min(DISCORD_LIMIT_BYTES, batchTargetBytes);
 }
 
 function setPhase(phase, title, copy) {
@@ -700,7 +709,7 @@ async function compressOne(state) {
   const file = state.file;
   const format = await videoSignature(file);
   const effectiveTargetBytes = outputTargetBytes();
-  if (file.size <= effectiveTargetBytes && format === "mp4") {
+  if (file.size <= unchangedLimitBytes() && format === "mp4") {
     updateFile(state, "Already fits", 100);
     updateFileSizes(state, file.size);
     return { blob: file, name: safeOriginalName(file.name, state.index), state,
@@ -1041,9 +1050,8 @@ form.addEventListener("submit", async (event) => {
       heartbeatTimer = setInterval(() => { void keepSessionAlive(); }, 60000);
       const formats = await Promise.all(selectedFiles.map((state) => videoSignature(state.file)));
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
-      const effectiveTargetBytes = outputTargetBytes();
       const needsEncoder = selectedFiles.some((state, index) =>
-        state.file.size > effectiveTargetBytes || formats[index] !== "mp4");
+        state.file.size > unchangedLimitBytes() || formats[index] !== "mp4");
       if (needsEncoder && !ffmpeg) {
         setPhase("compress", "Loading video engine",
           "The browser is preparing its video tools. A first or uncached visit may take a few minutes on a slow connection; your video stays on this device.");
@@ -1136,6 +1144,12 @@ expiryTimer = setInterval(updateExpiry, 1000);
         template.replace("__ASSET_PREFIX__", ASSET_PREFIX)
         .replace("__MAX_CLIPS__", _json_script_value(max_clips))
         .replace("__TARGET_BYTES__", _json_script_value(target_bytes))
+        .replace(
+            "__DISCORD_LIMIT_BYTES__",
+            _json_script_value(
+                discord_limit_bytes if discord_limit_bytes is not None else target_bytes
+            ),
+        )
         .replace("__MAX_BATCH_BYTES__", _json_script_value(max_batch_bytes))
         .replace("__SESSION_SECRET__", _json_script_value(session_secret))
         .replace("__EXPIRES_SECONDS__", _json_script_value(expires_in_seconds))

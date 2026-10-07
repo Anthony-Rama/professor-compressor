@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const { execFileSync } = require('node:child_process');
-const { mkdtempSync, rmSync, readFileSync } = require('node:fs');
+const { mkdtempSync, rmSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 
@@ -14,6 +14,10 @@ test.beforeAll(() => {
   ]);
   generate('large.mp4', 0, 3);
   generate('small.mp4', 35, 0.5);
+  const smallMp4 = readFileSync(join(fixtures, 'small.mp4'));
+  writeFileSync(join(fixtures, 'near-limit.mp4'), Buffer.concat([
+    smallMp4, Buffer.alloc(1_090_000 - smallMp4.length),
+  ]));
   generate('small.mov', 35, 0.5);
   execFileSync('ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
@@ -201,6 +205,24 @@ test('ten fitting MP4s deliver together without loading an encoder', async ({ pa
     name:`clip-${index}.mp4`, mimeType:'video/mp4', buffer:bytes,
   })));
   await expect(page.locator('#phase-copy')).toContainText('10 file(s)');
+});
+
+test('MP4 below Discord limit but above encoding target is sent unchanged', async ({ page, request }) => {
+  await page.route('**/assets/**/core*-esm/**', () => { throw new Error('Unexpected encoding'); });
+  await page.addInitScript(() => {
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) {
+        window.sentSize = body.get('clips').size;
+        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+      }
+      return originalSend.call(this, body);
+    };
+  });
+  await openSession(page, request);
+  await deliver(page, join(fixtures, 'near-limit.mp4'));
+  expect(await page.evaluate(() => window.sentSize)).toBe(1_090_000);
+  expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(true);
 });
 
 test('small QuickTime MOV is converted to an actual MP4', async ({ page, request }) => {

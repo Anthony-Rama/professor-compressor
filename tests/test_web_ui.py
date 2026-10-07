@@ -23,6 +23,7 @@ class BrowserPageTests(unittest.TestCase):
     def test_replaces_private_page_values(self) -> None:
         self.assertIn("const MAX_CLIPS = 10;", self.page)
         self.assertIn("const TARGET_BYTES = 19000000;", self.page)
+        self.assertIn("const DISCORD_LIMIT_BYTES = 19000000;", self.page)
         self.assertIn("const MAX_BATCH_BYTES = 220000000;", self.page)
         self.assertIn('const SESSION_SECRET = "session_secret-123";', self.page)
         self.assertNotIn("__SESSION_SECRET__", self.page)
@@ -106,7 +107,8 @@ class BrowserPageTests(unittest.TestCase):
             "return Math.min(TARGET_BYTES, batchTargetBytes)",
             self.page,
         )
-        self.assertIn("state.file.size > effectiveTargetBytes", self.page)
+        self.assertIn("state.file.size > unchangedLimitBytes()", self.page)
+        self.assertIn("file.size <= unchangedLimitBytes()", self.page)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_generated_module_has_valid_javascript(self) -> None:

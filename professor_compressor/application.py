@@ -735,6 +735,7 @@ def compressor_page(job: UploadJob, *, reopened: bool = False) -> web.Response:
             min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES),
             job.claim_secret or "",
             max(1, int(job.expires_at - time.time())),
+            discord_limit_bytes=job.discord_limit,
             reopened=reopened,
         ),
     )
@@ -1394,6 +1395,11 @@ async def delivery_worker(worker_number: int) -> None:
                         min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES)
                         // len(delivery.results),
                     ),
+                    unchanged_limit=min(
+                        delivery.job.discord_limit,
+                        min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES)
+                        // len(delivery.results),
+                    ),
                 )
             )
             if not delivery.completed.done():
@@ -1427,6 +1433,11 @@ async def delivery_worker(worker_number: int) -> None:
                     diagnostics=delivery.diagnostics,
                     effective_target=min(
                         compression_target(delivery.job.discord_limit),
+                        min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES)
+                        // len(delivery.results),
+                    ),
+                    unchanged_limit=min(
+                        delivery.job.discord_limit,
                         min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES)
                         // len(delivery.results),
                     ),

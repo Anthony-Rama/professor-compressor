@@ -44,6 +44,7 @@ def compression_outcome_alert(
     results: list[BrowserResult] | None = None,
     diagnostics: list[CompressionDiagnostic] | None = None,
     effective_target: int | None = None,
+    unchanged_limit: int | None = None,
 ) -> str:
     """Build an outcome alert without filenames or user mentions."""
     if elapsed_seconds is None:
@@ -70,15 +71,27 @@ def compression_outcome_alert(
         and len(results) == len(diagnostics)
         and effective_target
         and effective_target > 0
+        and unchanged_limit
+        and unchanged_limit > 0
     ):
         lines.append(f"Discord limit: `{job.discord_limit / MIB:.1f} MiB`")
-        lines.append(f"Effective target per file: `{effective_target / MIB:.1f} MiB`")
+        if len(results) > 1:
+            lines.append(
+                f"Encoding target per file: `{effective_target / MIB:.1f} MiB`"
+            )
+            lines.append(
+                f"Unchanged MP4 limit per file: `{unchanged_limit / MIB:.1f} MiB`"
+            )
+        else:
+            file_target = unchanged_limit if diagnostics[0].copied else effective_target
+            lines.append(f"Effective target per file: `{file_target / MIB:.1f} MiB`")
         for index, (result, diagnostic) in enumerate(
             zip(results, diagnostics, strict=True), 1
         ):
             output_mib = len(result.data) / MIB
             input_mib = diagnostic.input_bytes / MIB
-            utilization = len(result.data) / effective_target * 100
+            file_target = unchanged_limit if diagnostic.copied else effective_target
+            utilization = len(result.data) / file_target * 100
             if len(results) > 1:
                 detail = (
                     "already fit"

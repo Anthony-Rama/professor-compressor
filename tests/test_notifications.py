@@ -107,6 +107,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             results=[result],
             diagnostics=[diagnostic],
             effective_target=int(19.6 * 1024 * 1024),
+            unchanged_limit=20 * 1024 * 1024,
             elapsed_seconds=1,
         )
         self.assertIn("Input size: `84.0 MiB`", message)
@@ -135,12 +136,36 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             results=results,
             diagnostics=diagnostics,
             effective_target=19 * 1024 * 1024,
+            unchanged_limit=20 * 1024 * 1024,
             elapsed_seconds=1,
         )
         self.assertLessEqual(len(message), 2000)
         self.assertIn("File 10:", message)
         self.assertIn("already fit", message)
         self.assertNotIn("private-", message)
+
+    def test_fitting_mp4_uses_discord_limit_in_utilization(self) -> None:
+        job = UploadJob(
+            token="token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20 * 1024 * 1024,
+            interaction=Mock(),
+        )
+        result = BrowserResult("private.mp4", b"x" * 1024)
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=1,
+            results=[result],
+            diagnostics=[CompressionDiagnostic(1024, None, None, True)],
+            effective_target=int(19.6 * 1024 * 1024),
+            unchanged_limit=20 * 1024 * 1024,
+            elapsed_seconds=1,
+        )
+        self.assertIn("Effective target per file: `20.0 MiB`", message)
+        self.assertIn("Encoding: `skipped (MP4 already fit)`", message)
 
     async def test_browser_failure_is_authenticated_and_allows_retry(self) -> None:
         job = UploadJob(
