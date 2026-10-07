@@ -32,6 +32,12 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             ),
             [],
         )
+        self.assertEqual(
+            parse_compression_diagnostics(
+                b'[{"input_bytes":10,"duration_seconds":1.5,"video_kbps":null,"copied":false}]'
+            )[0].video_kbps,
+            None,
+        )
 
     def test_safe_alert_text_escapes_markdown_and_backticks(self) -> None:
         self.assertEqual(safe_alert_text("**name** `ping`"), "\\*\\*name\\*\\* 'ping'")
@@ -166,6 +172,50 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Effective target per file: `20.0 MiB`", message)
         self.assertIn("Encoding: `skipped (MP4 already fit)`", message)
+
+    def test_quality_conversion_has_no_claimed_target_bitrate(self) -> None:
+        job = UploadJob(
+            token="token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20 * 1024 * 1024,
+            interaction=Mock(),
+        )
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=1,
+            results=[BrowserResult("private.mp4", b"x" * 1024)],
+            diagnostics=[CompressionDiagnostic(2048, 5.0, None, False)],
+            effective_target=int(19.6 * 1024 * 1024),
+            unchanged_limit=20 * 1024 * 1024,
+            elapsed_seconds=1,
+        )
+        self.assertIn("Effective target per file: `20.0 MiB`", message)
+        self.assertIn("quality-based MP4 conversion", message)
+        self.assertNotIn("Calculated video bitrate", message)
+
+    def test_stream_copy_is_distinguished_from_unchanged_mp4(self) -> None:
+        job = UploadJob(
+            token="token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20 * 1024 * 1024,
+            interaction=Mock(),
+        )
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=1,
+            results=[BrowserResult("private.mp4", b"x" * 1024)],
+            diagnostics=[CompressionDiagnostic(2048, 5.0, None, True)],
+            effective_target=int(19.6 * 1024 * 1024),
+            unchanged_limit=20 * 1024 * 1024,
+            elapsed_seconds=1,
+        )
+        self.assertIn("stream-copied to MP4", message)
 
     async def test_browser_failure_is_authenticated_and_allows_retry(self) -> None:
         job = UploadJob(

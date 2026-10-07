@@ -725,7 +725,7 @@ async function compressOne(state) {
     await ffmpeg.writeFile(inputName, await fetchFile(file));
     updateFile(state, "Reading video metadata", 0);
     await ffmpeg.ffprobe([
-      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,duration",
+      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,codec_name,duration",
       "-of", "json", inputName, "-o", probeName
     ], 30000);
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
@@ -741,21 +741,76 @@ async function compressOne(state) {
         ". The file may be damaged or unsupported by this encoder.");
     }
     const videoStream = metadata.streams.find((stream) => stream.codec_type === "video");
+    const audioStream = metadata.streams.find((stream) => stream.codec_type === "audio");
     if (!videoStream) throw new Error("No video stream found in " + file.name + ". Choose a video, not an audio-only file.");
     const duration = [metadata.format?.duration, videoStream.duration]
       .map(Number).find((value) => Number.isFinite(value) && value > 0);
     if (!duration) throw new Error(
       "Could not determine the duration of " + file.name + ". Re-export the clip with a finite duration.");
     const audioKbps = 96;
+    const scale = "fps=fps='min(source_fps,30)'," +
+      "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease," +
+      "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+    if (format !== "mp4") {
+      // Compatible streams can be repackaged into MP4 without re-encoding.
+      // Otherwise make a quality-based conversion and check its actual size.
+      let remuxTooLarge = false;
+      if (videoStream.codec_name === "h264" &&
+          (!audioStream || audioStream.codec_name === "aac")) {
+        currentAttempt = 1;
+        lastFfmpegMessage = "";
+        updateFile(state, "Preparing MP4 without re-encoding", 0);
+        const remuxExit = await ffmpeg.exec([
+          "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
+          "-c", "copy", "-movflags", "+faststart", outputName
+        ]);
+        if (cancelled) throw new DOMException("Cancelled", "AbortError");
+        if (remuxExit === 0) {
+          const remuxed = await ffmpeg.readFile(outputName);
+          if (remuxed.byteLength <= unchangedLimitBytes()) {
+            const blob = new Blob([remuxed], { type: "video/mp4" });
+            updateFile(state, "Converted without re-encoding", 100);
+            updateFileSizes(state, blob.size);
+            return { blob, name: safeStem(file.name, state.index) + "-converted.mp4", state,
+              diagnostic: { input_bytes: file.size, duration_seconds: duration,
+                video_kbps: null, copied: true } };
+          }
+          remuxTooLarge = true;
+        }
+        await removeVirtualFile(outputName);
+      }
+      if (!remuxTooLarge) {
+        currentAttempt = 1;
+        lastFfmpegMessage = "";
+        updateFile(state, "Converting to MP4", 0);
+        const conversionExit = await ffmpeg.exec([
+          "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
+          "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
+          "-preset", "veryfast", "-crf", "18", "-vf", scale, "-pix_fmt", "yuv420p",
+          "-c:a", "aac", "-b:a", audioKbps + "k", "-movflags", "+faststart", outputName
+        ]);
+        if (cancelled) throw new DOMException("Cancelled", "AbortError");
+        if (conversionExit !== 0) throw new Error("The encoder could not read " + file.name +
+          ". The video may use an unsupported or damaged codec.");
+        const converted = await ffmpeg.readFile(outputName);
+        if (converted.byteLength <= unchangedLimitBytes()) {
+          const blob = new Blob([converted], { type: "video/mp4" });
+          updateFile(state, "Converted to MP4", 100);
+          updateFileSizes(state, blob.size);
+          return { blob, name: safeStem(file.name, state.index) + "-converted.mp4", state,
+            diagnostic: { input_bytes: file.size, duration_seconds: duration,
+              video_kbps: null, copied: false } };
+        }
+        await removeVirtualFile(outputName);
+      }
+      updateFile(state, "Converted MP4 is too large; adjusting size", 0);
+    }
     const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
     let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
     if (videoKbps < 100) {
       throw new Error(file.name + " is too long to fit at a usable quality. " +
         "Trim the video into shorter clips and try again.");
     }
-    const scale = "fps=fps='min(source_fps,30)'," +
-      "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease," +
-      "scale=trunc(iw/2)*2:trunc(ih/2)*2";
     async function encode(bitrate) {
       lastFfmpegMessage = "";
       return ffmpeg.exec([

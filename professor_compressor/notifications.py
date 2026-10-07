@@ -80,25 +80,41 @@ def compression_outcome_alert(
                 f"Encoding target per file: `{effective_target / MIB:.1f} MiB`"
             )
             lines.append(
-                f"Unchanged MP4 limit per file: `{unchanged_limit / MIB:.1f} MiB`"
+                f"Conversion limit per file: `{unchanged_limit / MIB:.1f} MiB`"
             )
         else:
-            file_target = unchanged_limit if diagnostics[0].copied else effective_target
+            file_target = (
+                effective_target
+                if diagnostics[0].video_kbps is not None
+                else unchanged_limit
+            )
             lines.append(f"Effective target per file: `{file_target / MIB:.1f} MiB`")
         for index, (result, diagnostic) in enumerate(
             zip(results, diagnostics, strict=True), 1
         ):
             output_mib = len(result.data) / MIB
             input_mib = diagnostic.input_bytes / MIB
-            file_target = unchanged_limit if diagnostic.copied else effective_target
+            file_target = (
+                effective_target
+                if diagnostic.video_kbps is not None
+                else unchanged_limit
+            )
             utilization = len(result.data) / file_target * 100
             if len(results) > 1:
                 detail = (
-                    "already fit"
+                    (
+                        "stream-copied to MP4"
+                        if diagnostic.duration_seconds
+                        else "already fit"
+                    )
                     if diagnostic.copied
                     else (
                         f"{diagnostic.duration_seconds:.1f}s, "
-                        f"{diagnostic.video_kbps} kbps"
+                        + (
+                            f"{diagnostic.video_kbps} kbps"
+                            if diagnostic.video_kbps
+                            else "quality MP4 conversion"
+                        )
                     )
                 )
                 lines.append(
@@ -108,14 +124,23 @@ def compression_outcome_alert(
                 continue
             lines.append(f"Input size: `{input_mib:.1f} MiB`")
             if diagnostic.copied:
-                lines.append("Encoding: `skipped (MP4 already fit)`")
+                lines.append(
+                    "Encoding: `stream-copied to MP4 (no re-encode)`"
+                    if diagnostic.duration_seconds
+                    else "Encoding: `skipped (MP4 already fit)`"
+                )
             else:
                 lines.append(
                     f"Detected duration: `{diagnostic.duration_seconds:.1f} sec`"
                 )
-                lines.append(
-                    f"Calculated video bitrate: `{diagnostic.video_kbps} kbps`"
-                )
+                if diagnostic.video_kbps is None:
+                    lines.append(
+                        "Encoding: `quality-based MP4 conversion (no size target)`"
+                    )
+                else:
+                    lines.append(
+                        f"Calculated video bitrate: `{diagnostic.video_kbps} kbps`"
+                    )
             lines.append(f"Actual output: `{output_mib:.1f} MiB`")
             lines.append(f"Target utilization: `{utilization:.1f}%`")
     if stage:

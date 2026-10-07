@@ -13,6 +13,10 @@ test.beforeAll(() => {
     '-c:v', 'libx264', '-crf', String(crf), '-preset', 'ultrafast', join(fixtures, name),
   ]);
   generate('large.mp4', 0, 3);
+  execFileSync('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error', '-i', join(fixtures, 'large.mp4'),
+    '-c', 'copy', join(fixtures, 'large.mov'),
+  ]);
   generate('small.mp4', 35, 0.5);
   const smallMp4 = readFileSync(join(fixtures, 'small.mp4'));
   writeFileSync(join(fixtures, 'near-limit.mp4'), Buffer.concat([
@@ -226,8 +230,52 @@ test('MP4 below Discord limit but above encoding target is sent unchanged', asyn
 });
 
 test('small QuickTime MOV is converted to an actual MP4', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) {
+        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+      }
+      return originalSend.call(this, body);
+    };
+  });
   await openSession(page, request);
   await deliver(page, join(fixtures, 'small.mov'));
+  expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeNull();
+  expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(true);
+});
+
+test('WebM conversion uses quality encoding when streams cannot be copied', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) {
+        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+      }
+      return originalSend.call(this, body);
+    };
+  });
+  await openSession(page, request);
+  await deliver(page, join(fixtures, 'sample.webm'));
+  expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(false);
+  expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeNull();
+});
+
+test('oversized MOV conversion falls back to size-targeted encoding', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) {
+        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+        window.sentSize = body.get('clips').size;
+      }
+      return originalSend.call(this, body);
+    };
+  });
+  await openSession(page, request);
+  await deliver(page, join(fixtures, 'large.mov'));
+  expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeGreaterThan(100);
+  expect(await page.evaluate(() => window.sentSize)).toBeLessThanOrEqual(1_078_000);
 });
 
 test('portrait variable-frame-rate video retains playable video and audio', async ({ page, request }) => {

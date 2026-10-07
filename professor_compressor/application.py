@@ -232,14 +232,26 @@ def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
             ):
                 return []
             if copied:
-                if duration is not None or video_kbps is not None:
+                if video_kbps is not None or (
+                    duration is not None
+                    and (
+                        type(duration) not in (int, float)
+                        or not math.isfinite(duration)
+                        or not 0 < duration <= 86400
+                    )
+                ):
                     return []
             elif (
                 type(duration) not in (int, float)
                 or not math.isfinite(duration)
                 or not 0 < duration <= 86400
-                or type(video_kbps) is not int
-                or not 100 <= video_kbps <= 1_000_000_000
+                or (
+                    video_kbps is not None
+                    and (
+                        type(video_kbps) is not int
+                        or not 100 <= video_kbps <= 1_000_000_000
+                    )
+                )
             ):
                 return []
             diagnostics.append(
