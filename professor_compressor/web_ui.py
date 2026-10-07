@@ -703,7 +703,9 @@ async function compressOne(state) {
   if (file.size <= effectiveTargetBytes && format === "mp4") {
     updateFile(state, "Already fits", 100);
     updateFileSizes(state, file.size);
-    return { blob: file, name: safeOriginalName(file.name, state.index), state };
+    return { blob: file, name: safeOriginalName(file.name, state.index), state,
+      diagnostic: { input_bytes: file.size, duration_seconds: null,
+        video_kbps: null, copied: true } };
   }
   // Probe using the same decoder as conversion rather than HTML video support.
   // Browsers cannot read metadata for many otherwise decodable MKV/AVI files.
@@ -782,7 +784,9 @@ async function compressOne(state) {
     const blob = new Blob([output], { type: "video/mp4" });
     updateFile(state, "Compressed", 100);
     updateFileSizes(state, blob.size);
-    return { blob, name: safeStem(file.name, state.index) + "-compressed.mp4", state };
+    return { blob, name: safeStem(file.name, state.index) + "-compressed.mp4", state,
+      diagnostic: { input_bytes: file.size, duration_seconds: duration,
+        video_kbps: videoKbps, copied: false } };
   } finally {
     await removeVirtualFile(inputName);
     await removeVirtualFile(outputName);
@@ -815,6 +819,7 @@ function xhrUpload(results) {
   return new Promise((resolve, reject) => {
     const data = new FormData();
     data.append("caption", caption.value.trim());
+    data.append("diagnostics", JSON.stringify(results.map(result => result.diagnostic)));
     for (const result of results) data.append("clips", result.blob, result.name);
     const request = new XMLHttpRequest();
     uploadRequest = request;

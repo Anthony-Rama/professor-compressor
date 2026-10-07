@@ -8,7 +8,7 @@ from collections.abc import Iterable
 import discord
 
 from .config import MIB
-from .domain import UploadJob
+from .domain import BrowserResult, CompressionDiagnostic, UploadJob
 
 
 def safe_alert_text(value: str, limit: int = 100) -> str:
@@ -41,6 +41,9 @@ def compression_outcome_alert(
     total_bytes: int = 0,
     stage: str | None = None,
     elapsed_seconds: int | None = None,
+    results: list[BrowserResult] | None = None,
+    diagnostics: list[CompressionDiagnostic] | None = None,
+    effective_target: int | None = None,
 ) -> str:
     """Build an outcome alert without filenames or user mentions."""
     if elapsed_seconds is None:
@@ -61,6 +64,47 @@ def compression_outcome_alert(
     ]
     if total_bytes:
         lines.append(f"Finished size: `{total_bytes / MIB:.1f} MiB`")
+    if (
+        results
+        and diagnostics
+        and len(results) == len(diagnostics)
+        and effective_target
+        and effective_target > 0
+    ):
+        lines.append(f"Discord limit: `{job.discord_limit / MIB:.1f} MiB`")
+        lines.append(f"Effective target per file: `{effective_target / MIB:.1f} MiB`")
+        for index, (result, diagnostic) in enumerate(
+            zip(results, diagnostics, strict=True), 1
+        ):
+            output_mib = len(result.data) / MIB
+            input_mib = diagnostic.input_bytes / MIB
+            utilization = len(result.data) / effective_target * 100
+            if len(results) > 1:
+                detail = (
+                    "already fit"
+                    if diagnostic.copied
+                    else (
+                        f"{diagnostic.duration_seconds:.1f}s, "
+                        f"{diagnostic.video_kbps} kbps"
+                    )
+                )
+                lines.append(
+                    f"File {index}: `{input_mib:.1f} → {output_mib:.1f} MiB`"
+                    f" · `{utilization:.1f}% target` · {detail}"
+                )
+                continue
+            lines.append(f"Input size: `{input_mib:.1f} MiB`")
+            if diagnostic.copied:
+                lines.append("Encoding: `skipped (MP4 already fit)`")
+            else:
+                lines.append(
+                    f"Detected duration: `{diagnostic.duration_seconds:.1f} sec`"
+                )
+                lines.append(
+                    f"Calculated video bitrate: `{diagnostic.video_kbps} kbps`"
+                )
+            lines.append(f"Actual output: `{output_mib:.1f} MiB`")
+            lines.append(f"Target utilization: `{utilization:.1f}%`")
     if stage:
         lines.append(f"Stage: `{safe_alert_text(stage, limit=60)}`")
     lines.append(f"Elapsed: `{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}`")

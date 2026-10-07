@@ -52,12 +52,21 @@ class BrowserResult:
     data: bytes = field(repr=False)
 
 
+@dataclass(frozen=True, slots=True)
+class CompressionDiagnostic:
+    input_bytes: int
+    duration_seconds: float | None
+    video_kbps: int | None
+    copied: bool
+
+
 @dataclass(slots=True)
 class DeliveryRequest:
     job: UploadJob
     results: list[BrowserResult]
     completed: asyncio.Future[str]
     caption: str = ""
+    diagnostics: list[CompressionDiagnostic] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

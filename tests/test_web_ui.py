@@ -73,6 +73,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('data.append("caption", caption.value.trim())', self.page)
         self.assertIn("caption.disabled = true", self.page)
         self.assertIn("caption.hidden = true", self.page)
+        self.assertIn('data.append("diagnostics", JSON.stringify(', self.page)
 
     def test_includes_retry_cancel_and_metrics(self) -> None:
         self.assertIn("Cancel", self.page)

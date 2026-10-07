@@ -78,6 +78,7 @@ test('optional caption travels with the delivered batch and disappears on comple
     XMLHttpRequest.prototype.send = function(body) {
       if (body instanceof FormData && body.has('clips')) {
         window.sentCaption = body.get('caption');
+        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
       }
       return originalSend.call(this, body);
     };
@@ -86,6 +87,10 @@ test('optional caption travels with the delivered batch and disappears on comple
   await page.locator('#caption').fill('Clips from yesterday');
   await deliver(page, join(fixtures, 'small.mp4'));
   expect(await page.evaluate(() => window.sentCaption)).toBe('Clips from yesterday');
+  expect(await page.evaluate(() => window.sentDiagnostics)).toEqual([{
+    input_bytes: expect.any(Number), duration_seconds: null,
+    video_kbps: null, copied: true,
+  }]);
   await expect(page.locator('#caption')).toBeHidden();
   await expect(page.locator('.caption-label')).toBeHidden();
   await expect(page.locator('.caption-help')).toBeHidden();
@@ -105,10 +110,24 @@ test('page exit sends a best-effort leave report', async ({ page, request }) => 
 });
 
 test('oversized video loads WebAssembly and compresses under the real CSP', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) {
+        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+      }
+      return originalSend.call(this, body);
+    };
+  });
   await openSession(page, request);
   await expect(page.locator('#feedback-actions')).toBeHidden();
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
   await deliver(page, join(fixtures, 'large.mp4'));
+  const [diagnostic] = await page.evaluate(() => window.sentDiagnostics);
+  expect(diagnostic.copied).toBe(false);
+  expect(diagnostic.input_bytes).toBeGreaterThan(0);
+  expect(diagnostic.duration_seconds).toBeGreaterThan(0);
+  expect(diagnostic.video_kbps).toBeGreaterThanOrEqual(100);
   await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();

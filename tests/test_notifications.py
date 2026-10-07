@@ -13,13 +13,26 @@ from professor_compressor.application import (
     interaction_guild_name,
     jobs,
     on_guild_join,
+    parse_compression_diagnostics,
     receive_browser_failure,
     report_dsc_stats,
     safe_alert_text,
 )
+from professor_compressor.domain import BrowserResult, CompressionDiagnostic
 
 
 class NotificationTests(unittest.IsolatedAsyncioTestCase):
+    def test_invalid_browser_diagnostics_are_ignored(self) -> None:
+        self.assertEqual(parse_compression_diagnostics(b"not json"), [])
+        self.assertEqual(parse_compression_diagnostics(b"[]"), [])
+        self.assertEqual(parse_compression_diagnostics(b'[{"copied":true}]'), [])
+        self.assertEqual(
+            parse_compression_diagnostics(
+                b'[{"input_bytes":10,"duration_seconds":NaN,"video_kbps":100,"copied":false}]'
+            ),
+            [],
+        )
+
     def test_safe_alert_text_escapes_markdown_and_backticks(self) -> None:
         self.assertEqual(safe_alert_text("**name** `ping`"), "\\*\\*name\\*\\* 'ping'")
         self.assertIn("@\u200beveryone", safe_alert_text("@everyone"))
@@ -74,6 +87,60 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Finished size: `5.0 MiB`", message)
         self.assertIn("Elapsed: `1:05`", message)
         self.assertNotIn("clip.mp4", message)
+
+    def test_single_file_diagnostics_show_measured_output_and_target(self) -> None:
+        job = UploadJob(
+            token="token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20 * 1024 * 1024,
+            interaction=Mock(),
+        )
+        result = BrowserResult("private-clip.mp4", b"x" * 1024)
+        diagnostic = CompressionDiagnostic(84 * 1024 * 1024, 74.3, 2010, False)
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=1,
+            total_bytes=1024,
+            results=[result],
+            diagnostics=[diagnostic],
+            effective_target=int(19.6 * 1024 * 1024),
+            elapsed_seconds=1,
+        )
+        self.assertIn("Input size: `84.0 MiB`", message)
+        self.assertIn("Discord limit: `20.0 MiB`", message)
+        self.assertIn("Effective target per file: `19.6 MiB`", message)
+        self.assertIn("Detected duration: `74.3 sec`", message)
+        self.assertIn("Calculated video bitrate: `2010 kbps`", message)
+        self.assertIn("Actual output: `0.0 MiB`", message)
+        self.assertNotIn("private-clip", message)
+
+    def test_batch_diagnostics_fit_discord_alert_limit(self) -> None:
+        job = UploadJob(
+            token="token",
+            user_id=123,
+            channel_id=456,
+            expires_at=9999999999,
+            discord_limit=20 * 1024 * 1024,
+            interaction=Mock(),
+        )
+        results = [BrowserResult(f"private-{i}.mp4", b"x") for i in range(10)]
+        diagnostics = [CompressionDiagnostic(1000, None, None, True) for _ in results]
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=10,
+            results=results,
+            diagnostics=diagnostics,
+            effective_target=19 * 1024 * 1024,
+            elapsed_seconds=1,
+        )
+        self.assertLessEqual(len(message), 2000)
+        self.assertIn("File 10:", message)
+        self.assertIn("already fit", message)
+        self.assertNotIn("private-", message)
 
     async def test_browser_failure_is_authenticated_and_allows_retry(self) -> None:
         job = UploadJob(

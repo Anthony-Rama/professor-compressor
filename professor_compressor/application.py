@@ -2,6 +2,7 @@ import asyncio
 import html
 import io
 import ipaddress
+import json
 import logging
 import math
 import os
@@ -24,7 +25,14 @@ from discord import app_commands
 from .assets import ASSET_PACKAGES, ASSET_PREFIX, NODE_MODULES
 from .config import MIB, Settings
 from .delivery_policy import bot_upload_limit, channel_delivery_problem
-from .domain import BrowserResult, DeliveryOutcome, DeliveryRequest, JobState, UploadJob
+from .domain import (
+    BrowserResult,
+    CompressionDiagnostic,
+    DeliveryOutcome,
+    DeliveryRequest,
+    JobState,
+    UploadJob,
+)
 from .landing_pages import (
     BOT_INVITE_URL,
     guide_html,
@@ -201,6 +209,50 @@ async def get_application_operator_ids() -> frozenset[int]:
 def compression_target(discord_limit: int) -> int:
     """Reserve two percent for delivery while preserving output quality."""
     return max(1 * MIB, int(discord_limit * 0.98))
+
+
+def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
+    """Accept optional, bounded browser measurements; never trust them for delivery."""
+    try:
+        values = json.loads(raw)
+        if not isinstance(values, list) or not 1 <= len(values) <= MAX_CLIPS:
+            return []
+        diagnostics = []
+        for value in values:
+            if not isinstance(value, dict):
+                return []
+            input_bytes = value.get("input_bytes")
+            duration = value.get("duration_seconds")
+            video_kbps = value.get("video_kbps")
+            copied = value.get("copied")
+            if (
+                type(input_bytes) is not int
+                or not 0 < input_bytes <= 10**12
+                or type(copied) is not bool
+            ):
+                return []
+            if copied:
+                if duration is not None or video_kbps is not None:
+                    return []
+            elif (
+                type(duration) not in (int, float)
+                or not math.isfinite(duration)
+                or not 0 < duration <= 86400
+                or type(video_kbps) is not int
+                or not 100 <= video_kbps <= 1_000_000_000
+            ):
+                return []
+            diagnostics.append(
+                CompressionDiagnostic(
+                    input_bytes,
+                    float(duration) if duration is not None else None,
+                    video_kbps,
+                    copied,
+                )
+            )
+        return diagnostics
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return []
 
 
 @web.middleware
@@ -983,6 +1035,8 @@ async def receive_results(request: web.Request) -> web.Response:
     results: list[BrowserResult] = []
     caption = ""
     caption_received = False
+    diagnostics: list[CompressionDiagnostic] = []
+    diagnostics_received = False
     total_size = 0
     upload_slot_held = True
     job.state = JobState.UPLOADING
@@ -1025,6 +1079,19 @@ async def receive_results(request: web.Request) -> web.Response:
                     raise ValueError("The message contains invalid text.") from error
                 if len(caption) > 1000:
                     raise ValueError("The message must be 1,000 characters or fewer.")
+                continue
+            if field.name == "diagnostics":
+                if diagnostics_received or results:
+                    raise ValueError(
+                        "The diagnostics field was repeated or out of order."
+                    )
+                diagnostics_received = True
+                raw_diagnostics = bytearray()
+                while chunk := await field.read_chunk(1024):
+                    raw_diagnostics.extend(chunk)
+                    if len(raw_diagnostics) > 4096:
+                        raise ValueError("The diagnostics field is too long.")
+                diagnostics = parse_compression_diagnostics(bytes(raw_diagnostics))
                 continue
             if field.name != "clips" or not field.filename:
                 raise ValueError("Only video file fields are accepted.")
@@ -1069,6 +1136,8 @@ async def receive_results(request: web.Request) -> web.Response:
 
         if not results:
             raise ValueError("No compressed MP4 results were received.")
+        if len(diagnostics) != len(results):
+            diagnostics = []
         result_count = len(results)
         loop = asyncio.get_running_loop()
         completion: asyncio.Future[str] = loop.create_future()
@@ -1077,7 +1146,11 @@ async def receive_results(request: web.Request) -> web.Response:
             lambda future: future.exception() if not future.cancelled() else None
         )
         delivery = DeliveryRequest(
-            job=job, results=results, completed=completion, caption=caption
+            job=job,
+            results=results,
+            completed=completion,
+            caption=caption,
+            diagnostics=diagnostics,
         )
         try:
             delivery_queue.put_nowait(delivery)
@@ -1314,6 +1387,13 @@ async def delivery_worker(worker_number: int) -> None:
                     succeeded=True,
                     file_count=len(delivery.results),
                     total_bytes=total_bytes,
+                    results=delivery.results,
+                    diagnostics=delivery.diagnostics,
+                    effective_target=min(
+                        compression_target(delivery.job.discord_limit),
+                        min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES)
+                        // len(delivery.results),
+                    ),
                 )
             )
             if not delivery.completed.done():
@@ -1343,6 +1423,13 @@ async def delivery_worker(worker_number: int) -> None:
                     file_count=len(delivery.results),
                     total_bytes=sum(len(result.data) for result in delivery.results),
                     stage="Discord delivery",
+                    results=delivery.results,
+                    diagnostics=delivery.diagnostics,
+                    effective_target=min(
+                        compression_target(delivery.job.discord_limit),
+                        min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES)
+                        // len(delivery.results),
+                    ),
                 )
             )
             if not delivery.completed.done():

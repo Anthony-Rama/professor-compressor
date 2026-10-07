@@ -186,6 +186,19 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         form = FormData()
         form.add_field("caption", "x" * 1000)
         form.add_field(
+            "diagnostics",
+            json.dumps(
+                [
+                    {
+                        "input_bytes": 1000,
+                        "duration_seconds": 2.5,
+                        "video_kbps": 1000,
+                        "copied": False,
+                    }
+                ]
+            ),
+        )
+        form.add_field(
             "clips",
             valid_test_mp4(),
             filename="../clip.mp4",
@@ -204,6 +217,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await response.json())["message"], "Delivered in test")
         self.assertEqual(len(received[0].results), 1)
         self.assertEqual(received[0].caption, "x" * 1000)
+        self.assertEqual(received[0].diagnostics[0].input_bytes, 1000)
         self.assertTrue(received[0].results[0].name.endswith(".mp4"))
         self.assertNotIn("/", received[0].results[0].name)
         self.assertIs(job.state, JobState.DONE)
