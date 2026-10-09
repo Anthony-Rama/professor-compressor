@@ -74,24 +74,6 @@ async function deliver(page, files) {
   expect(await page.locator('#phase-title').textContent(), await page.locator('#message').textContent()).toBe('Delivered to Discord');
 }
 
-// Force a near-budget preview estimate while still running the real encoder.
-// This keeps correction/cancellation tests on the two-pass branch even when a
-// simple fixture can now fit with quality-based encoding.
-async function forceTargetedEncoding(page) {
-  await page.addInitScript(() => {
-    const post = Worker.prototype.postMessage;
-    Worker.prototype.postMessage = function(message, ...rest) {
-      if (message?.type === 'READ_FILE' && /^sample-/.test(message.data.path)) {
-        queueMicrotask(() => this.onmessage({data:{
-          id:message.id, type:'READ_FILE', data:new Uint8Array(750_000),
-        }}));
-        return;
-      }
-      return post.call(this, message, ...rest);
-    };
-  });
-}
-
 test('browser reports selection and start without filenames or media', async ({ page, request }) => {
   const reports = [];
   await page.route('**/upload/*/progress', async route => {
@@ -160,7 +142,7 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   expect(diagnostic.copied).toBe(false);
   expect(diagnostic.input_bytes).toBeGreaterThan(0);
   expect(diagnostic.duration_seconds).toBeGreaterThan(0);
-  expect(diagnostic.video_kbps).toBeGreaterThanOrEqual(16);
+  expect(diagnostic.video_kbps).toBeGreaterThanOrEqual(100);
   await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();
@@ -305,7 +287,6 @@ test('Matroska header is identified as MKV without sending a filename', async ({
 });
 
 test('oversized MOV conversion falls back to size-targeted encoding', async ({ page, request }) => {
-  await forceTargetedEncoding(page);
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.send = function(body) {
@@ -340,9 +321,7 @@ for (const limit of [1_100_000, 2_200_000]) {
       Array.from(new Uint8Array(await window.preparedOutput.arrayBuffer()))));
     const target = Math.floor(limit * .98);
     expect(bytes.length).toBeLessThanOrEqual(target);
-    const diagnostic = await page.evaluate(() => window.sentDiagnostics[0]);
-    if (diagnostic.video_kbps !== null) expect(bytes.length).toBeGreaterThan(target * .90);
-    else expect(bytes.length).toBeGreaterThan(0);
+    expect(bytes.length).toBeGreaterThan(target * .90);
     await test.info().attach('size-target', {contentType:'application/json',
       body:JSON.stringify({limit, target, output:bytes.length, utilization:bytes.length / target})});
     expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('mkv');
@@ -358,7 +337,6 @@ for (const limit of [1_100_000, 2_200_000]) {
 }
 
 test('an oversized second pass is corrected without losing the analysis statistics', async ({ page, request }) => {
-  await forceTargetedEncoding(page);
   await page.addInitScript(() => {
     const post = Worker.prototype.postMessage;
     window.outputPasses = 0;
@@ -436,14 +414,13 @@ test('sequential MP4 and MKV encoding keeps each result under its own ceiling', 
   expect(sizes).toHaveLength(2);
   for (const size of sizes) {
     expect(size).toBeLessThanOrEqual(1_078_000);
-    expect(size).toBeGreaterThan(0);
+    expect(size).toBeGreaterThan(1_078_000 * .90);
   }
   expect(await page.evaluate(() => window.sentDiagnostics.map(item => item.input_format))).toEqual(['mp4','mkv']);
 });
 
 for (const pass of ['1', '2']) {
   test(`cancelling encoding pass ${pass} prevents upload and allows another selection`, async ({ page, request }) => {
-    await forceTargetedEncoding(page);
     await page.addInitScript(pass => {
       const send = Worker.prototype.postMessage;
       Worker.prototype.postMessage = function(message, ...rest) {

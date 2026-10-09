@@ -22,23 +22,6 @@ from professor_compressor.domain import BrowserResult, CompressionDiagnostic
 
 
 class NotificationTests(unittest.IsolatedAsyncioTestCase):
-    def test_low_bitrate_fallback_diagnostics_are_validated(self) -> None:
-        for bitrate in (16, 32, 99):
-            payload = (
-                '[{"input_bytes":1000,"duration_seconds":60,"video_kbps":'
-                + str(bitrate)
-                + ',"copied":false}]'
-            ).encode()
-            self.assertEqual(
-                parse_compression_diagnostics(payload)[0].video_kbps, bitrate
-            )
-        self.assertEqual(
-            parse_compression_diagnostics(
-                b'[{"input_bytes":1000,"duration_seconds":60,"video_kbps":15,"copied":false}]'
-            ),
-            [],
-        )
-
     def test_invalid_browser_diagnostics_are_ignored(self) -> None:
         self.assertEqual(parse_compression_diagnostics(b"not json"), [])
         self.assertEqual(parse_compression_diagnostics(b"[]"), [])
@@ -283,7 +266,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             elapsed_seconds=1,
         )
         self.assertIn("Effective target per file: `20.0 MiB`", message)
-        self.assertIn("quality-based MP4 encoding", message)
+        self.assertIn("quality-based MP4 conversion", message)
         self.assertNotIn("Calculated video bitrate", message)
 
     def test_stream_copy_is_distinguished_from_unchanged_mp4(self) -> None:
