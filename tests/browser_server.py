@@ -23,15 +23,12 @@ delivery_delays = {}
 
 async def test_session(request: web.Request) -> web.Response:
     token = secrets.token_urlsafe(16)
-    discord_limit = int(request.query.get("limit", "1100000"))
-    if not 1_100_000 <= discord_limit <= 100 * 1024 * 1024:
-        raise web.HTTPBadRequest()
     app.jobs[token] = UploadJob(
         token=token,
         user_id=1,
         channel_id=2,
         expires_at=time.time() + 600,
-        discord_limit=discord_limit,
+        discord_limit=1_100_000,
         interaction=SimpleNamespace(channel=None),
     )
     if request.query.get("slow") == "1":

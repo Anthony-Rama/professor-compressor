@@ -14,13 +14,6 @@ test.beforeAll(() => {
   ]);
   generate('large.mp4', 0, 3);
   execFileSync('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-    'testsrc2=size=1280x720:rate=30', '-f', 'lavfi', '-i',
-    'sine=frequency=440:sample_rate=48000', '-t', '6',
-    '-c:v', 'libx264', '-crf', '0', '-preset', 'ultrafast',
-    '-c:a', 'aac', join(fixtures, 'large-audio.mkv'),
-  ]);
-  execFileSync('ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-i', join(fixtures, 'large.mp4'),
     '-c', 'copy', join(fixtures, 'large.mov'),
   ]);
@@ -59,8 +52,8 @@ test.beforeAll(() => {
 });
 test.afterAll(() => rmSync(fixtures, { recursive: true, force: true }));
 
-async function openSession(page, request, limit) {
-  const response = await request.post('/test/session' + (limit ? `?limit=${limit}` : ''));
+async function openSession(page, request) {
+  const response = await request.post('/test/session');
   await page.goto((await response.json()).path);
   await expect(page.locator('#submit')).toBeVisible();
 }
@@ -302,154 +295,6 @@ test('oversized MOV conversion falls back to size-targeted encoding', async ({ p
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeGreaterThan(100);
   expect(await page.evaluate(() => window.sentSize)).toBeLessThanOrEqual(1_078_000);
 });
-
-for (const limit of [1_100_000, 2_200_000]) {
-  test(`MKV size targeting uses the dynamic ${limit}-byte limit and retains full audio/video`, async ({ page, request }) => {
-    await page.addInitScript(() => {
-      const send = XMLHttpRequest.prototype.send;
-      XMLHttpRequest.prototype.send = function(body) {
-        if (body instanceof FormData && body.has('clips')) {
-          window.preparedOutput = body.get('clips');
-          window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
-        }
-        return send.call(this, body);
-      };
-    });
-    await openSession(page, request, limit);
-    await deliver(page, join(fixtures, 'large-audio.mkv'));
-    const bytes = Buffer.from(await page.evaluate(async () =>
-      Array.from(new Uint8Array(await window.preparedOutput.arrayBuffer()))));
-    const target = Math.floor(limit * .98);
-    expect(bytes.length).toBeLessThanOrEqual(target);
-    expect(bytes.length).toBeGreaterThan(target * .90);
-    await test.info().attach('size-target', {contentType:'application/json',
-      body:JSON.stringify({limit, target, output:bytes.length, utilization:bytes.length / target})});
-    expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('mkv');
-    const metadata = JSON.parse(execFileSync('ffprobe', [
-      '-v', 'error', '-count_frames', '-show_streams', '-show_format', '-of', 'json', '-i', 'pipe:0',
-    ], {input: bytes}));
-    expect(Number(metadata.format.duration)).toBeGreaterThanOrEqual(5.9);
-    expect(Number(metadata.format.duration)).toBeLessThan(6.2);
-    expect(metadata.streams.find(stream => stream.codec_type === 'video').codec_name).toBe('h264');
-    expect(metadata.streams.find(stream => stream.codec_type === 'audio').codec_name).toBe('aac');
-    execFileSync('ffmpeg', ['-v', 'error', '-xerror', '-i', 'pipe:0', '-f', 'null', '-'], {input: bytes});
-  });
-}
-
-test('an oversized second pass is corrected without losing the analysis statistics', async ({ page, request }) => {
-  await page.addInitScript(() => {
-    const post = Worker.prototype.postMessage;
-    window.outputPasses = 0;
-    Worker.prototype.postMessage = function(message, ...rest) {
-      const args = message?.data?.args || [];
-      if (message?.type === 'EXEC' && args.includes('-pass') &&
-          args[args.indexOf('-pass') + 1] === '2') window.outputPasses++;
-      if (!window.inflatedOutput && message?.type === 'READ_FILE' &&
-          message.data.path === 'output-1.mp4') {
-        const receive = this.onmessage;
-        this.onmessage = event => {
-          if (event.data.id === message.id && event.data.type === 'READ_FILE') {
-            window.inflatedOutput = true;
-            this.onmessage = receive;
-            const bytes = new Uint8Array(1_200_000);
-            bytes.set(event.data.data.subarray(0, bytes.length));
-            return receive.call(this, {data:{...event.data, data:bytes}});
-          }
-          receive.call(this, event);
-        };
-      }
-      return post.call(this, message, ...rest);
-    };
-    const send = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) window.sentSize = body.get('clips').size;
-      return send.call(this, body);
-    };
-  });
-  await openSession(page, request);
-  await deliver(page, join(fixtures, 'large.mp4'));
-  expect(await page.evaluate(() => window.inflatedOutput)).toBe(true);
-  expect(await page.evaluate(() => window.outputPasses)).toBe(2);
-  expect(await page.evaluate(() => window.sentSize)).toBeLessThanOrEqual(1_078_000);
-});
-
-test('a result that remains oversized is never uploaded', async ({ page, request }) => {
-  await page.addInitScript(() => {
-    const post = Worker.prototype.postMessage;
-    Worker.prototype.postMessage = function(message, ...rest) {
-      if (message?.type === 'READ_FILE' && message.data.path === 'output-1.mp4') {
-        queueMicrotask(() => this.onmessage({data:{
-          id:message.id, type:'READ_FILE', data:new Uint8Array(1_200_000),
-        }}));
-        return;
-      }
-      return post.call(this, message, ...rest);
-    };
-  });
-  let uploads = 0;
-  page.on('request', req => {
-    if (req.method() === 'POST' && /\/upload\/[^/]+$/.test(new URL(req.url()).pathname)) uploads++;
-  });
-  await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
-  await page.locator('#submit').click();
-  await expect(page.locator('#message')).toContainText("could not be reduced below Discord's limit", {timeout:60000});
-  expect(uploads).toBe(0);
-});
-
-test('sequential MP4 and MKV encoding keeps each result under its own ceiling', async ({ page, request }) => {
-  await page.addInitScript(() => {
-    const send = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.sentSizes = body.getAll('clips').map(file => file.size);
-        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
-      }
-      return send.call(this, body);
-    };
-  });
-  await openSession(page, request);
-  await deliver(page, [join(fixtures, 'large.mp4'), join(fixtures, 'large-audio.mkv')]);
-  const sizes = await page.evaluate(() => window.sentSizes);
-  expect(sizes).toHaveLength(2);
-  for (const size of sizes) {
-    expect(size).toBeLessThanOrEqual(1_078_000);
-    expect(size).toBeGreaterThan(1_078_000 * .90);
-  }
-  expect(await page.evaluate(() => window.sentDiagnostics.map(item => item.input_format))).toEqual(['mp4','mkv']);
-});
-
-for (const pass of ['1', '2']) {
-  test(`cancelling encoding pass ${pass} prevents upload and allows another selection`, async ({ page, request }) => {
-    await page.addInitScript(pass => {
-      const send = Worker.prototype.postMessage;
-      Worker.prototype.postMessage = function(message, ...rest) {
-        const args = message?.data?.args || [];
-        if (message?.type === 'EXEC' && args.includes('-pass') &&
-            args[args.indexOf('-pass') + 1] === pass) {
-          window.heldPass = pass;
-          return;
-        }
-        return send.call(this, message, ...rest);
-      };
-    }, pass);
-    let uploads = 0;
-    page.on('request', req => {
-      if (req.method() === 'POST' && /\/upload\/[^/]+$/.test(new URL(req.url()).pathname)) uploads++;
-    });
-    await openSession(page, request);
-    await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
-    await page.locator('#submit').click();
-    await expect.poll(() => page.evaluate(() => window.heldPass), {timeout:30000}).toBe(pass);
-    await expect(page.locator('#run-detail')).toContainText(pass === '1' ? 'Analyzing video' : 'Compressing');
-    await page.locator('#cancel').click();
-    await expect(page.locator('#message')).toContainText('Cancelled');
-    await expect(page.locator('#submit')).toBeEnabled();
-    expect(uploads).toBe(0);
-    await page.getByRole('button', {name:'Clear selected videos'}).click();
-    await deliver(page, join(fixtures, 'small.mp4'));
-  });
-}
 
 test('portrait variable-frame-rate video retains playable video and audio', async ({ page, request }) => {
   await page.addInitScript(() => {

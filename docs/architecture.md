@@ -47,27 +47,6 @@ flowchart LR
 6. A bounded worker queue sends every result in one Discord message and then
    releases the in-memory bytes.
 
-## Output size targeting
-
-Fitting MP4s are sent unchanged. Other containers first try an MP4 stream copy
-or quality-based conversion; a result that fits the delivery allowance is kept.
-When size reduction is required, the browser uses two-pass H.264 encoding: an
-analysis pass learns the whole clip's complexity, then an output pass allocates
-bits across its frames. Both passes use identical frame timing and filters so
-audio start offsets cannot introduce a different frame count in the MP4 pass.
-
-The per-file ceiling is 98% of the session's Discord limit, capped further by
-the relay's batch allowance divided by the number of selected files. The bitrate
-budget reserves 1% of that ceiling for MP4 overhead and 96 kbps for audio only
-when an audio stream exists. There is no peak bitrate cap equal to the average
-bitrate, which previously caused substantial undershooting on some clips.
-
-The actual output size is always checked. An oversized result gets one adjusted
-output pass using the same analysis statistics, and is rejected if it still
-exceeds the ceiling. Simple content can remain smaller; bytes are never padded
-to fill the allowance. Two-pass encoding adds processing time. Its statistics
-stay in the browser's virtual filesystem and are cleaned up with the media files.
-
 ## Operational model
 
 The current deployment is intentionally single-process and uses in-memory
