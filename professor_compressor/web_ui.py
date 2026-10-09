@@ -128,7 +128,9 @@ const DISCORD_LIMIT_BYTES = __DISCORD_LIMIT_BYTES__;
 const MAX_BATCH_BYTES = __MAX_BATCH_BYTES__;
 const SESSION_SECRET = __SESSION_SECRET__;
 const SESSION_EXPIRES_SECONDS = __EXPIRES_SECONDS__;
-const OUTPUT_TARGET_RATIO = 0.97;
+// The server already leaves 2% below Discord's limit. Reserve another 1% of
+// that ceiling for MP4 overhead while budgeting the audio and video streams.
+const OUTPUT_TARGET_RATIO = 0.99;
 const SINGLE_CORE_BASE = "__ASSET_PREFIX__/core-esm";
 const MULTI_CORE_BASE = "__ASSET_PREFIX__/core-mt-esm";
 
@@ -166,6 +168,7 @@ let encoderMode = "single-threaded";
 let selectedFiles = [];
 let currentState = null;
 let currentAttempt = 1;
+let encodingPhase = { label: "Compressing", start: 0, span: 1 };
 let lastFfmpegMessage = "";
 let startedAt = 0;
 let timer = null;
@@ -567,6 +570,13 @@ dropZone.addEventListener("drop", (event) => {
   addSelectedFiles(files);
 });
 
+function beginEncodingPhase(label, start, span) {
+  currentAttempt++;
+  encodingPhase = { label, start, span };
+  updateFile(currentState, label, start * 100);
+  setRunDetail("Video " + currentState.index + "/" + selectedFiles.length + " · " + label);
+}
+
 function createEncoder() {
   const encoder = new FFmpeg();
   encoder.on("log", ({ message: line }) => {
@@ -575,21 +585,22 @@ function createEncoder() {
   let lastProgressState = null;
   let lastProgressAttempt = 0;
   let lastProgressPercent = -1;
-  encoder.on("progress", ({ progress: fraction }) => {
+  encoder.on("progress", ({ progress }) => {
     if (!currentState || cancelled) return;
+    const fraction = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
     const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
     if (currentState === lastProgressState && currentAttempt === lastProgressAttempt &&
         percent === lastProgressPercent) return;
     lastProgressState = currentState;
     lastProgressAttempt = currentAttempt;
     lastProgressPercent = percent;
-    const adjustment = currentAttempt > 1 ? "Adjusting size" : "Compressing";
-    updateFile(currentState, adjustment + " " + percent + "%", percent);
+    const fileFraction = encodingPhase.start + fraction * encodingPhase.span;
+    updateFile(currentState, encodingPhase.label + " " + percent + "%", fileFraction * 100);
     const completed = selectedFiles.filter((state) => state.finalSize > 0).length;
-    const overall = ((completed + fraction) / selectedFiles.length) * 80;
+    const overall = ((completed + fileFraction) / selectedFiles.length) * 80;
     overallProgress.value = Math.max(0, Math.min(80, overall));
-    setRunDetail("Video " + currentState.index + " of " +
-      selectedFiles.length + " · " + percent + "%");
+    setRunDetail("Video " + currentState.index + "/" + selectedFiles.length +
+      " · " + encodingPhase.label + " " + percent + "%");
   });
   return encoder;
 }
@@ -726,6 +737,7 @@ async function compressOne(state) {
   const inputName = "input-" + state.index + ".video";
   const outputName = "output-" + state.index + ".mp4";
   const probeName = "probe-" + state.index + ".json";
+  const passPrefix = "pass-" + state.index;
   try {
     await ffmpeg.writeFile(inputName, await fetchFile(file));
     updateFile(state, "Reading video metadata", 0);
@@ -752,7 +764,7 @@ async function compressOne(state) {
       .map(Number).find((value) => Number.isFinite(value) && value > 0);
     if (!duration) throw new Error(
       "Could not determine the duration of " + file.name + ". Re-export the clip with a finite duration.");
-    const audioKbps = 96;
+    const audioKbps = audioStream ? 96 : 0;
     const scale = "fps=fps='min(source_fps,30)'," +
       "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease," +
       "scale=trunc(iw/2)*2:trunc(ih/2)*2";
@@ -762,7 +774,7 @@ async function compressOne(state) {
       let remuxTooLarge = false;
       if (videoStream.codec_name === "h264" &&
           (!audioStream || audioStream.codec_name === "aac")) {
-        currentAttempt = 1;
+        beginEncodingPhase("Preparing MP4", 0, 0.1);
         lastFfmpegMessage = "";
         updateFile(state, "Preparing MP4 without re-encoding", 0);
         const remuxExit = await ffmpeg.exec([
@@ -785,7 +797,7 @@ async function compressOne(state) {
         await removeVirtualFile(outputName);
       }
       if (!remuxTooLarge) {
-        currentAttempt = 1;
+        beginEncodingPhase("Converting to MP4", 0, 0.1);
         lastFfmpegMessage = "";
         updateFile(state, "Converting to MP4", 0);
         const conversionExit = await ffmpeg.exec([
@@ -808,7 +820,7 @@ async function compressOne(state) {
         }
         await removeVirtualFile(outputName);
       }
-      updateFile(state, "Converted MP4 is too large; adjusting size", 0);
+      updateFile(state, "Converted MP4 is too large; adjusting size", 10);
     }
     const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
     let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
@@ -816,17 +828,36 @@ async function compressOne(state) {
       throw new Error(file.name + " is too long to fit at a usable quality. " +
         "Trim the video into shorter clips and try again.");
     }
+    const videoOptions = [
+      "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
+      "-preset", "veryfast", "-vf", scale, "-pix_fmt", "yuv420p",
+      // The fps filter already selects frames. Keep the null and MP4 muxers
+      // from duplicating different frames around an audio/video start offset.
+      "-fps_mode", "passthrough"
+    ];
+    // Learn the complexity of the whole clip before allocating its byte budget.
+    // A maxrate equal to the average bitrate unnecessarily starves busy scenes
+    // and can leave much of the file-size allowance unused.
+    beginEncodingPhase("Analyzing video", 0.1, 0.3);
+    lastFfmpegMessage = "";
+    const analysisExit = await ffmpeg.exec([
+      "-i", inputName, "-map", "0:v:0", ...videoOptions,
+      "-b:v", videoKbps + "k", "-pass", "1", "-passlogfile", passPrefix,
+      "-an", "-f", "null", "/dev/null"
+    ]);
+    if (cancelled) throw new DOMException("Cancelled", "AbortError");
+    if (analysisExit !== 0) throw new Error("The encoder could not analyze " + file.name +
+      ". The video may use an unsupported or damaged codec.");
     async function encode(bitrate) {
       lastFfmpegMessage = "";
       return ffmpeg.exec([
         "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
-        "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
-        "-preset", "veryfast", "-b:v", bitrate + "k", "-maxrate", bitrate + "k",
-        "-bufsize", (bitrate * 2) + "k", "-vf", scale, "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", audioKbps + "k", "-movflags", "+faststart", outputName
+        ...videoOptions, "-b:v", bitrate + "k", "-pass", "2", "-passlogfile", passPrefix,
+        ...(audioStream ? ["-c:a", "aac", "-b:a", audioKbps + "k"] : ["-an"]),
+        "-movflags", "+faststart", outputName
       ]);
     }
-    currentAttempt = 1;
+    beginEncodingPhase("Compressing", 0.4, 0.58);
     let exitCode = await encode(videoKbps);
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
     if (exitCode !== 0) throw new Error("The encoder could not read " + file.name +
@@ -838,8 +869,7 @@ async function compressOne(state) {
         videoKbps * correction * OUTPUT_TARGET_RATIO
       ));
       await removeVirtualFile(outputName);
-      currentAttempt = 2;
-      updateFile(state, "Adjusting final size", 0);
+      beginEncodingPhase("Adjusting final size", 0.98, 0.01);
       exitCode = await encode(videoKbps);
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
       if (exitCode !== 0) throw new Error("The final size adjustment failed for " +
@@ -860,6 +890,9 @@ async function compressOne(state) {
     await removeVirtualFile(inputName);
     await removeVirtualFile(outputName);
     await removeVirtualFile(probeName);
+    for (const suffix of ["-0.log", "-0.log.mbtree", "-0.log.temp", "-0.log.mbtree.temp"]) {
+      await removeVirtualFile(passPrefix + suffix);
+    }
   }
 }
 

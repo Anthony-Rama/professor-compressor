@@ -92,7 +92,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("void reportBrowserFailure(runStage)", self.page)
 
     def test_targets_most_of_discords_safe_upload_size(self) -> None:
-        self.assertIn("const OUTPUT_TARGET_RATIO = 0.97;", self.page)
+        self.assertIn("const OUTPUT_TARGET_RATIO = 0.99;", self.page)
         self.assertIn(
             "effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO",
             self.page,
