@@ -49,24 +49,40 @@ flowchart LR
 
 ## Output size targeting
 
-Fitting MP4s are sent unchanged. Other containers first try an MP4 stream copy
-or quality-based conversion; a result that fits the delivery allowance is kept.
-When size reduction is required, the browser uses two-pass H.264 encoding: an
-analysis pass learns the whole clip's complexity, then an output pass allocates
+Fitting MP4s are sent unchanged. Other containers first try a compatible MP4
+stream copy. Re-encoding uses one or two two-second CRF-18 samples per candidate
+profile to estimate video complexity. Profiles preserve source dimensions and
+frame rate where practical, with a browser encoding ceiling of 1080p/60 and no
+upscaling. Resolution is preferred over additional frame rate. A 720p/30-or-lower
+baseline gets priority when its budget exceeds 0.025 bits/pixel/frame; this is a
+heuristic to avoid excessive downscaling, not a guarantee of visual quality.
+
+If the sample estimate is comfortably below budget, a full CRF-18 encode is
+attempted; it is retained only if the actual result fits the encoded-file ceiling.
+Otherwise the browser uses two-pass H.264 encoding: an analysis pass learns the
+whole clip's complexity, then an output pass allocates
 bits across its frames. Both passes use identical frame timing and filters so
 audio start offsets cannot introduce a different frame count in the MP4 pass.
 
 The per-file ceiling is 98% of the session's Discord limit, capped further by
 the relay's batch allowance divided by the number of selected files. The bitrate
 budget reserves 1% of that ceiling for MP4 overhead and 96 kbps for audio only
-when an audio stream exists. There is no peak bitrate cap equal to the average
+when an audio stream exists (64 or 32 kbps for tightly constrained clips).
+Resolution and frame rate may fall below 720p/30 when required; sources below
+that baseline are not upscaled. There is no peak bitrate cap equal to the average
 bitrate, which previously caused substantial undershooting on some clips.
 
-The actual output size is always checked. An oversized result gets one adjusted
-output pass using the same analysis statistics, and is rejected if it still
-exceeds the ceiling. Simple content can remain smaller; bytes are never padded
+The actual output size is always checked. An oversized result gets up to two
+adjusted output passes using the same analysis statistics, and is rejected if it
+still exceeds the ceiling. Simple content can remain smaller; bytes are never padded
 to fill the allowance. Two-pass encoding adds processing time. Its statistics
-stay in the browser's virtual filesystem and are cleaned up with the media files.
+stay in the browser's virtual filesystem and are cleaned up with preview/media
+files. An encoder failure gets one automatic retry capped at 720p/30 to reduce
+resource pressure. Higher-resolution sources are decoded and scaled; fitting
+originals and stream-copy remuxes do not have this encoding ceiling. 4K encoding
+is excluded from this initial policy after browser encoding failures in testing.
+Extremely long files can still exceed the feasible bitrate budget and fail clearly
+without sending an oversized file or requesting trimming.
 
 ## Operational model
 

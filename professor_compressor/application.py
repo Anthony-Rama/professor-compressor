@@ -267,7 +267,7 @@ def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
                     video_kbps is not None
                     and (
                         type(video_kbps) is not int
-                        or not 100 <= video_kbps <= 1_000_000_000
+                        or not 16 <= video_kbps <= 1_000_000_000
                     )
                 )
             ):

@@ -595,12 +595,13 @@ function createEncoder() {
     lastProgressAttempt = currentAttempt;
     lastProgressPercent = percent;
     const fileFraction = encodingPhase.start + fraction * encodingPhase.span;
-    updateFile(currentState, encodingPhase.label + " " + percent + "%", fileFraction * 100);
+    const phaseStatus = encodingPhase.label + (encodingPhase.span ? " " + percent + "%" : "");
+    updateFile(currentState, phaseStatus, fileFraction * 100);
     const completed = selectedFiles.filter((state) => state.finalSize > 0).length;
     const overall = ((completed + fileFraction) / selectedFiles.length) * 80;
     overallProgress.value = Math.max(0, Math.min(80, overall));
     setRunDetail("Video " + currentState.index + "/" + selectedFiles.length +
-      " · " + encodingPhase.label + " " + percent + "%");
+      " · " + phaseStatus);
   });
   return encoder;
 }
@@ -721,7 +722,40 @@ async function removeVirtualFile(name) {
   try { await ffmpeg.deleteFile(name); } catch (_) { /* Optional file. */ }
 }
 
-async function compressOne(state) {
+function qualityProfiles(stream, conservative = false) {
+  const width = Number(stream.width), height = Number(stream.height);
+  if (!(width > 0 && height > 0)) throw new Error("Could not determine video dimensions.");
+  const rate = String(stream.avg_frame_rate || stream.r_frame_rate || "30").split("/").map(Number);
+  const measuredFps = rate.length === 2 ? rate[0] / rate[1] : rate[0];
+  const sourceFps = Number.isFinite(measuredFps) && measuredFps > 0 ? measuredFps : 30;
+  const profiles = [], seen = new Set();
+  // Preserve detail before trading it for frame rate. The limits bound browser
+  // encoder memory/CPU; fitting originals and stream-copy remuxes bypass these.
+  for (const [long, short] of [[1920,1080],[1280,720],[960,540],[854,480],[640,360],[426,240]]) {
+    if (conservative && short > 720) continue;
+    // Preserve 30fps motion below 720p; 15fps is a last-resort 240p fallback.
+    const frameRates = short >= 720 ? (conservative ? [30] : [60,30]) : short === 240 ? [30,15] : [30];
+    for (const ceiling of frameRates) {
+      const ratio = Math.min(1, long / Math.max(width,height), short / Math.min(width,height));
+      const w = Math.max(2, Math.floor(width * ratio / 2) * 2);
+      const h = Math.max(2, Math.floor(height * ratio / 2) * 2);
+      const fps = Math.min(sourceFps, ceiling);
+      const key = [w,h,fps].join("/");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Use decoded dimensions, including automatic rotation, for portrait clips.
+      const filter = "fps=fps='min(source_fps," + ceiling + ")'," +
+        "scale=w='min(iw,if(gte(iw,ih)," + long + "," + short + "))':" +
+        "h='min(ih,if(gte(iw,ih)," + short + "," + long + "))':force_original_aspect_ratio=decrease," +
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+      profiles.push({filter, preferredBaseline: Math.min(w,h) <= 720 && fps <= 30,
+        minimumKbps: w * h * fps * .025 / 1000});
+    }
+  }
+  return profiles;
+}
+
+async function compressOne(state, conservative = false) {
   const file = state.file;
   const format = await videoSignature(file);
   const effectiveTargetBytes = outputTargetBytes();
@@ -738,11 +772,12 @@ async function compressOne(state) {
   const outputName = "output-" + state.index + ".mp4";
   const probeName = "probe-" + state.index + ".json";
   const passPrefix = "pass-" + state.index;
+  const sampleName = "sample-" + state.index + ".mp4";
   try {
     await ffmpeg.writeFile(inputName, await fetchFile(file));
     updateFile(state, "Reading video metadata", 0);
     await ffmpeg.ffprobe([
-      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,codec_name,duration",
+      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,codec_name,duration,width,height,avg_frame_rate,r_frame_rate",
       "-of", "json", inputName, "-o", probeName
     ], 30000);
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
@@ -764,14 +799,11 @@ async function compressOne(state) {
       .map(Number).find((value) => Number.isFinite(value) && value > 0);
     if (!duration) throw new Error(
       "Could not determine the duration of " + file.name + ". Re-export the clip with a finite duration.");
-    const audioKbps = audioStream ? 96 : 0;
-    const scale = "fps=fps='min(source_fps,30)'," +
-      "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease," +
-      "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+    const totalKbps = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO / duration / 1000;
+    const audioKbps = audioStream ? (totalKbps >= 400 ? 96 : totalKbps >= 160 ? 64 : 32) : 0;
     if (format !== "mp4") {
       // Compatible streams can be repackaged into MP4 without re-encoding.
-      // Otherwise make a quality-based conversion and check its actual size.
-      let remuxTooLarge = false;
+      // Otherwise choose a quality profile and check the encoded size below.
       if (videoStream.codec_name === "h264" &&
           (!audioStream || audioStream.codec_name === "aac")) {
         beginEncodingPhase("Preparing MP4", 0, 0.1);
@@ -792,53 +824,73 @@ async function compressOne(state) {
               diagnostic: { input_bytes: file.size, duration_seconds: duration,
                 video_kbps: null, copied: true, input_format: format } };
           }
-          remuxTooLarge = true;
         }
         await removeVirtualFile(outputName);
       }
-      if (!remuxTooLarge) {
-        beginEncodingPhase("Converting to MP4", 0, 0.1);
-        lastFfmpegMessage = "";
-        updateFile(state, "Converting to MP4", 0);
-        const conversionExit = await ffmpeg.exec([
-          "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
-          "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
-          "-preset", "veryfast", "-crf", "18", "-vf", scale, "-pix_fmt", "yuv420p",
-          "-c:a", "aac", "-b:a", audioKbps + "k", "-movflags", "+faststart", outputName
+    }
+    let videoKbps = Math.floor(totalKbps - audioKbps);
+    if (videoKbps < 16) {
+      throw new Error(file.name + " is too long for this upload limit, even at the lowest automatic quality.");
+    }
+    const profiles = qualityProfiles(videoStream, conservative);
+    let profile = profiles[profiles.length - 1], estimatedKbps = Infinity;
+    // Identical passthrough timing prevents null/MP4 muxers from selecting
+    // different frame counts for the two passes around an audio start offset.
+    const codecOptions = ["-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
+      "-preset", "veryfast", "-pix_fmt", "yuv420p", "-fps_mode", "passthrough"];
+    // Bounded previews estimate complexity, not a guarantee about every scene.
+    // Always validate the full output; previews never replace the original input.
+    const sampleDuration = Math.min(2, duration);
+    const starts = duration > 8 ? [duration * .15, duration * .65] : [0];
+    for (let index = 0; index < profiles.length; index++) {
+      profile = profiles[index];
+      let sampleBytes = 0;
+      beginEncodingPhase("Checking video quality", .1, 0);
+      for (const start of starts) {
+        if (cancelled) throw new DOMException("Cancelled", "AbortError");
+        const code = await ffmpeg.exec([
+          "-ss", String(start), "-i", inputName, "-t", String(sampleDuration),
+          "-map", "0:v:0", ...codecOptions, "-vf", profile.filter,
+          "-crf", "18", "-an", sampleName
         ]);
         if (cancelled) throw new DOMException("Cancelled", "AbortError");
-        if (conversionExit !== 0) throw new Error("The encoder could not read " + file.name +
+        if (code !== 0) throw new Error("The encoder could not inspect video quality for " + file.name +
           ". The video may use an unsupported or damaged codec.");
-        const converted = await ffmpeg.readFile(outputName);
-        if (converted.byteLength <= unchangedLimitBytes()) {
-          const blob = new Blob([converted], { type: "video/mp4" });
-          updateFile(state, "Converted to MP4", 100);
-          updateFileSizes(state, blob.size);
-          return { blob, name: safeStem(file.name, state.index) + "-converted.mp4", state,
-            diagnostic: { input_bytes: file.size, duration_seconds: duration,
-              video_kbps: null, copied: false, input_format: format } };
-        }
-        await removeVirtualFile(outputName);
+        sampleBytes += (await ffmpeg.readFile(sampleName)).byteLength;
+        await removeVirtualFile(sampleName);
       }
-      updateFile(state, "Converted MP4 is too large; adjusting size", 10);
+      estimatedKbps = sampleBytes * 8 / (starts.length * sampleDuration) / 1000;
+      // CRF-18 previews are deliberately demanding. Do not let that alone
+      // collapse a usable 720p/30 clip to thumbnail resolution. This conservative
+      // bits/pixel/frame floor is a baseline preference, not a quality guarantee.
+      if (estimatedKbps <= videoKbps * 1.25 ||
+          (profile.preferredBaseline && videoKbps >= profile.minimumKbps)) break;
     }
-    const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
-    let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
-    if (videoKbps < 100) {
-      throw new Error(file.name + " is too long to fit at a usable quality. " +
-        "Trim the video into shorter clips and try again.");
+    const videoOptions = [...codecOptions, "-vf", profile.filter];
+    if (estimatedKbps <= videoKbps * .9) {
+      beginEncodingPhase("Preparing high-quality video", .1, .25);
+      const code = await ffmpeg.exec([
+        "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?", ...videoOptions, "-crf", "18",
+        ...(audioStream ? ["-c:a", "aac", "-b:a", audioKbps + "k"] : ["-an"]),
+        "-movflags", "+faststart", outputName
+      ]);
+      if (cancelled) throw new DOMException("Cancelled", "AbortError");
+      if (code !== 0) throw new Error("The encoder could not read " + file.name + ".");
+      const output = await ffmpeg.readFile(outputName);
+      if (output.byteLength <= effectiveTargetBytes) {
+        const blob = new Blob([output], {type: "video/mp4"});
+        updateFile(state, "Ready", 100);
+        updateFileSizes(state, blob.size);
+        return {blob, name: safeStem(file.name, state.index) + "-compressed.mp4", state,
+          diagnostic: {input_bytes: file.size, duration_seconds: duration,
+            video_kbps: null, copied: false, input_format: format}};
+      }
+      await removeVirtualFile(outputName);
     }
-    const videoOptions = [
-      "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
-      "-preset", "veryfast", "-vf", scale, "-pix_fmt", "yuv420p",
-      // The fps filter already selects frames. Keep the null and MP4 muxers
-      // from duplicating different frames around an audio/video start offset.
-      "-fps_mode", "passthrough"
-    ];
     // Learn the complexity of the whole clip before allocating its byte budget.
     // A maxrate equal to the average bitrate unnecessarily starves busy scenes
     // and can leave much of the file-size allowance unused.
-    beginEncodingPhase("Analyzing video", 0.1, 0.3);
+    beginEncodingPhase("Analyzing video", 0.35, 0.15);
     lastFfmpegMessage = "";
     const analysisExit = await ffmpeg.exec([
       "-i", inputName, "-map", "0:v:0", ...videoOptions,
@@ -857,19 +909,21 @@ async function compressOne(state) {
         "-movflags", "+faststart", outputName
       ]);
     }
-    beginEncodingPhase("Compressing", 0.4, 0.58);
+    beginEncodingPhase("Compressing", 0.5, 0.48);
     let exitCode = await encode(videoKbps);
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
     if (exitCode !== 0) throw new Error("The encoder could not read " + file.name +
       ". The video may use an unsupported or damaged codec.");
     let output = await ffmpeg.readFile(outputName);
-    if (output.byteLength > effectiveTargetBytes) {
+    for (let correctionAttempt = 0;
+         output.byteLength > effectiveTargetBytes && correctionAttempt < 2;
+         correctionAttempt++) {
       const correction = effectiveTargetBytes / output.byteLength;
-      videoKbps = Math.max(100, Math.floor(
-        videoKbps * correction * OUTPUT_TARGET_RATIO
+      videoKbps = Math.max(16, Math.floor(
+        videoKbps * correction * .97
       ));
       await removeVirtualFile(outputName);
-      beginEncodingPhase("Adjusting final size", 0.98, 0.01);
+      beginEncodingPhase("Adjusting final size", .98 + correctionAttempt * .01, .005);
       exitCode = await encode(videoKbps);
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
       if (exitCode !== 0) throw new Error("The final size adjustment failed for " +
@@ -878,7 +932,7 @@ async function compressOne(state) {
     }
     if (output.byteLength > effectiveTargetBytes) {
       throw new Error(file.name + " could not be reduced below Discord's limit. " +
-        "Trim it into a shorter clip and try again.");
+        "No oversized file was sent. Try this video in a new session or contact support.");
     }
     const blob = new Blob([output], { type: "video/mp4" });
     updateFile(state, "Compressed", 100);
@@ -890,6 +944,7 @@ async function compressOne(state) {
     await removeVirtualFile(inputName);
     await removeVirtualFile(outputName);
     await removeVirtualFile(probeName);
+    await removeVirtualFile(sampleName);
     for (const suffix of ["-0.log", "-0.log.mbtree", "-0.log.temp", "-0.log.mbtree.temp"]) {
       await removeVirtualFile(passPrefix + suffix);
     }
@@ -901,7 +956,9 @@ async function compressWithRetry(state) {
     try {
       currentState = state;
       updateFile(state, attempt === 1 ? "Starting" : "Retrying automatically", 0);
-      return await compressOne(state);
+      // After an encoder failure, bound the retry to 720p/30 (or lower) so a
+      // high-resolution attempt cannot repeatedly exhaust a small device.
+      return await compressOne(state, attempt > 1);
     } catch (error) {
       if (cancelled || error.name === "AbortError") throw error;
       console.error("Compression attempt failed", error, lastFfmpegMessage);

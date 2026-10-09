@@ -164,7 +164,7 @@ def compression_outcome_alert(
                 )
                 if diagnostic.video_kbps is None:
                     lines.append(
-                        "Encoding: `quality-based MP4 conversion (no size target)`"
+                        "Encoding: `quality-based MP4 encoding (size checked)`"
                     )
                 else:
                     lines.append(
