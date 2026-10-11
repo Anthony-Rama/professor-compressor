@@ -1104,7 +1104,10 @@ async def receive_results(request: web.Request) -> web.Response:
                     raise ValueError("The message field was repeated or out of order.")
                 caption_received = True
                 caption_data = bytearray()
-                while chunk := await field.read_chunk(1024):
+                while chunk := await asyncio.wait_for(
+                    field.read_chunk(1024),
+                    timeout=max(0, min(30, upload_deadline - time.monotonic())),
+                ):
                     caption_data.extend(chunk)
                     if len(caption_data) > 4000:
                         break
@@ -1124,7 +1127,10 @@ async def receive_results(request: web.Request) -> web.Response:
                     )
                 diagnostics_received = True
                 raw_diagnostics = bytearray()
-                while chunk := await field.read_chunk(1024):
+                while chunk := await asyncio.wait_for(
+                    field.read_chunk(1024),
+                    timeout=max(0, min(30, upload_deadline - time.monotonic())),
+                ):
                     raw_diagnostics.extend(chunk)
                     if len(raw_diagnostics) > 4096:
                         raise ValueError("The diagnostics field is too long.")

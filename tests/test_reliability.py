@@ -68,6 +68,75 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             "/upload/audit", data=data, headers={"X-Upload-Session": "private"}
         )
 
+    async def test_stalled_metadata_obeys_deadline_and_releases_upload_slot(self):
+        for name in ("caption", "diagnostics"):
+            with self.subTest(field=name):
+                job = self.job()
+                cancelled = asyncio.Event()
+
+                async def stall(*args, cancelled=cancelled):
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        cancelled.set()
+
+                field = Mock()
+                field.name = name
+                field.read_chunk = AsyncMock(side_effect=stall)
+                reader = Mock(next=AsyncMock(return_value=field))
+                request = Mock(
+                    content_type="multipart/form-data",
+                    multipart=AsyncMock(return_value=reader),
+                )
+                # Start at t=0; metadata begins just before the total deadline.
+                # Replace the app's time reference, not asyncio's real clock.
+                clock = Mock(monotonic=Mock(side_effect=[0, 0, 299.99]))
+                with (
+                    patch.object(app, "session_access", return_value=(job, None)),
+                    patch.object(app, "rate_limit_retry_after", return_value=None),
+                    patch.object(app, "schedule_owner_alert"),
+                    patch.object(app, "time", clock),
+                ):
+                    response = await asyncio.wait_for(app.receive_results(request), 1)
+                self.assertEqual(response.status, 408)
+                self.assertIn("upload_timeout", response.text)
+                self.assertTrue(cancelled.is_set())
+                self.assertEqual(app.active_relay_uploads, 0)
+                self.assertEqual(app.delivery_bytes_held, 0)
+                self.assertTrue(app.delivery_queue.empty())
+                self.assertIs(job.state, JobState.CLAIMED)
+
+    async def test_stalled_metadata_read_has_thirty_second_idle_timeout(self):
+        job = self.job()
+        field = Mock()
+        field.name = "caption"
+        field.read_chunk = AsyncMock(return_value=b"")
+        reader = Mock(next=AsyncMock(return_value=field))
+        request = Mock(
+            content_type="multipart/form-data",
+            multipart=AsyncMock(return_value=reader),
+        )
+        actual_wait_for = asyncio.wait_for
+        timeouts = []
+
+        async def wait_for(awaitable, timeout):
+            timeouts.append(timeout)
+            if len(timeouts) == 2:
+                awaitable.close()
+                raise TimeoutError
+            return await actual_wait_for(awaitable, timeout)
+
+        with (
+            patch.object(app, "session_access", return_value=(job, None)),
+            patch.object(app, "rate_limit_retry_after", return_value=None),
+            patch.object(app, "schedule_owner_alert"),
+            patch.object(app.asyncio, "wait_for", side_effect=wait_for),
+        ):
+            response = await app.receive_results(request)
+        self.assertEqual(timeouts, [30, 30])
+        self.assertEqual(response.status, 408)
+        self.assertEqual(app.active_relay_uploads, 0)
+
     async def test_head_does_not_claim_or_extend_link(self):
         job = self.job(JobState.OPEN)
         expiry = job.expires_at
