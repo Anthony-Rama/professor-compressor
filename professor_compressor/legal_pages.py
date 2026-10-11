@@ -2,7 +2,7 @@
 
 from html import escape
 
-EFFECTIVE_DATE = "September 28, 2026"
+EFFECTIVE_DATE = "October 11, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
@@ -136,6 +136,10 @@ def privacy_policy_html() -> str:
       providers may process network traffic as necessary to host and secure the
       Service. Professor Compressor does not sell personal information or use it
       for targeted advertising.</p>
+    <p>When configured, bot-directory integrations send the aggregate number of
+      connected Discord servers to Top.gg and dsc.sh for public listing statistics.
+      These updates do not include server names or identifiers, user information,
+      captions, filenames, or video files.</p>
 
     <h2>6. Retention</h2>
     <p>Unused links expire after a short period, active compressor sessions expire

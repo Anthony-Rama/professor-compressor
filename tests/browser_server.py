@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["PYTHON_DOTENV_DISABLED"] = "1"
 os.environ["ALERT_WEBHOOK_URL"] = ""
 os.environ["DSC_API_TOKEN"] = ""
+os.environ["TOPGG_API_TOKEN"] = ""
 
 from aiohttp import web
 

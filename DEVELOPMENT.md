@@ -67,6 +67,26 @@ limits; do not increase it just to accept larger files.
 
 ## Readiness and releases
 
+### Optional Top.gg server-count integration
+
+Set `TOPGG_API_TOKEN` in the private deployment `.env` to a **v1 project token**
+from the bot's Top.gg dashboard → Integrations & API. Do not use a legacy v0
+token, an OAuth token for another project, or your Discord bot token. Never
+paste the token into chat, commit it, or put it in browser JavaScript.
+
+The worker uses the [v1 metrics endpoint](https://docs.top.gg/api/v1/projects)
+and sends only `server_count`, not server IDs, member counts, or user data.
+It posts after Discord becomes ready and every hour by default. Guild joins
+and removals trigger a coalesced update with at least 60 seconds between
+successful attempts. `TOPGG_STATS_INTERVAL_MINUTES` can change the periodic
+interval (minimum 30 minutes). Disconnections pause updates until ready again.
+HTTP errors/timeouts retry no sooner than an hour; 429 responses also respect
+`Retry-After`. This background task cannot block compression or delivery.
+
+An absent token disables the integration without affecting the bot. After
+deployment, verify a `Published Top.gg server count` log and the listing's
+count. A mock API test cannot establish that a real token is accepted.
+
 - `/healthz` is HTTP liveness and aggregate load; it also includes `revision`.
 - `/readyz` returns 200 only when Discord is connected, commands are synced,
   every configured delivery worker is alive, and the process is not draining.

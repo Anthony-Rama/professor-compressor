@@ -13,6 +13,8 @@ class SettingsTests(unittest.TestCase):
             "PUBLIC_BASE_URL": "https://compressor.example.com/",
             "ALLOWED_GUILD_IDS": "123, 456",
             "MAX_RESULT_TOTAL_MIB": "50",
+            "TOPGG_API_TOKEN": " topgg-secret ",
+            "TOPGG_STATS_INTERVAL_MINUTES": "1",
         }
         with (
             patch.dict(os.environ, environment, clear=True),
@@ -24,6 +26,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.public_base_url, "https://compressor.example.com")
         self.assertEqual(settings.allowed_guild_ids, frozenset({123, 456}))
         self.assertEqual(settings.max_result_total_bytes, 50 * MIB)
+        self.assertEqual(settings.topgg_api_token, "topgg-secret")
+        self.assertEqual(settings.topgg_stats_interval_seconds, 1800)
 
     def test_requires_token_at_runtime(self) -> None:
         with (
@@ -50,6 +54,7 @@ class SettingsTests(unittest.TestCase):
             discord_token="discord-secret",
             alert_webhook_url="webhook-secret",
             dsc_api_token="dsc-secret",
+            topgg_api_token="topgg-secret",
         )
 
         rendered = repr(settings)
@@ -57,6 +62,19 @@ class SettingsTests(unittest.TestCase):
         self.assertNotIn("discord-secret", rendered)
         self.assertNotIn("webhook-secret", rendered)
         self.assertNotIn("dsc-secret", rendered)
+        self.assertNotIn("topgg-secret", rendered)
+
+    def test_topgg_defaults_and_invalid_interval(self) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("professor_compressor.config.load_dotenv"),
+        ):
+            settings = Settings.from_environment(require_token=False)
+            self.assertEqual(settings.topgg_api_token, "")
+            self.assertEqual(settings.topgg_stats_interval_seconds, 3600)
+            os.environ["TOPGG_STATS_INTERVAL_MINUTES"] = "bad"
+            with self.assertRaisesRegex(RuntimeError, "TOPGG_STATS_INTERVAL"):
+                Settings.from_environment(require_token=False)
 
 
 if __name__ == "__main__":

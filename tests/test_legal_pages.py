@@ -21,6 +21,10 @@ class LegalPageTests(unittest.TestCase):
         self.assertIn("does not sell personal information", document)
         self.assertIn("command user's Discord username and user ID", document)
         self.assertIn("No feedback is sent unless you choose to", document)
+        self.assertIn("Top.gg and dsc.sh", document)
+        self.assertIn(
+            "These updates do not include server names or identifiers", document
+        )
         self.assertIn('href="/terms"', document)
 
     def test_terms_cover_content_abuse_and_service_limits(self) -> None:

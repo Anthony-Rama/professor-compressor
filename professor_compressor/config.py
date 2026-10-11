@@ -61,6 +61,8 @@ class Settings:
     alert_webhook_url: str = field(default="", repr=False)
     dsc_api_token: str = field(default="", repr=False)
     dsc_stats_interval_seconds: int = 3600
+    topgg_api_token: str = field(default="", repr=False)
+    topgg_stats_interval_seconds: int = 3600
     botstats_guild_id: int | None = None
     web_host: str = "127.0.0.1"
     web_port: int = 8080
@@ -106,6 +108,11 @@ class Settings:
             dsc_stats_interval_seconds=max(
                 30 * 60,
                 _integer("DSC_STATS_INTERVAL_MINUTES", 60, minimum=1) * 60,
+            ),
+            topgg_api_token=os.getenv("TOPGG_API_TOKEN", "").strip(),
+            topgg_stats_interval_seconds=max(
+                30 * 60,
+                _integer("TOPGG_STATS_INTERVAL_MINUTES", 60, minimum=1) * 60,
             ),
             botstats_guild_id=_optional_snowflake("BOTSTATS_GUILD_ID"),
             web_host=web_host,

@@ -50,6 +50,7 @@ from .notifications import (
     guild_alert_message,
     safe_alert_text,
 )
+from .topgg import TopGGStats
 from .web_ui import browser_compressor, browser_delivery_status
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,10 @@ ALLOWED_GUILD_IDS = settings.allowed_guild_ids
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
+topgg_stats = TopGGStats(
+    client, settings.topgg_api_token, settings.topgg_stats_interval_seconds
+)
+topgg_stats_task: asyncio.Task[None] | None = None
 jobs: dict[str, UploadJob] = {}
 outcomes: dict[str, DeliveryOutcome] = {}
 OUTCOME_TTL_SECONDS = 3600
@@ -1765,6 +1770,7 @@ async def on_guild_join(guild: discord.Guild) -> None:
         )
     )
     schedule_dsc_stats_update()
+    topgg_stats.notify_change()
 
 
 @client.event
@@ -1777,6 +1783,7 @@ async def on_guild_remove(guild: discord.Guild) -> None:
         )
     )
     schedule_dsc_stats_update()
+    topgg_stats.notify_change()
 
 
 async def sync_commands() -> None:
@@ -1827,7 +1834,7 @@ async def sync_commands_with_retry() -> None:
 
 @client.event
 async def on_ready() -> None:
-    global command_sync_task, dsc_stats_task
+    global command_sync_task, dsc_stats_task, topgg_stats_task
     await start_upload_server()
     if not commands_synced and (command_sync_task is None or command_sync_task.done()):
         command_sync_task = asyncio.create_task(sync_commands_with_retry())
@@ -1837,6 +1844,10 @@ async def on_ready() -> None:
         dsc_stats_task = asyncio.create_task(dsc_stats_loop())
         background_tasks.add(dsc_stats_task)
         dsc_stats_task.add_done_callback(background_tasks.discard)
+    if topgg_stats.token and (topgg_stats_task is None or topgg_stats_task.done()):
+        topgg_stats_task = asyncio.create_task(topgg_stats.run())
+        background_tasks.add(topgg_stats_task)
+        topgg_stats_task.add_done_callback(background_tasks.discard)
     logger.info("Logged in as %s in %d server(s)", client.user, len(client.guilds))
 
 
