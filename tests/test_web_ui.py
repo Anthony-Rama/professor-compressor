@@ -75,6 +75,16 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("caption.disabled = true", self.page)
         self.assertIn("caption.hidden = true", self.page)
         self.assertIn('data.append("diagnostics", JSON.stringify(', self.page)
+        self.assertIn('class="caption-help">1,000-character limit.</p>', self.page)
+        self.assertNotIn("Plain @names are text", self.page)
+
+    def test_processing_view_keeps_progress_and_restores_recoverable_controls(self):
+        self.assertIn("function setProcessingView(active)", self.page)
+        self.assertIn('"Compression in progress"', self.page)
+        self.assertIn('pageHeading.textContent = "Sending to Discord"', self.page)
+        self.assertIn("setProcessingView(preparedResults !== null)", self.page)
+        self.assertIn("Keep this page open and active until it finishes.", self.page)
+        self.assertLess(self.page.index('id="work"'), self.page.index('id="cancel"'))
 
     def test_includes_retry_cancel_and_metrics(self) -> None:
         self.assertIn("Cancel", self.page)

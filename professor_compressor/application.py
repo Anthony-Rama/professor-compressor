@@ -376,6 +376,7 @@ def page(title: str, body: str) -> web.Response:
                   line-height: 1.45; }}
     .stay-open > span:first-child {{ font-size: 20px; line-height: 1.2; }}
     .stay-open strong {{ color: #f8fafc; }}
+    .processing-view .stay-open {{ margin-top: 20px; }}
     .performance-help {{ margin: 16px 0 0; padding: 12px 14px;
                          border: 1px solid #344158; border-radius: 12px;
                          background: #151f30; color: #aeb9c9; font-size: 13px; }}
@@ -470,6 +471,8 @@ def page(title: str, body: str) -> web.Response:
     .run-meta {{ margin-top: 10px; color: #9aa7b9; font-size: 12px; }}
     .controls {{ display: grid; grid-template-columns: 1fr auto; gap: 10px; }}
     .controls button {{ margin-top: 16px; }}
+    .processing .controls {{ display: flex; justify-content: center; }}
+    .processing .controls button {{ width: auto; min-width: 120px; }}
     .secondary {{ width: auto; background: #303c50; box-shadow: none; }}
     .message {{ margin-top: 14px; padding: 13px 14px; border-radius: 11px;
                 font-size: 13px; line-height: 1.45; }}

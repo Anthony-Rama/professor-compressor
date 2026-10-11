@@ -350,6 +350,57 @@ test('cancelling during the session check does not start the video engine', asyn
   expect(coreRequests).toBe(0);
 });
 
+for (const width of [375, 1440]) {
+  test(`focused processing view hides selection and restores it after cancellation at ${width}px`, async ({ page, request }) => {
+    await page.setViewportSize({width, height:900});
+    let releaseCheck;
+    let markArrived;
+    const arrived = new Promise(resolve => { markArrived = resolve; });
+    await page.route('**/heartbeat', async route => {
+      markArrived();
+      await new Promise(resolve => { releaseCheck = resolve; });
+      await route.continue();
+    });
+    await openSession(page, request);
+    await expect(page.locator('.caption-help')).toHaveText('1,000-character limit.');
+    await page.locator('#caption').fill('Preserve my caption');
+    await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+    await page.locator('#submit').click();
+    await arrived;
+    await expect(page.locator('#page-heading')).toHaveText('Compression in progress');
+    await expect(page.locator('#stay-open')).toBeVisible();
+    await expect(page.locator('#stay-open')).toContainText('Keep this page open and active until it finishes.');
+    await expect(page.locator('#stay-open')).toContainText('This helps compression run at full speed.');
+    for (const selector of ['#picker-row', '#caption', '.caption-label', '.caption-help', '#selection', '#session-note', '#submit', '#format-help', '#performance-help', '#page-intro']) {
+      await expect(page.locator(selector)).toBeHidden();
+    }
+    await expect(page.locator('#files')).toBeVisible();
+    await expect(page.locator('#work')).toBeVisible();
+    await expect(page.locator('#cancel')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const workBox = await page.locator('#work').boundingBox();
+    const cancelBox = await page.locator('#cancel').boundingBox();
+    expect(cancelBox.y).toBeGreaterThanOrEqual(workBox.y + workBox.height);
+    await page.screenshot({path:test.info().outputPath(`processing-${width}.png`),fullPage:true});
+    await page.locator('#cancel').click();
+    releaseCheck();
+    await expect(page.locator('#submit')).toBeVisible();
+    await expect(page.locator('#submit')).toBeEnabled();
+    await expect(page.locator('#picker-row')).toBeVisible();
+    await expect(page.locator('#caption')).toBeVisible();
+    await expect(page.locator('#caption')).toHaveValue('Preserve my caption');
+    expect(await page.locator('#clips').evaluate(el => el.files.length)).toBe(1);
+    await expect(page.locator('.file-card')).toHaveCount(1);
+    await expect(page.locator('#page-heading')).toHaveText('Compress videos for Discord');
+    await page.unroute('**/heartbeat');
+    await page.locator('#submit').click();
+    await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
+    await expect(page.locator('#picker-row')).toBeHidden();
+    await expect(page.locator('#caption')).toBeHidden();
+    await expect(page.locator('#cancel')).toBeHidden();
+  });
+}
+
 for (const name of ['sample.mkv', 'sample.avi', 'sample.webm', 'sample.wmv',
   'sample.m2ts', 'sample.3gp', 'sample.mpg', 'sample.ogv', 'sample.flv', 'sample.ts',
   'hevc.mkv']) {
@@ -558,6 +609,8 @@ test('invalid input can be removed and retried in the same session', async ({ pa
   await page.locator('#clips').setInputFiles({name:'bad.mp4', mimeType:'video/mp4', buffer:Buffer.from('not video')});
   await page.locator('#submit').click();
   await expect(page.locator('#phase-title')).toHaveText('Action needed');
+  await expect(page.locator('#picker-row')).toBeVisible();
+  await expect(page.locator('#caption')).toBeVisible();
   await page.getByRole('button', {name: 'Remove bad.mp4'}).click();
   await deliver(page, join(fixtures, 'small.mp4'));
 });
@@ -699,7 +752,14 @@ test('slow delivery is polled rather than reported failed or resent', async ({pa
   let pending=0;
   page.on('request', r=> {if(r.method()==='POST' && new URL(r.url()).pathname===session.path) uploads++;});
   page.on('response', r=> {if(r.status()===202) pending++;});
-  await deliver(page,join(fixtures,'small.mp4'));
+  await page.locator('#clips').setInputFiles(join(fixtures,'small.mp4'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#page-heading')).toHaveText('Sending to Discord');
+  await expect(page.locator('#picker-row')).toBeHidden();
+  await expect(page.locator('#caption')).toBeHidden();
+  await expect(page.locator('#stay-open')).toBeVisible();
+  await expect(page.locator('#cancel')).toBeHidden();
+  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord', {timeout:10000});
   expect(uploads).toBe(1);
   expect(pending).toBeGreaterThan(0);
 });
@@ -736,6 +796,9 @@ test('manual relay retry reuses prepared files and offers local recovery', async
   await expect(page.locator('#phase-title')).toHaveText('Action needed',{timeout:60000});
   await expect(page.locator('#downloads a')).toHaveCount(1);
   await expect(page.locator('#clips')).toBeDisabled();
+  await expect(page.locator('#picker-row')).toBeHidden();
+  await expect(page.locator('#caption')).toBeHidden();
+  await expect(page.locator('#page-heading')).toHaveText('Delivery needs attention');
   const writes=await page.evaluate(()=>window.encoderWrites);
   expect(writes).toBeGreaterThan(0);
   await page.getByRole('button',{name:'Check delivery / retry'}).click();

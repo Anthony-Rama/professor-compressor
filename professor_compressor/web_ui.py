@@ -29,7 +29,7 @@ def browser_compressor(
     template = r"""
 <img class="brand" src="/brand/professor-compressor.png"
   alt="Professor Compressor mascot">
-<h1 id="page-heading">Compress videos for Discord</h1>
+<h1 id="page-heading" tabindex="-1">Compress videos for Discord</h1>
 <p class="intro" id="page-intro">Choose up to __MAX_CLIPS__ videos. Finished videos are formatted
   for Discord's current upload limit.</p>
 __RECOVERY_NOTICE__
@@ -59,15 +59,11 @@ __RECOVERY_NOTICE__
   <label class="caption-label" for="caption">Add a message (optional)</label>
   <textarea id="caption" name="caption" maxlength="1000" rows="3"
     placeholder="Clips from yesterday"></textarea>
-  <p class="caption-help">Shown with the finished videos in Discord. Up to 1,000 characters; one message per batch. Plain @names are text, not Discord mentions.</p>
+  <p class="caption-help">1,000-character limit.</p>
   <div class="session-note" id="session-note">
     <span>Private session, bound to this browser</span><span id="expires">Expires in --:--</span>
   </div>
   <div id="files" class="file-list" hidden></div>
-  <div class="controls">
-    <button id="submit" type="submit" disabled>Compress and send to Discord</button>
-    <button id="cancel" class="secondary" type="button" hidden>Cancel</button>
-  </div>
   <div id="work" class="work" hidden>
     <div id="background-warning" class="background-warning" hidden role="status">
       Compression may slow down or pause while this tab is hidden. Keep this
@@ -85,6 +81,10 @@ __RECOVERY_NOTICE__
         <span id="elapsed">Elapsed 0:00</span><span id="run-detail">Preparing files</span>
       </div>
     </div>
+  </div>
+  <div class="controls">
+    <button id="submit" type="submit" disabled>Compress and send to Discord</button>
+    <button id="cancel" class="secondary" type="button" hidden>Cancel</button>
   </div>
   <div id="message" class="message" hidden aria-live="assertive"></div>
   <div id="downloads" class="feedback-actions" hidden aria-label="Save prepared videos"></div>
@@ -1020,6 +1020,22 @@ function stopClock() {
   timer = null;
 }
 
+function setProcessingView(active) {
+  form.classList.toggle("processing", active);
+  document.querySelector("main").classList.toggle("processing-view", active);
+  document.getElementById("picker-row").hidden = active;
+  selection.hidden = active;
+  document.querySelector(".caption-label").hidden = active;
+  caption.hidden = active;
+  document.querySelector(".caption-help").hidden = active;
+  sessionNote.hidden = active;
+  pageIntro.hidden = active;
+  formatHelp.hidden = active;
+  performanceHelp.hidden = active;
+  submit.hidden = active;
+  pageHeading.textContent = active ? "Compression in progress" : "Compress videos for Discord";
+}
+
 function finishRun() {
   running = false;
   stopHeartbeat();
@@ -1037,6 +1053,11 @@ function finishRun() {
   caption.disabled = preparedResults !== null;
   submit.disabled = sessionExpired() && !preparedResults;
   submit.textContent = preparedResults ? "Check delivery / retry" : "Try again";
+  // Restore selection only when local processing can safely start again.
+  // A prepared batch may already be queued: retain the focused delivery view.
+  setProcessingView(preparedResults !== null);
+  submit.hidden = false;
+  if (preparedResults) pageHeading.textContent = "Delivery needs attention";
   showPreparedFiles();
   stopClock();
 }
@@ -1074,6 +1095,9 @@ form.addEventListener("submit", async (event) => {
   reportProgress("started");
   cancelled = false;
   running = true;
+  setProcessingView(true);
+  pageHeading.focus({preventScroll: true});
+  document.querySelector("main").scrollIntoView({block: "start"});
   submit.disabled = true;
   clips.disabled = true;
   clearSelectionButton.disabled = true;
@@ -1087,6 +1111,12 @@ form.addEventListener("submit", async (event) => {
   feedbackActions.hidden = true;
   startedAt = performance.now();
   runStage = preparedResults ? "Relay upload or Discord delivery" : "Browser compression";
+  if (preparedResults) {
+    pageHeading.textContent = "Checking Discord delivery";
+    setPhase("send", "Checking Discord delivery", "Checking the existing batch before retrying delivery.");
+  } else {
+    setPhase("compress", "Preparing videos", "Preparing videos on this device. Nothing has been sent yet.");
+  }
   overallProgress.value = 0;
   backgroundWarning.hidden = true;
   setRunDetail("Checking files");
@@ -1131,6 +1161,7 @@ form.addEventListener("submit", async (event) => {
     overallProgress.value = 80;
     cancelButton.hidden = true;
     runStage = "Relay upload or Discord delivery";
+    pageHeading.textContent = "Sending to Discord";
     setPhase("send", "Sending finished files",
       "Compression is complete. Finished MP4 files are now being sent through the relay to Discord.");
     const response = await uploadWithRetry(preparedResults);
