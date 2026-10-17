@@ -102,7 +102,9 @@ def privacy_policy_html() -> str:
         report is best-effort and may not arrive if the browser or connection
         fails. Outcome alerts may include the detected input container type,
         numeric original and output file sizes, size reduction, detected duration,
-        calculated encoding bitrate, encoding time, and target utilization to help
+        calculated encoding bitrate, encoding time, target utilization, processing
+        path, resolution and frame rate, engine mode, retry counts, stage timings,
+        and time spent with the page hidden to help
         diagnose compression quality. These alerts do not include
         filenames or video files.</li>
       <li><strong>Optional feedback:</strong> email feedback and support links

@@ -30,6 +30,52 @@ def valid_test_mp4() -> bytes:
 
 
 class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_telemetry_authentication_sanitization_and_receipt(self):
+        import professor_compressor.application as app
+
+        job = UploadJob(
+            "telemetry-test",
+            1,
+            2,
+            9999999999,
+            20 * 1024 * 1024,
+            Mock(),
+            state=JobState.CLAIMED,
+            claim_secret="test-secret",
+        )
+        jobs[job.token] = job
+        url = "/upload/telemetry-test/telemetry"
+        response = await self.client.post(url, json={"outcome": "delivered"})
+        self.assertEqual(response.status, 403)
+        headers = {"X-Upload-Session": "test-secret"}
+        with patch.object(app.logger, "info") as log:
+            response = await self.client.post(
+                url,
+                headers=headers,
+                json={
+                    "outcome": "failed",
+                    "category": "network",
+                    "stage": "delivery",
+                    "total_seconds": 12.5,
+                    "caption": "private text",
+                    "filename": "private.mp4",
+                },
+            )
+            self.assertEqual(response.status, 200)
+            payload = json.loads(log.call_args.args[1])
+            self.assertEqual(payload["total_seconds"], 12.5)
+            self.assertNotIn("private", str(payload))
+        app.record_outcome(job, 200, {"ok": True})
+        try:
+            response = await self.client.post(
+                url, headers=headers, json={"outcome": "delivered"}
+            )
+            self.assertEqual(response.status, 200)
+            response = await self.client.post(url, headers=headers, data="x" * 5000)
+            self.assertEqual(response.status, 400)
+        finally:
+            app.outcomes.pop(job.token, None)
+
     async def asyncSetUp(self) -> None:
         import professor_compressor.application as application
 

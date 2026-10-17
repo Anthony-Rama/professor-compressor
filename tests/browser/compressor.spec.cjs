@@ -80,6 +80,24 @@ test('browser reports selection and start without filenames or media', async ({ 
   expect(JSON.stringify(reports)).not.toContain('small.mp4');
 });
 
+test('final telemetry separates upload timing and excludes captions and filenames', async ({page, request}) => {
+  const reports = [];
+  await page.route('**/telemetry', async route => {
+    reports.push(route.request().postDataJSON());
+    await route.fulfill({json: {ok: true}});
+  });
+  await openSession(page, request);
+  await page.locator('#caption').fill('Private caption');
+  await deliver(page, join(fixtures, 'small.mp4'));
+  await expect.poll(() => reports.length).toBe(1);
+  expect(reports[0]).toMatchObject({outcome: 'delivered', category: 'none', engine: 'unused',
+    encoding_attempts: 0, upload_attempts: 1});
+  expect(reports[0].total_seconds).toBeGreaterThan(0);
+  expect(reports[0].upload_seconds).toBeGreaterThanOrEqual(0);
+  expect(reports[0].total_seconds).toBeGreaterThanOrEqual(reports[0].upload_seconds);
+  expect(JSON.stringify(reports)).not.toMatch(/Private caption|small\.mp4|\/upload\//);
+});
+
 test('optional caption travels with the delivered batch and disappears on completion', async ({ page, request }) => {
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
@@ -98,6 +116,8 @@ test('optional caption travels with the delivered batch and disappears on comple
   expect(await page.evaluate(() => window.sentDiagnostics)).toEqual([{
     input_bytes: expect.any(Number), duration_seconds: null,
     video_kbps: null, copied: true, input_format: 'mp4', encoding_seconds: 0,
+    telemetry: expect.objectContaining({path: 'unchanged', encoding_attempts: 0,
+      engine: 'unused', upload_attempts: 1, engine_seconds: 0}),
   }]);
   await expect(page.locator('#caption')).toBeHidden();
   await expect(page.locator('.caption-label')).toBeHidden();
@@ -137,6 +157,11 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   expect(diagnostic.duration_seconds).toBeGreaterThan(0);
   expect(diagnostic.video_kbps).toBeGreaterThanOrEqual(100);
   expect(diagnostic.encoding_seconds).toBeGreaterThan(0);
+  expect(diagnostic.telemetry.path).toBe('compressed');
+  expect(diagnostic.telemetry.encoding_attempts).toBeGreaterThanOrEqual(1);
+  expect(diagnostic.telemetry.input_width).toBeGreaterThan(0);
+  expect(diagnostic.telemetry.output_width).toBeGreaterThan(0);
+  expect(diagnostic.telemetry.output_fps).toBeGreaterThan(0);
   await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();

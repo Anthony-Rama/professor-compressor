@@ -67,6 +67,7 @@ def compression_outcome_alert(
     diagnostics: list[CompressionDiagnostic] | None = None,
     effective_target: int | None = None,
     unchanged_limit: int | None = None,
+    timing: dict | None = None,
 ) -> str:
     """Build an outcome alert without filenames or user mentions."""
     if elapsed_seconds is None:
@@ -194,7 +195,36 @@ def compression_outcome_alert(
             )
     if stage:
         lines.append(f"Stage: `{safe_alert_text(stage, limit=60)}`")
+    if timing:
+        lines.append(
+            "Receive / queue / Discord: "
+            + " / ".join(
+                encoding_time(timing[key])
+                for key in (
+                    "relay_receive_seconds",
+                    "queue_seconds",
+                    "discord_delivery_seconds",
+                )
+            )
+        )
+    if diagnostics and diagnostics[0].telemetry:
+        batch = diagnostics[0].telemetry
+        lines.append(
+            f"Engine: {batch.get('engine', 'unknown')} "
+            f"· load {batch.get('engine_seconds', 0):.1f}s "
+            f"· hidden before upload {batch.get('hidden_seconds', 0):.1f}s"
+        )
+        if "pre_upload_seconds" in batch:
+            lines.append(
+                f"Before upload: {batch['pre_upload_seconds']:.1f}s "
+                f"· upload attempt {batch.get('upload_attempts', 1)}"
+            )
     lines.append(f"Elapsed: `{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}`")
+    message = "\n".join(lines)
+    if len(message) > 2000:
+        # Detailed per-file measurements remain in structured logs.
+        lines = [line for line in lines if not line.startswith("File ")]
+        lines.insert(6, "Per-file diagnostics are available in the server logs.")
     return "\n".join(lines)
 
 

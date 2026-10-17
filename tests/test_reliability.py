@@ -90,7 +90,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 )
                 # Start at t=0; metadata begins just before the total deadline.
                 # Replace the app's time reference, not asyncio's real clock.
-                clock = Mock(monotonic=Mock(side_effect=[0, 0, 299.99]))
+                clock = Mock(monotonic=Mock(side_effect=[0, 0, 0, 299.99]))
                 with (
                     patch.object(app, "session_access", return_value=(job, None)),
                     patch.object(app, "rate_limit_retry_after", return_value=None),

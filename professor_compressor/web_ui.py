@@ -163,6 +163,30 @@ const ORIGINAL_TITLE = document.title;
 
 let ffmpeg = null;
 let encoderMode = "single-threaded";
+let batchMetrics = {};
+let batchStarted = 0;
+let hiddenStarted = null;
+let hiddenMs = 0;
+function hiddenSeconds() {
+  return (hiddenMs + (hiddenStarted === null ? 0 : performance.now() - hiddenStarted)) / 1000;
+}
+function reportMetrics(outcome, error = null) {
+  const category = !error ? "none" : error.name === "AbortError" ? "cancelled" :
+    error.status === 0 ? "network" : error.status ? "http" :
+      /memory|allocation|out of bounds/i.test(error.message || "") ? "memory" :
+      /timeout/i.test(error.code || "") ? "timeout" : "processing";
+  const hidden = hiddenSeconds();
+  hiddenMs = hidden * 1000;
+  hiddenStarted = null;
+  void fetch(window.location.pathname + "/telemetry", {
+    method: "POST", headers: {"Content-Type": "application/json", "X-Upload-Session": SESSION_SECRET},
+    body: JSON.stringify({outcome, category, stage: preparedResults ? "delivery" : "processing",
+      ...batchMetrics, encoding_attempts: selectedFiles.reduce((sum, state) => sum + (state.encodingAttempts || 0), 0),
+      total_seconds: (performance.now() - batchStarted) / 1000,
+      hidden_seconds: hidden}),
+    keepalive: true, signal: AbortSignal.timeout(5000)
+  }).catch(() => {});
+}
 let selectedFiles = [];
 let currentState = null;
 let currentAttempt = 1;
@@ -384,6 +408,11 @@ async function releaseWakeLock() {
 
 document.addEventListener("visibilitychange", () => {
   if (!running) return;
+  if (document.hidden && hiddenStarted === null) hiddenStarted = performance.now();
+  if (!document.hidden && hiddenStarted !== null) {
+    hiddenMs += performance.now() - hiddenStarted;
+    hiddenStarted = null;
+  }
   if (document.hidden) {
     backgroundWarning.hidden = false;
     renderDocumentTitle();
@@ -614,6 +643,17 @@ async function startEncoder(config) {
 }
 
 async function loadEncoder() {
+  const start = performance.now();
+  batchMetrics.stage = "engine";
+  try {
+    const mode = await loadEncoderCore();
+    batchMetrics.engine = mode;
+    return mode;
+  }
+  finally { batchMetrics.engine_seconds = (batchMetrics.engine_seconds || 0) + (performance.now() - start) / 1000; }
+}
+
+async function loadEncoderCore() {
   if (cancelled) throw new DOMException("Cancelled", "AbortError");
   for (const state of selectedFiles) {
     if (!state.finalSize) updateFile(state, "Loading video engine", 0);
@@ -711,6 +751,8 @@ async function removeVirtualFile(name) {
 }
 
 async function timedEncode(state, args) {
+  batchMetrics.stage = "encoding";
+  state.encodingAttempts += 1;
   const start = performance.now();
   try {
     return await ffmpeg.exec(args);
@@ -722,6 +764,7 @@ async function timedEncode(state, args) {
 }
 
 async function compressOne(state) {
+  batchMetrics.stage = "metadata";
   const file = state.file;
   const format = await videoSignature(file);
   const effectiveTargetBytes = outputTargetBytes();
@@ -741,7 +784,7 @@ async function compressOne(state) {
     await ffmpeg.writeFile(inputName, await fetchFile(file));
     updateFile(state, "Reading video metadata", 0);
     await ffmpeg.ffprobe([
-      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,codec_name,duration",
+      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,codec_name,duration,width,height,avg_frame_rate",
       "-of", "json", inputName, "-o", probeName
     ], 30000);
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
@@ -759,6 +802,9 @@ async function compressOne(state) {
     const videoStream = metadata.streams.find((stream) => stream.codec_type === "video");
     const audioStream = metadata.streams.find((stream) => stream.codec_type === "audio");
     if (!videoStream) throw new Error("No video stream found in " + file.name + ". Choose a video, not an audio-only file.");
+    const rateParts = String(videoStream.avg_frame_rate || "0/1").split("/").map(Number);
+    state.inputMedia = {input_width: videoStream.width, input_height: videoStream.height,
+      input_fps: rateParts[0] / (rateParts[1] || 1)};
     const duration = [metadata.format?.duration, videoStream.duration]
       .map(Number).find((value) => Number.isFinite(value) && value > 0);
     if (!duration) throw new Error(
@@ -776,6 +822,7 @@ async function compressOne(state) {
         currentAttempt = 1;
         lastFfmpegMessage = "";
         updateFile(state, "Preparing MP4 without re-encoding", 0);
+        batchMetrics.stage = "remux";
         const remuxExit = await ffmpeg.exec([
           "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
           "-c", "copy", "-movflags", "+faststart", outputName
@@ -868,6 +915,19 @@ async function compressOne(state) {
       diagnostic: { input_bytes: file.size, duration_seconds: duration,
         video_kbps: videoKbps, copied: false, input_format: format } };
   } finally {
+    if (state.finalSize && state.encodingAttempts > 0 && !cancelled) {
+      // Header-only metadata read of the existing virtual output: no copy or encode.
+      try {
+        await ffmpeg.ffprobe(["-v", "error", "-select_streams", "v:0", "-show_entries",
+          "stream=width,height,avg_frame_rate", "-of", "json", outputName, "-o", probeName], 5000);
+        const stream = JSON.parse(await ffmpeg.readFile(probeName, "utf8")).streams?.[0];
+        if (stream) {
+          const rate = String(stream.avg_frame_rate || "0/1").split("/").map(Number);
+          state.outputMedia = {output_width: stream.width, output_height: stream.height,
+            output_fps: rate[0] / (rate[1] || 1)};
+        }
+      } catch (_) { /* Optional metadata cannot fail delivery. */ }
+    }
     await removeVirtualFile(inputName);
     await removeVirtualFile(outputName);
     await removeVirtualFile(probeName);
@@ -880,11 +940,21 @@ async function compressWithRetry(state) {
       currentState = state;
       updateFile(state, attempt === 1 ? "Starting" : "Retrying automatically", 0);
       const result = await compressOne(state);
+      if (cancelled) throw new DOMException("Cancelled", "AbortError");
       result.diagnostic.encoding_seconds = Math.round(state.encodingMs) / 1000;
+      result.diagnostic.telemetry = {encoding_attempts: state.encodingAttempts,
+        path: result.diagnostic.copied ? (result.diagnostic.duration_seconds ? "remuxed" : "unchanged") :
+          result.diagnostic.video_kbps === null ? "converted" : "compressed",
+        ...state.inputMedia, ...state.outputMedia};
+      if (state.encodingAttempts === 0 && state.inputMedia) {
+        Object.assign(result.diagnostic.telemetry, {output_width: state.inputMedia.input_width,
+          output_height: state.inputMedia.input_height, output_fps: state.inputMedia.input_fps});
+      }
       return result;
     } catch (error) {
       if (cancelled || error.name === "AbortError") throw error;
       console.error("Compression attempt failed", error, lastFfmpegMessage);
+      batchMetrics.processing_failures = (batchMetrics.processing_failures || 0) + 1;
       if (attempt === 2 || /too long|recognized video signature|Could not determine|No video stream/.test(error.message)) {
         updateFile(state, "Needs attention", 0);
         throw error;
@@ -899,6 +969,10 @@ async function compressWithRetry(state) {
 
 function xhrUpload(results) {
   return new Promise((resolve, reject) => {
+    batchMetrics.stage = "upload";
+    batchMetrics.upload_attempts = (batchMetrics.upload_attempts || 0) + 1;
+    Object.assign(results[0].diagnostic.telemetry, batchMetrics, {hidden_seconds: hiddenSeconds()});
+    const uploadStarted = performance.now();
     const data = new FormData();
     data.append("caption", caption.value.trim());
     data.append("diagnostics", JSON.stringify(results.map(result => result.diagnostic)));
@@ -929,7 +1003,11 @@ function xhrUpload(results) {
         Math.round(fraction * 100) + "%";
       setRunDetail("Sending " + Math.round(fraction * 100) + "%");
     });
+    request.upload.addEventListener("loadend", () => {
+      batchMetrics.upload_seconds = (batchMetrics.upload_seconds || 0) + (performance.now() - uploadStarted) / 1000;
+    });
     request.upload.addEventListener("load", () => {
+      batchMetrics.stage = "delivery";
       overallProgress.value = 98;
       phaseCopy.textContent = "Finished files reached the relay. Waiting for Discord to accept them.";
       setRunDetail("Waiting for Discord");
@@ -973,6 +1051,7 @@ async function uploadWithRetry(results) {
       return response;
     } catch (error) {
       uploadRequest = null;
+      batchMetrics.delivery_failures = (batchMetrics.delivery_failures || 0) + 1;
       if (cancelled || error.name === "AbortError") throw error;
       const retryable = error.status === 0 || error.status === 408 || error.status === 429 ||
         error.status === 500 || error.status === 503 || error.status === 504 ||
@@ -1123,6 +1202,12 @@ form.addEventListener("submit", async (event) => {
   hideMessage();
   feedbackActions.hidden = true;
   startedAt = performance.now();
+  if (!preparedResults) {
+    batchStarted = startedAt;
+    batchMetrics = {batch_id: crypto.randomUUID().replaceAll("-", ""), engine_seconds: 0, engine: "unused", upload_attempts: 0};
+    hiddenMs = 0;
+  }
+  hiddenStarted = document.hidden ? performance.now() : null;
   runStage = preparedResults ? "Relay upload or Discord delivery" : "Browser compression";
   if (preparedResults) {
     pageHeading.textContent = "Checking Discord delivery";
@@ -1139,6 +1224,9 @@ form.addEventListener("submit", async (event) => {
     for (const state of selectedFiles) {
       state.finalSize = 0;
       state.encodingMs = 0;
+      state.encodingAttempts = 0;
+      state.inputMedia = null;
+      state.outputMedia = null;
       state.meta.textContent = readableSize(state.file.size) + " original";
       updateFile(state, "Checking file", 0);
     }
@@ -1169,6 +1257,8 @@ form.addEventListener("submit", async (event) => {
         results.push(await compressWithRetry(state));
       }
       preparedResults = results;
+      batchMetrics.engine = needsEncoder ? encoderMode : "unused";
+      batchMetrics.pre_upload_seconds = (performance.now() - batchStarted) / 1000;
     }
     stopHeartbeat();
     currentState = null;
@@ -1179,6 +1269,7 @@ form.addEventListener("submit", async (event) => {
     setPhase("send", "Sending finished files",
       "Compression is complete. Finished MP4 files are now being sent through the relay to Discord.");
     const response = await uploadWithRetry(preparedResults);
+    reportMetrics("delivered");
     for (const result of preparedResults) updateFile(result.state, "Delivered", 100);
     overallProgress.value = 100;
     setRunDetail("Complete");
@@ -1207,6 +1298,7 @@ form.addEventListener("submit", async (event) => {
     renderDocumentTitle();
     stopClock();
   } catch (error) {
+    reportMetrics(cancelled || error.name === "AbortError" ? "cancelled" : "failed", error);
     if (cancelled || error.name === "AbortError") { finishRun(); return; }
     console.error(error);
     void reportBrowserFailure(runStage);

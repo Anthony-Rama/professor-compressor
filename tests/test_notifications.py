@@ -18,11 +18,100 @@ from professor_compressor.application import (
     receive_browser_failure,
     report_dsc_stats,
     safe_alert_text,
+    sanitize_telemetry,
 )
 from professor_compressor.domain import BrowserResult, CompressionDiagnostic
 
 
 class NotificationTests(unittest.IsolatedAsyncioTestCase):
+    def test_telemetry_rejects_sensitive_and_unbounded_fields(self):
+        self.assertEqual(
+            sanitize_telemetry(
+                {
+                    "caption": "private",
+                    "filename": "private.mp4",
+                    "url": "secret",
+                    "path": "compressed",
+                    "engine": "multithreaded",
+                    "encoding_attempts": 2,
+                    "engine_seconds": float("nan"),
+                    "input_width": 10**1000,
+                    "output_fps": True,
+                    "hidden_seconds": -1,
+                    "batch_id": "a" * 32,
+                }
+            ),
+            {
+                "path": "compressed",
+                "engine": "multithreaded",
+                "encoding_attempts": 2,
+                "batch_id": "a" * 32,
+            },
+        )
+        self.assertEqual(sanitize_telemetry([]), {})
+
+    def test_full_batch_telemetry_alert_is_bounded(self):
+        job = UploadJob(
+            "x",
+            123,
+            456,
+            9999999999,
+            20 * 1024 * 1024,
+            Mock(),
+            guild_name="g" * 100,
+            username="u" * 100,
+        )
+        telemetry = {
+            "engine": "multithreaded",
+            "engine_seconds": 86400,
+            "hidden_seconds": 86400,
+            "pre_upload_seconds": 86400,
+            "upload_attempts": 99,
+        }
+        message = compression_outcome_alert(
+            job,
+            succeeded=True,
+            file_count=10,
+            results=[BrowserResult("private.mp4", b"x")] * 10,
+            diagnostics=[
+                CompressionDiagnostic(
+                    10**12, 86400, 10**9, False, "asf/wmv", 86400, telemetry
+                )
+            ]
+            * 10,
+            effective_target=19 * 1024 * 1024,
+            unchanged_limit=20 * 1024 * 1024,
+            timing={
+                "relay_receive_seconds": 300,
+                "queue_seconds": 40,
+                "discord_delivery_seconds": 120,
+            },
+        )
+        self.assertLessEqual(len(message), 2000)
+        self.assertIn("Compression time (encoding only)", message)
+        self.assertIn("Receive / queue / Discord", message)
+        self.assertNotIn("private.mp4", message)
+
+    def test_extreme_encoding_speed_cannot_break_delivery_logging(self):
+        import asyncio
+        import time
+
+        from professor_compressor.application import log_delivery_diagnostics
+        from professor_compressor.domain import DeliveryRequest
+
+        job = UploadJob("x", 1, 2, 9999999999, 20 * 1024 * 1024, Mock())
+        delivery = DeliveryRequest(
+            job,
+            [BrowserResult("private.mp4", b"x")],
+            asyncio.get_event_loop().create_future(),
+            diagnostics=[CompressionDiagnostic(100, 86400, 100, False, "mp4", 1e-320)],
+        )
+        with patch("professor_compressor.application.logger.info") as log:
+            log_delivery_diagnostics(delivery, time.monotonic(), "delivered")
+        payload = json.loads(log.call_args.args[1])
+        self.assertNotIn("encoding_speed", payload["files"][0])
+        self.assertNotIn("private.mp4", str(payload))
+
     def test_encoding_time_is_optional_bounded_and_not_clip_duration(self):
         base = {
             "input_bytes": 10,

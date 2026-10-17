@@ -216,6 +216,48 @@ def compression_target(discord_limit: int) -> int:
     return max(1 * MIB, int(discord_limit * 0.98))
 
 
+def sanitize_telemetry(value: object) -> dict:
+    """Allow only bounded measurements and fixed categories, never arbitrary text."""
+    if not isinstance(value, dict):
+        return {}
+    clean = {}
+    batch_id = value.get("batch_id")
+    if (
+        isinstance(batch_id, str)
+        and len(batch_id) == 32
+        and all(c in "0123456789abcdef" for c in batch_id)
+    ):
+        clean["batch_id"] = batch_id
+    for key in (
+        "engine_seconds",
+        "pre_upload_seconds",
+        "hidden_seconds",
+        "upload_attempts",
+        "encoding_attempts",
+        "input_width",
+        "input_height",
+        "output_width",
+        "output_height",
+        "input_fps",
+        "output_fps",
+        "total_seconds",
+        "upload_seconds",
+        "processing_failures",
+        "delivery_failures",
+    ):
+        number = value.get(key)
+        if type(number) in (int, float) and 0 <= number <= 86400:
+            clean[key] = number
+    for key, allowed in {
+        "path": {"unchanged", "remuxed", "converted", "compressed"},
+        "engine": {"unused", "single-threaded", "multithreaded"},
+    }.items():
+        item = value.get(key)
+        if isinstance(item, str) and item in allowed:
+            clean[key] = item
+    return clean
+
+
 def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
     """Accept optional, bounded browser measurements; never trust them for delivery."""
     allowed_formats = {
@@ -264,15 +306,12 @@ def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
                 if video_kbps is not None or (
                     duration is not None
                     and (
-                        type(duration) not in (int, float)
-                        or not math.isfinite(duration)
-                        or not 0 < duration <= 86400
+                        type(duration) not in (int, float) or not 0 < duration <= 86400
                     )
                 ):
                     return []
             elif (
                 type(duration) not in (int, float)
-                or not math.isfinite(duration)
                 or not 0 < duration <= 86400
                 or (
                     video_kbps is not None
@@ -291,6 +330,7 @@ def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
                     copied,
                     input_format,
                     float(encoding_seconds) if encoding_seconds is not None else None,
+                    sanitize_telemetry(value.get("telemetry")),
                 )
             )
         return diagnostics
@@ -1043,6 +1083,7 @@ async def receive_browser_progress(request: web.Request) -> web.Response:
 
 async def receive_results(request: web.Request) -> web.Response:
     global active_relay_uploads, delivery_bytes_held
+    receive_started = time.monotonic()
     job, response = session_access(request)
     if response is not None:
         return response
@@ -1142,7 +1183,7 @@ async def receive_results(request: web.Request) -> web.Response:
                     timeout=max(0, min(30, upload_deadline - time.monotonic())),
                 ):
                     raw_diagnostics.extend(chunk)
-                    if len(raw_diagnostics) > 4096:
+                    if len(raw_diagnostics) > 16384:
                         raise ValueError("The diagnostics field is too long.")
                 diagnostics = parse_compression_diagnostics(bytes(raw_diagnostics))
                 continue
@@ -1204,6 +1245,7 @@ async def receive_results(request: web.Request) -> web.Response:
             completed=completion,
             caption=caption,
             diagnostics=diagnostics,
+            received_seconds=time.monotonic() - receive_started,
         )
         try:
             delivery_queue.put_nowait(delivery)
@@ -1271,6 +1313,51 @@ async def receive_results(request: web.Request) -> web.Response:
             active_relay_uploads -= 1
             delivery_bytes_held = max(0, delivery_bytes_held - total_size)
             job.state = JobState.CLAIMED
+
+
+async def receive_browser_telemetry(request: web.Request) -> web.Response:
+    _job, response = session_access(request)
+    # Valid receipts can report final timing after the delivery job is removed.
+    if response is not None and response.status in {403, 410}:
+        return response
+    if rate_limit_retry_after(request, "telemetry") is not None:
+        return json_error("Too many reports.", 429, "rate_limited")
+    try:
+        payload = await asyncio.wait_for(request.clone(client_max_size=4096).json(), 5)
+    except (ValueError, TypeError, TimeoutError, web.HTTPException):
+        return json_error("Invalid report.", 400, "invalid_report")
+    if not isinstance(payload, dict):
+        return json_error("Invalid report.", 400, "invalid_report")
+    clean = sanitize_telemetry(payload)
+    for key, allowed in {
+        "outcome": {"delivered", "failed", "cancelled"},
+        "category": {
+            "none",
+            "network",
+            "http",
+            "processing",
+            "cancelled",
+            "memory",
+            "timeout",
+        },
+        "stage": {
+            "processing",
+            "delivery",
+            "engine",
+            "metadata",
+            "encoding",
+            "remux",
+            "upload",
+        },
+    }.items():
+        item = payload.get(key)
+        if isinstance(item, str) and item in allowed:
+            clean[key] = item
+    clean["retry_recovered"] = clean.get("outcome") == "delivered" and (
+        clean.get("processing_failures", 0) > 0 or clean.get("delivery_failures", 0) > 0
+    )
+    logger.info("Browser processing diagnostics %s", json.dumps(clean, allow_nan=False))
+    return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
 async def receive_browser_failure(request: web.Request) -> web.Response:
@@ -1409,11 +1496,49 @@ async def deliver_browser_results(
         ) from error
 
 
+def delivery_timing(delivery: DeliveryRequest, started: float) -> dict:
+    return {
+        "relay_receive_seconds": round(delivery.received_seconds, 3),
+        "queue_seconds": round(max(0, started - delivery.queued_at), 3),
+        "discord_delivery_seconds": round(max(0, time.monotonic() - started), 3),
+    }
+
+
+def log_delivery_diagnostics(
+    delivery: DeliveryRequest, started: float, outcome: str
+) -> None:
+    files = []
+    for index, diagnostic in enumerate(delivery.diagnostics):
+        item = {
+            "file": index + 1,
+            **diagnostic.telemetry,
+            "encoding_seconds": diagnostic.encoding_seconds,
+            "duration_seconds": diagnostic.duration_seconds,
+            "input_bytes": diagnostic.input_bytes,
+            "output_bytes": len(delivery.results[index].data),
+            "input_format": diagnostic.input_format,
+            "video_kbps": diagnostic.video_kbps,
+        }
+        if diagnostic.encoding_seconds and diagnostic.duration_seconds:
+            speed = diagnostic.duration_seconds / diagnostic.encoding_seconds
+            if math.isfinite(speed):
+                item["encoding_speed"] = round(speed, 3)
+        files.append(item)
+    logger.info(
+        "Processing diagnostics %s",
+        json.dumps(
+            {"outcome": outcome, "files": files, **delivery_timing(delivery, started)},
+            allow_nan=False,
+        ),
+    )
+
+
 async def delivery_worker(worker_number: int) -> None:
     global delivery_bytes_held
     assert delivery_queue is not None
     while not client.is_closed():
         delivery = await delivery_queue.get()
+        delivery_started = time.monotonic()
         try:
             message = await asyncio.wait_for(
                 deliver_browser_results(
@@ -1422,6 +1547,7 @@ async def delivery_worker(worker_number: int) -> None:
                 timeout=120,
             )
             total_bytes = sum(len(result.data) for result in delivery.results)
+            log_delivery_diagnostics(delivery, delivery_started, "delivered")
             metrics.increment("deliveries_succeeded")
             metrics.increment("files_delivered", len(delivery.results))
             metrics.increment("bytes_delivered", total_bytes)
@@ -1442,6 +1568,7 @@ async def delivery_worker(worker_number: int) -> None:
                     total_bytes=total_bytes,
                     results=delivery.results,
                     diagnostics=delivery.diagnostics,
+                    timing=delivery_timing(delivery, delivery_started),
                     effective_target=min(
                         compression_target(delivery.job.discord_limit),
                         min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES)
@@ -1457,6 +1584,7 @@ async def delivery_worker(worker_number: int) -> None:
             if not delivery.completed.done():
                 delivery.completed.set_result(message)
         except Exception as error:
+            log_delivery_diagnostics(delivery, delivery_started, "delivery_failed")
             metrics.increment("deliveries_failed")
             message = (
                 str(error)
@@ -1483,6 +1611,7 @@ async def delivery_worker(worker_number: int) -> None:
                     stage="Discord delivery",
                     results=delivery.results,
                     diagnostics=delivery.diagnostics,
+                    timing=delivery_timing(delivery, delivery_started),
                     effective_target=min(
                         compression_target(delivery.job.discord_limit),
                         min(MAX_RESULT_TOTAL_BYTES, MAX_DELIVERY_BUFFER_BYTES)
@@ -1735,6 +1864,7 @@ def create_web_application() -> web.Application:
     application.router.add_post("/upload/{token}/heartbeat", renew_session)
     application.router.add_post("/upload/{token}/pause", pause_session)
     application.router.add_post("/upload/{token}/progress", receive_browser_progress)
+    application.router.add_post("/upload/{token}/telemetry", receive_browser_telemetry)
     application.router.add_post(
         "/upload/{token}/failure",
         receive_browser_failure,

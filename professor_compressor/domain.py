@@ -60,6 +60,7 @@ class CompressionDiagnostic:
     copied: bool
     input_format: str | None = None
     encoding_seconds: float | None = None
+    telemetry: dict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -69,6 +70,8 @@ class DeliveryRequest:
     completed: asyncio.Future[str]
     caption: str = ""
     diagnostics: list[CompressionDiagnostic] = field(default_factory=list)
+    received_seconds: float = 0
+    queued_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass(frozen=True, slots=True)
