@@ -33,6 +33,12 @@ def safe_alert_text(value: str, limit: int = 100) -> str:
     return discord.utils.escape_mentions(escaped)[:limit]
 
 
+def encoding_time(seconds: float) -> str:
+    """Format measured encoder wall time to tenths, including minute carry."""
+    minutes, tenths = divmod(round(seconds * 10), 600)
+    return f"{minutes}:{tenths / 10:04.1f}"
+
+
 def guild_alert_message(
     action: str,
     guild: discord.Guild,
@@ -133,7 +139,7 @@ def compression_outcome_alert(
                     )
                     if diagnostic.copied
                     else (
-                        f"{diagnostic.duration_seconds:.1f}s, "
+                        f"{diagnostic.duration_seconds:.1f}s clip, "
                         + (
                             f"{diagnostic.video_kbps} kbps"
                             if diagnostic.video_kbps
@@ -147,6 +153,11 @@ def compression_outcome_alert(
                     + f"`{input_mib:.1f} → {output_mib:.1f} MiB`"
                     + f" · `{size_description}`"
                     f" · `{utilization:.1f}% target` · {detail}"
+                    + (
+                        f" · encode `{encoding_time(diagnostic.encoding_seconds)}`"
+                        if diagnostic.encoding_seconds is not None
+                        else ""
+                    )
                 )
                 continue
             if input_format:
@@ -176,6 +187,11 @@ def compression_outcome_alert(
             else:
                 lines.append(f"Size increase: `{size_change:.1f}%`")
             lines.append(f"Target utilization: `{utilization:.1f}%`")
+        if all(item.encoding_seconds is not None for item in diagnostics):
+            total_encoding = sum(item.encoding_seconds for item in diagnostics)
+            lines.append(
+                f"Compression time (encoding only): `{encoding_time(total_encoding)}`"
+            )
     if stage:
         lines.append(f"Stage: `{safe_alert_text(stage, limit=60)}`")
     lines.append(f"Elapsed: `{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}`")

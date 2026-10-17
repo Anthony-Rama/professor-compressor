@@ -246,6 +246,12 @@ def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
             video_kbps = value.get("video_kbps")
             copied = value.get("copied")
             input_format = value.get("input_format")
+            encoding_seconds = value.get("encoding_seconds")
+            if encoding_seconds is not None and (
+                type(encoding_seconds) not in (int, float)
+                or not 0 <= encoding_seconds <= 86400
+            ):
+                encoding_seconds = None
             if input_format is not None and input_format not in allowed_formats:
                 return []
             if (
@@ -284,6 +290,7 @@ def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
                     video_kbps,
                     copied,
                     input_format,
+                    float(encoding_seconds) if encoding_seconds is not None else None,
                 )
             )
         return diagnostics

@@ -2,7 +2,7 @@
 
 from html import escape
 
-EFFECTIVE_DATE = "October 11, 2026"
+EFFECTIVE_DATE = "October 17, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
@@ -102,8 +102,8 @@ def privacy_policy_html() -> str:
         report is best-effort and may not arrive if the browser or connection
         fails. Outcome alerts may include the detected input container type,
         numeric original and output file sizes, size reduction, detected duration,
-        calculated encoding bitrate, and target utilization to help diagnose
-        compression quality. These alerts do not include
+        calculated encoding bitrate, encoding time, and target utilization to help
+        diagnose compression quality. These alerts do not include
         filenames or video files.</li>
       <li><strong>Optional feedback:</strong> email feedback and support links
         open your email application. No feedback is sent unless you choose to

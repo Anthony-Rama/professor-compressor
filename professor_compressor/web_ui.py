@@ -710,6 +710,17 @@ async function removeVirtualFile(name) {
   try { await ffmpeg.deleteFile(name); } catch (_) { /* Optional file. */ }
 }
 
+async function timedEncode(state, args) {
+  const start = performance.now();
+  try {
+    return await ffmpeg.exec(args);
+  } finally {
+    // Include failed encoding attempts and size retries, but exclude engine
+    // loading, probing, file copies, remuxing, upload, and Discord delivery.
+    state.encodingMs += Math.max(0, performance.now() - start);
+  }
+}
+
 async function compressOne(state) {
   const file = state.file;
   const format = await videoSignature(file);
@@ -788,7 +799,7 @@ async function compressOne(state) {
         currentAttempt = 1;
         lastFfmpegMessage = "";
         updateFile(state, "Converting to MP4", 0);
-        const conversionExit = await ffmpeg.exec([
+        const conversionExit = await timedEncode(state, [
           "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
           "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
           "-preset", "veryfast", "-crf", "18", "-vf", scale, "-pix_fmt", "yuv420p",
@@ -818,7 +829,7 @@ async function compressOne(state) {
     }
     async function encode(bitrate) {
       lastFfmpegMessage = "";
-      return ffmpeg.exec([
+      return timedEncode(state, [
         "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
         "-c:v", "libx264", "-threads", encoderMode === "multithreaded" ? "4" : "1",
         "-preset", "veryfast", "-b:v", bitrate + "k", "-maxrate", bitrate + "k",
@@ -868,7 +879,9 @@ async function compressWithRetry(state) {
     try {
       currentState = state;
       updateFile(state, attempt === 1 ? "Starting" : "Retrying automatically", 0);
-      return await compressOne(state);
+      const result = await compressOne(state);
+      result.diagnostic.encoding_seconds = Math.round(state.encodingMs) / 1000;
+      return result;
     } catch (error) {
       if (cancelled || error.name === "AbortError") throw error;
       console.error("Compression attempt failed", error, lastFfmpegMessage);
@@ -1125,6 +1138,7 @@ form.addEventListener("submit", async (event) => {
   if (!preparedResults) {
     for (const state of selectedFiles) {
       state.finalSize = 0;
+      state.encodingMs = 0;
       state.meta.textContent = readableSize(state.file.size) + " original";
       updateFile(state, "Checking file", 0);
     }

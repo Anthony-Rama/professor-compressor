@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -22,6 +23,69 @@ from professor_compressor.domain import BrowserResult, CompressionDiagnostic
 
 
 class NotificationTests(unittest.IsolatedAsyncioTestCase):
+    def test_encoding_time_is_optional_bounded_and_not_clip_duration(self):
+        base = {
+            "input_bytes": 10,
+            "duration_seconds": 74.3,
+            "video_kbps": 100,
+            "copied": False,
+        }
+        for value, expected in (
+            (0, 0),
+            (18.125, 18.125),
+            (86400, 86400),
+            (-1, None),
+            (86401, None),
+            (10**1000, None),
+            (True, None),
+            ("18", None),
+            (float("nan"), None),
+            (float("inf"), None),
+        ):
+            with self.subTest(value=value):
+                diagnostic = parse_compression_diagnostics(
+                    json.dumps([{**base, "encoding_seconds": value}]).encode()
+                )[0]
+                self.assertEqual(diagnostic.encoding_seconds, expected)
+                self.assertEqual(diagnostic.duration_seconds, 74.3)
+        self.assertIsNone(
+            parse_compression_diagnostics(json.dumps([base]).encode())[
+                0
+            ].encoding_seconds
+        )
+
+    def test_alert_sums_only_complete_encoder_timings(self):
+        job = UploadJob("x", 123, 456, 9999999999, 20 * 1024 * 1024, Mock())
+        results = [BrowserResult("private.mp4", b"x")] * 2
+
+        def alert(diagnostics):
+            return compression_outcome_alert(
+                job,
+                succeeded=True,
+                file_count=2,
+                results=results,
+                diagnostics=diagnostics,
+                effective_target=19 * 1024 * 1024,
+                unchanged_limit=20 * 1024 * 1024,
+                elapsed_seconds=2039,
+            )
+
+        first = CompressionDiagnostic(100, 74.3, 100, False, "mov", 19.95)
+        second = CompressionDiagnostic(100, None, None, True, "mp4", 0)
+        message = alert([first, second])
+        self.assertIn("Compression time (encoding only): `0:20.0`", message)
+        self.assertIn("encode `0:20.0`", message)
+        self.assertIn("74.3s clip", message)
+        self.assertIn("Elapsed: `33:59`", message)
+        self.assertIn(
+            "Compression time (encoding only): `0:39.9`", alert([first, first])
+        )
+        old = CompressionDiagnostic(100, None, None, True, "mp4")
+        self.assertNotIn("Compression time (encoding only)", alert([first, old]))
+        self.assertIn(
+            "Compression time (encoding only): `0:00.0`", alert([second, second])
+        )
+
     def test_invalid_browser_diagnostics_are_ignored(self) -> None:
         self.assertEqual(parse_compression_diagnostics(b"not json"), [])
         self.assertEqual(parse_compression_diagnostics(b"[]"), [])
@@ -206,7 +270,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         )
         results = [BrowserResult(f"private-{i}.mp4", b"x" * 1024) for i in range(10)]
         diagnostics = [
-            CompressionDiagnostic(10**12, 86400.0, 10**9, False, "asf/wmv")
+            CompressionDiagnostic(10**12, 86400.0, 10**9, False, "asf/wmv", 86400)
             for _ in results
         ]
         message = compression_outcome_alert(

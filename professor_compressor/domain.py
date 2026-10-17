@@ -59,6 +59,7 @@ class CompressionDiagnostic:
     video_kbps: int | None
     copied: bool
     input_format: str | None = None
+    encoding_seconds: float | None = None
 
 
 @dataclass(slots=True)

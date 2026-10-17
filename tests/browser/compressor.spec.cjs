@@ -97,7 +97,7 @@ test('optional caption travels with the delivered batch and disappears on comple
   expect(await page.evaluate(() => window.sentCaption)).toBe('Clips from yesterday');
   expect(await page.evaluate(() => window.sentDiagnostics)).toEqual([{
     input_bytes: expect.any(Number), duration_seconds: null,
-    video_kbps: null, copied: true, input_format: 'mp4',
+    video_kbps: null, copied: true, input_format: 'mp4', encoding_seconds: 0,
   }]);
   await expect(page.locator('#caption')).toBeHidden();
   await expect(page.locator('.caption-label')).toBeHidden();
@@ -136,6 +136,7 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   expect(diagnostic.input_bytes).toBeGreaterThan(0);
   expect(diagnostic.duration_seconds).toBeGreaterThan(0);
   expect(diagnostic.video_kbps).toBeGreaterThanOrEqual(100);
+  expect(diagnostic.encoding_seconds).toBeGreaterThan(0);
   await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();
@@ -244,6 +245,7 @@ test('small QuickTime MOV is converted to an actual MP4', async ({ page, request
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeNull();
   expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(true);
   expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('mov');
+  expect(await page.evaluate(() => window.sentDiagnostics[0].encoding_seconds)).toBe(0);
 });
 
 test('WebM conversion uses quality encoding when streams cannot be copied', async ({ page, request }) => {
@@ -261,6 +263,42 @@ test('WebM conversion uses quality encoding when streams cannot be copied', asyn
   expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(false);
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeNull();
   expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('webm');
+  expect(await page.evaluate(() => window.sentDiagnostics[0].encoding_seconds)).toBeGreaterThan(0);
+});
+
+test('encoding timer includes failed attempts but excludes loading, probing and file copies', async ({page, request}) => {
+  await page.addInitScript(() => {
+    let offset = 0;
+    const realNow = performance.now.bind(performance);
+    Object.defineProperty(performance, 'now', {value: () => realNow() + offset});
+    const send = Worker.prototype.postMessage;
+    window.encodeAttempts = 0;
+    Worker.prototype.postMessage = function(message, ...rest) {
+      if (['LOAD', 'FFPROBE', 'WRITE_FILE', 'READ_FILE'].includes(message?.type)) offset += 120000;
+      if (message?.type === 'EXEC') {
+        window.encodeAttempts++;
+        offset += 5000;
+        if (window.encodeAttempts === 1) {
+          queueMicrotask(() => this.onmessage?.({data: {
+            id: message.id, type: 'ERROR', data: new Error('Injected encode failure'),
+          }}));
+          return;
+        }
+      }
+      return send.call(this, message, ...rest);
+    };
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) window.timingDiagnostics = JSON.parse(body.get('diagnostics'));
+      return originalSend.call(this, body);
+    };
+  });
+  await openSession(page, request);
+  await deliver(page, join(fixtures,'sample.webm'));
+  const {attempts, seconds} = await page.evaluate(() => ({attempts: window.encodeAttempts, seconds: window.timingDiagnostics[0].encoding_seconds}));
+  expect(attempts).toBe(2);
+  expect(seconds).toBeGreaterThanOrEqual(10);
+  expect(seconds).toBeLessThan(60);
 });
 
 test('Matroska header is identified as MKV without sending a filename', async ({ page, request }) => {
@@ -777,6 +815,12 @@ test('expired idle session cannot start encoding', async ({page, request}) => {
 
 test('manual relay retry reuses prepared files and offers local recovery', async ({page, request}) => {
   await page.addInitScript(() => {
+    window.sentEncodingTimes = [];
+    const originalXHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (body instanceof FormData && body.has('clips')) window.sentEncodingTimes.push(JSON.parse(body.get('diagnostics'))[0].encoding_seconds);
+      return originalXHRSend.call(this,body);
+    };
     window.encoderWrites=0;
     const send=Worker.prototype.postMessage;
     Worker.prototype.postMessage=function(message,...rest) {
@@ -804,6 +848,10 @@ test('manual relay retry reuses prepared files and offers local recovery', async
   await page.getByRole('button',{name:'Check delivery / retry'}).click();
   await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord',{timeout:10000});
   expect(await page.evaluate(()=>window.encoderWrites)).toBe(writes);
+  const times = await page.evaluate(() => window.sentEncodingTimes);
+  expect(times.length).toBeGreaterThanOrEqual(4);
+  expect(times[0]).toBeGreaterThan(0);
+  expect(new Set(times).size).toBe(1);
   await expect(page.locator('#downloads')).toBeHidden();
 });
 
