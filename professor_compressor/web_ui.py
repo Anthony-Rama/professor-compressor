@@ -5,7 +5,7 @@ from .assets import ASSET_PREFIX
 REVIEW_PROMPT = """<p id="review-prompt" class="privacy" hidden>
   If you're enjoying Professor Compressor, please consider leaving a review on
   <a href="https://top.gg/bot/1550752400271351839#reviews"
-    target="_blank" rel="noopener noreferrer">Top.gg</a>!.
+    target="_blank" rel="noopener noreferrer">Top.gg</a>!
 </p>"""
 
 
@@ -69,6 +69,7 @@ __RECOVERY_NOTICE__
   <div class="session-note" id="session-note">
     <span>Private session, bound to this browser</span><span id="expires">Expires in --:--</span>
   </div>
+  <p id="completion-summary" class="completion-summary" hidden role="status"></p>
   <div id="files" class="file-list" hidden></div>
   <div id="work" class="work" hidden>
     <div id="background-warning" class="background-warning" hidden role="status">
@@ -99,7 +100,7 @@ __RECOVERY_NOTICE__
     <a id="feedback-link" class="feedback-link"
       href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20contact">Contact Us</a>
     <a class="support-link" href="https://discord.com/invite/32RWwNWyEH">Join Discord Server</a>
-    <p>The email link opens your email app; the server link opens Discord.
+    <p id="contact-help">The email link opens your email app; the server link opens Discord.
       Please don't share private videos or session links.</p>
   </div>
   <details class="performance-help format-help" id="format-help">
@@ -117,9 +118,9 @@ __RECOVERY_NOTICE__
       under <strong>Always keep these sites active</strong>, and turn off
       <strong>Energy Saver</strong> while processing.</p>
   </details>
-  <p class="privacy"><span aria-hidden="true">🔒</span> Compression runs on
+  <p class="privacy"><span id="processing-privacy"><span aria-hidden="true">🔒</span> Compression runs on
     this device. Only finished files are sent through the relay to Discord.
-    MP4s that already fit may be sent unchanged.<br>
+    MP4s that already fit may be sent unchanged.<br></span>
     <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
     <span aria-hidden="true"> · </span>
     <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></p>
@@ -366,6 +367,8 @@ function hideMessage() {
 
 function showFeedback(outcome) {
   document.getElementById("review-prompt").hidden = outcome !== "success";
+  document.getElementById("contact-help").hidden = outcome === "success";
+  document.getElementById("processing-privacy").hidden = outcome === "success";
   feedbackLink.href = "mailto:professorcompressor.support@gmail.com?subject=" +
     encodeURIComponent("Professor Compressor feedback (" + outcome + ")");
   feedbackActions.hidden = false;
@@ -1282,10 +1285,17 @@ form.addEventListener("submit", async (event) => {
     overallProgress.value = 100;
     setRunDetail("Complete");
     setPhase("done", "Delivered to Discord", response.message);
-    showMessage("Compression complete. You can close this page and return to Discord. To upload more videos, run /compress again.", "success");
+    showMessage("You can close this page and return to Discord. To upload more videos, run /compress again.", "success");
     deliveryComplete = true;
     showFeedback("success");
-    pageHeading.textContent = "Upload complete";
+    pageHeading.textContent = "Delivered to Discord";
+    form.classList.add("completed");
+    const completionSummary = document.getElementById("completion-summary");
+    completionSummary.textContent = "✓ " + preparedResults.length +
+      (preparedResults.length === 1 ? " video delivered" : " videos delivered") +
+      " · Completed in " + readableTime((performance.now() - startedAt) / 1000);
+    completionSummary.hidden = false;
+    work.hidden = true;
     pageIntro.hidden = true;
     document.getElementById("picker-row").hidden = true;
     selection.hidden = true;

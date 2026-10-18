@@ -499,6 +499,9 @@ def page(title: str, body: str) -> web.Response:
     .remove-file:focus-visible {{ outline: 3px solid rgba(124, 131, 255, .5);
                                   outline-offset: 2px; }}
     .file-card progress {{ height: 7px; margin-top: 10px; }}
+    .completed .file-card progress {{ display: none; }}
+    .completed .file-status {{ color: #9ce8d2; }}
+    .completion-summary {{ margin: 0 0 20px; color: #9ce8d2; font-size: 13px; }}
     .file-meta {{ margin-top: 7px; color: #7f8da1; font-size: 11px; }}
     .phase-panel {{ padding: 16px; border: 1px solid #3a4861; border-radius: 14px;
                     background: #111a2a; }}
