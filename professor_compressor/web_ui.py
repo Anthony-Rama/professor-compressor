@@ -2,6 +2,12 @@ import json
 
 from .assets import ASSET_PREFIX
 
+REVIEW_PROMPT = """<p id="review-prompt" class="privacy" hidden>
+  If you're enjoying Professor Compressor, please consider leaving a review on
+  <a href="https://top.gg/bot/1550752400271351839#reviews"
+    target="_blank" rel="noopener noreferrer">Top.gg</a>!.
+</p>"""
+
 
 def _json_script_value(value: object) -> str:
     """Serialize data without allowing it to terminate an inline script."""
@@ -88,6 +94,7 @@ __RECOVERY_NOTICE__
   </div>
   <div id="message" class="message" hidden aria-live="assertive"></div>
   <div id="downloads" class="feedback-actions" hidden aria-label="Save prepared videos"></div>
+  __REVIEW_PROMPT__
   <div id="feedback-actions" class="feedback-actions contact-actions" hidden>
     <a id="feedback-link" class="feedback-link"
       href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20contact">Contact Us</a>
@@ -358,6 +365,7 @@ function hideMessage() {
 }
 
 function showFeedback(outcome) {
+  document.getElementById("review-prompt").hidden = outcome !== "success";
   feedbackLink.href = "mailto:professorcompressor.support@gmail.com?subject=" +
     encodeURIComponent("Professor Compressor feedback (" + outcome + ")");
   feedbackActions.hidden = false;
@@ -1348,6 +1356,7 @@ expiryTimer = setInterval(updateExpiry, 1000);
             ),
         )
         .replace("__MAX_BATCH_BYTES__", _json_script_value(max_batch_bytes))
+        .replace("__REVIEW_PROMPT__", REVIEW_PROMPT)
         .replace("__SESSION_SECRET__", _json_script_value(session_secret))
         .replace("__EXPIRES_SECONDS__", _json_script_value(expires_in_seconds))
         .replace(
@@ -1375,7 +1384,8 @@ def browser_delivery_status(session_secret: str) -> str:
         "the previous page cannot be restored. "
         '<a href="" id="return-to-compressor">Return to compressor</a> '
         "and select them again.</p>"
-        '<p class="privacy"><a href="/privacy">Privacy Policy</a></p>'
+        + REVIEW_PROMPT
+        + '<p class="privacy"><a href="/privacy">Privacy Policy</a></p>'
         "<script>\n"
         f"const SESSION_SECRET = {_json_script_value(session_secret)};\n"
         'const statusLine = document.getElementById("delivery-status");\n'
@@ -1397,6 +1407,7 @@ def browser_delivery_status(session_secret: str) -> str:
         "      explanation.hidden = true;\n"
         '      statusLine.textContent = "Delivered to Discord. You can return to your channel. To upload more videos, run /compress again.";\n'
         '      statusLine.classList.add("success");\n'
+        '      document.getElementById("review-prompt").hidden = false;\n'
         "    } else if (body.ready) {\n"
         '      heading.textContent = "Upload interrupted";\n'
         "      explanation.hidden = true;\n"

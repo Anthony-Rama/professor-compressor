@@ -149,6 +149,7 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   });
   await openSession(page, request);
   await expect(page.locator('#feedback-actions')).toBeHidden();
+  await expect(page.locator('#review-prompt')).toBeHidden();
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
   await deliver(page, join(fixtures, 'large.mp4'));
   const [diagnostic] = await page.evaluate(() => window.sentDiagnostics);
@@ -165,6 +166,9 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();
+  await expect(page.locator('#review-prompt')).toHaveText("If you're enjoying Professor Compressor, please consider leaving a review on Top.gg!.");
+  await expect(page.locator('#review-prompt')).toBeVisible();
+  await expect(page.locator('#review-prompt a')).toHaveAttribute('href', 'https://top.gg/bot/1550752400271351839#reviews');
   await expect(page.locator('#page-heading')).toHaveText('Upload complete');
   await expect(page.locator('#page-intro')).toBeHidden();
   await expect(page.locator('#drop-zone')).toBeHidden();
@@ -751,6 +755,7 @@ test('completed session refresh shows delivered receipt, not duplicate uploader'
   await page.reload();
   await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord');
   await expect(page.getByRole('heading')).toHaveText('Delivery complete');
+  await expect(page.locator('#review-prompt')).toBeVisible();
   await expect(page.locator('#delivery-explanation')).toBeHidden();
   await expect(page.locator('#delivery-status')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('#clips')).toHaveCount(0);
@@ -782,6 +787,7 @@ test('delivery rejection shows an error and prevents duplicate submission', asyn
   await page.locator('#submit').click();
   await expect(page.locator('#phase-title')).toHaveText('Action needed');
   await expect(page.locator('#submit')).toBeHidden();
+  await expect(page.locator('#review-prompt')).toBeHidden();
 });
 
 test('lost success response is recovered without another upload', async ({page, request}) => {
