@@ -3,8 +3,8 @@ import json
 from .assets import ASSET_PREFIX
 
 REVIEW_PROMPT = """<p id="review-prompt" class="privacy" hidden>
-  If you're enjoying Professor Compressor, please consider leaving a review on
-  <a href="https://top.gg/bot/1550752400271351839#reviews"
+  If you're enjoying Professor Compressor, please consider leaving a review and/or upvoting on
+  <a href="https://top.gg/bot/1550752400271351839"
     target="_blank" rel="noopener noreferrer">Top.gg</a>!
 </p>"""
 

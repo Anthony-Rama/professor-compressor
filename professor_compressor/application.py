@@ -524,6 +524,8 @@ def page(title: str, body: str) -> web.Response:
     .processing .controls {{ display: flex; justify-content: center; }}
     .processing .controls button {{ width: auto; min-width: 120px; }}
     .secondary {{ width: auto; background: #303c50; box-shadow: none; }}
+    #cancel {{ background: #b42336; border: 1px solid #dc4053; color: #fff;
+               box-shadow: none; }}
     .message {{ margin-top: 14px; padding: 13px 14px; border-radius: 11px;
                 font-size: 13px; line-height: 1.45; }}
     .message.error {{ border: 1px solid #733648; background: #321b27; }}

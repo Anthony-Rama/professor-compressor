@@ -167,13 +167,13 @@ test('oversized video loads WebAssembly and compresses under the real CSP', asyn
   await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
   await expect(page.locator('.file-meta')).toContainText('smaller');
   await expect(page.locator('#feedback-actions')).toBeVisible();
-  await expect(page.locator('#review-prompt')).toHaveText("If you're enjoying Professor Compressor, please consider leaving a review on Top.gg!");
+  await expect(page.locator('#review-prompt')).toHaveText("If you're enjoying Professor Compressor, please consider leaving a review and/or upvoting on Top.gg!");
   await expect(page.locator('#review-prompt')).toBeVisible();
   await expect(page.locator('#contact-help')).toBeHidden();
   await expect(page.locator('#processing-privacy')).toBeHidden();
   await expect(page.getByRole('link', {name: 'Privacy Policy', exact: true})).toBeVisible();
   await expect(page.getByRole('link', {name: 'Terms of Service', exact: true})).toBeVisible();
-  await expect(page.locator('#review-prompt a')).toHaveAttribute('href', 'https://top.gg/bot/1550752400271351839#reviews');
+  await expect(page.locator('#review-prompt a')).toHaveAttribute('href', 'https://top.gg/bot/1550752400271351839');
   await expect(page.locator('#page-heading')).toHaveText('Delivered to Discord');
   await expect(page.locator('#completion-summary')).toHaveText(/^✓ 1 video delivered · Completed in \d+:\d{2}$/);
   await expect(page.locator('#completion-summary')).toBeVisible();
