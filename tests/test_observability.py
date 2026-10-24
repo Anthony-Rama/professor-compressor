@@ -6,6 +6,7 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from aiohttp import BasicAuth
@@ -243,6 +244,89 @@ class StoreTests(unittest.TestCase):
             self.view(dimension="browser", value="Firefox")["totals"]["sessions"], 0
         )
 
+    def test_delivered_file_aggregate_uses_latest_server_receipt_only(self):
+        self.emit("created")
+        self.emit(
+            "file_received",
+            file_index=1,
+            data={"input_bytes": 1000, "output_bytes": 500, "path": "compressed"},
+        )
+        self.emit(
+            "file_received",
+            file_index=1,
+            data={"input_bytes": 1000, "output_bytes": 400, "path": "compressed"},
+        )
+        self.emit(
+            "file_ready",
+            source="browser",
+            file_index=1,
+            data={"input_bytes": 1000, "output_bytes": 400},
+        )
+        self.emit("file_received", file_index=2, data={"output_bytes": 200})
+        self.assertEqual(self.view()["files"]["measured_files"], 0)
+        self.emit("delivered", data={"files": 2})
+        result = self.view()
+        self.assertEqual(result["files"]["measured_files"], 1)
+        self.assertEqual(result["files"]["input_bytes"], 1000)
+        self.assertEqual(result["files"]["output_bytes"], 400)
+        self.assertEqual(result["files"]["reduction_percent"], 60)
+
+    def test_late_post_delivery_failure_is_not_a_recovery(self):
+        self.emit("delivered", data={"files": 1})
+        self.emit("client_failed", source="browser")
+        self.assertEqual(self.view()["totals"]["recovered"], 0)
+
+    def test_distinct_manual_runs_and_automatic_retries(self):
+        self.emit("started")
+        self.emit("started")
+        self.emit("retry", source="browser", data={"attempt": 2})
+        self.run = uuid.uuid4().hex
+        self.emit("started")
+        self.assertEqual(self.view()["retries"], {"runs": 2, "automatic_retries": 1})
+
+    def test_extended_filters_and_hidden_test_notice(self):
+        self.emit("created", is_test=True)
+        self.emit(
+            "file_ready",
+            source="browser",
+            data={
+                "device": "desktop",
+                "engine": "single-threaded",
+                "path": "compressed",
+            },
+        )
+        self.assertEqual(self.view()["collection"]["hidden_test_sessions"], 1)
+        self.assertEqual(
+            self.view(include_tests=True)["collection"]["hidden_test_sessions"], 0
+        )
+        self.assertEqual(
+            self.view(dimension="browser", value="Firefox")["collection"][
+                "hidden_test_sessions"
+            ],
+            0,
+        )
+        for field, value in (
+            ("device", "desktop"),
+            ("engine", "single-threaded"),
+            ("path", "compressed"),
+        ):
+            result = self.view(include_tests=True, dimension=field, value=value)
+            self.assertEqual(result["totals"]["sessions"], 1)
+            self.assertEqual(result["groups"][field][0]["value"], value)
+
+    def test_pending_cancelled_and_unknown_are_separate(self):
+        self.emit("started")
+        self.assertEqual(self.view()["totals"]["in_progress"], 1)
+        self.emit("cancelled")
+        result = self.view()["totals"]
+        self.assertEqual(result["cancelled"], 1)
+        self.assertEqual(result["needs_attention"], 0)
+        self.emit("started")
+        self.emit("interrupted")
+        result = self.view()["totals"]
+        self.assertEqual(result["unknown"], 1)
+        self.assertEqual(result["needs_attention"], 0)
+
     def test_timing_samples_not_duplicated_by_repeated_measurement_fields(self):
         self.emit("created")
         self.emit("received", data={"relay_receive_seconds": 3})
@@ -468,6 +552,36 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
             "/ops/data?days=bad", auth=BasicAuth("admin", self.key)
         )
         self.assertEqual(response.status, 400)
+
+    async def test_live_server_count_is_current_private_and_filter_independent(self):
+        fake = SimpleNamespace(
+            guilds=[
+                SimpleNamespace(unavailable=False, name="private-guild", id=123),
+                SimpleNamespace(unavailable=True, name="private-guild", id=456),
+            ],
+            latency=0.042,
+            is_ready=Mock(return_value=True),
+        )
+        with patch.object(app, "client", fake):
+            response = await self.client.get(
+                "/ops/data?reference=PC-NONE&tests=0", auth=BasicAuth("admin", self.key)
+            )
+            result = await response.json()
+            self.assertEqual(result["runtime"]["connected_servers"], 2)
+            self.assertTrue(result["runtime"]["server_count_current"])
+            self.assertEqual(result["runtime"]["unavailable_servers"], 1)
+            self.assertEqual(result["runtime"]["gateway_latency_ms"], 42)
+            self.assertNotIn("private-guild", json.dumps(result))
+            fake.guilds.pop()
+            self.assertEqual(app.dashboard_runtime()["connected_servers"], 1)
+            fake.is_ready.return_value = False
+            fake.latency = float("nan")
+            cached = app.dashboard_runtime()
+            self.assertEqual(cached["connected_servers"], 1)
+            self.assertFalse(cached["server_count_current"])
+            self.assertIsNone(cached["gateway_latency_ms"])
+            fake.guilds.clear()
+            self.assertIsNone(app.dashboard_runtime()["connected_servers"])
 
     async def test_dashboard_auth_attempts_are_bounded(self):
         for _ in range(10):

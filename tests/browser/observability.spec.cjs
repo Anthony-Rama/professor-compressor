@@ -95,14 +95,23 @@ for(const width of [375,1440]) {
       await expect(page.locator('#page-heading')).toHaveText('Delivered to Discord');
       await page.goto('http://127.0.0.1:18764/ops');
       await expect(page.locator('#status')).toContainText('Updated');
+      await expect(page.locator('[data-metric="connected_servers"] .metric-value')).toHaveText('57');
       const publicView=await (await request.get('/ops/data',{headers:auth})).json();
       expect(publicView.totals.sessions).toBe(0);
+      expect(publicView.runtime.connected_servers).toBe(57);
+      await expect(page.locator('#notice')).toBeVisible();
       await page.locator('#tests').check();
       await page.getByRole('button',{name:'Refresh',exact:true}).click();
+      await page.screenshot({path:`/tmp/professor-ops-${width}.png`,fullPage:true});
+      await page.getByRole('tab',{name:'Session explorer',exact:true}).click();
       await expect(page.locator('#sessions')).toContainText('PC-');
       await page.getByRole('button',{name:sample.reference,exact:true}).click();
       await expect(page.locator('#events')).toContainText('delivered');
-      await page.screenshot({path:`/tmp/professor-ops-${width}.png`,fullPage:true});
+      await page.screenshot({path:`/tmp/professor-ops-sessions-${width}.png`,fullPage:true});
+      for(const name of ['Activity & adoption','Reliability','Performance','System health','Overview']){
+        await page.getByRole('tab',{name,exact:true}).click();
+        expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),name).toBe(true);
+      }
       const overflow=await page.evaluate(()=>Array.from(document.querySelectorAll('main,form,label,input,select,.tables,.scroll,table')).filter(el=>el.getBoundingClientRect().right>innerWidth).map(el=>({tag:el.tagName,id:el.id,width:el.getBoundingClientRect().width})));
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),JSON.stringify(overflow)).toBe(true);
     } finally { await context.close(); }
@@ -159,11 +168,11 @@ test('an older dashboard response cannot overwrite a newer refresh', async ({bro
     await page.goto('http://127.0.0.1:18764/ops');
     await expect.poll(()=>Boolean(first)).toBe(true);
     await page.getByRole('button',{name:'Refresh',exact:true}).click();
-    await expect(page.locator('#summary strong')).toHaveText('222');
+    await expect(page.locator('#summary [data-metric="sessions"] strong')).toHaveText('222');
     const oldResponse=page.waitForResponse(r=>r.url().includes('/ops/data?'));
     await first.fulfill({json:snapshot(111)});
     await oldResponse;
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-    await expect(page.locator('#summary strong')).toHaveText('222');
+    await expect(page.locator('#summary [data-metric="sessions"] strong')).toHaveText('222');
   } finally {await context.close();}
 });

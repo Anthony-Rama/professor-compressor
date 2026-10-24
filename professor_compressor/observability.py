@@ -592,7 +592,16 @@ class EventStore:
             args: list = [cutoff, include_tests]
             if (
                 dimension
-                in {"stage", "error_code", "input_format", "browser", "revision"}
+                in {
+                    "stage",
+                    "error_code",
+                    "input_format",
+                    "browser",
+                    "device",
+                    "engine",
+                    "path",
+                    "revision",
+                }
                 and value
             ):
                 if dimension == "revision":
@@ -611,7 +620,10 @@ class EventStore:
                     "COALESCE(SUM(started),0) started, COALESCE(SUM(delivered),0) delivered, "
                     "COUNT(DISTINCT NULLIF(user_key,'')) users, COUNT(DISTINCT NULLIF(guild_key,'')) servers, "
                     "COALESCE(SUM(CASE WHEN delivered=1 THEN files ELSE 0 END),0) files, "
-                    "COALESCE(SUM(CASE WHEN delivered=1 AND failures>0 THEN 1 ELSE 0 END),0) recovered "
+                    "COALESCE(SUM(CASE WHEN delivered=1 AND EXISTS(SELECT 1 FROM events f WHERE f.session_id=s.id "
+                    "AND f.event IN ('client_failed','upload_failed','delivery_failed') "
+                    "AND f.id<(SELECT MIN(d.id) FROM events d WHERE d.session_id=s.id AND d.event='delivered' AND d.source='server')) "
+                    "THEN 1 ELSE 0 END),0) recovered "
                     "FROM sessions s WHERE " + where,
                     args,
                 ).fetchone()
@@ -631,6 +643,25 @@ class EventStore:
                     [time.time() - 7200, *args],
                 )
             ]
+            state_counts = {row["status"]: row["count"] for row in statuses}
+            totals["needs_attention"] = sum(
+                state_counts.get(state, 0)
+                for state in ("client_failed", "upload_failed", "delivery_failed")
+            )
+            totals["in_progress"] = sum(
+                state_counts.get(state, 0)
+                for state in ("processing", "uploading", "queued", "delivering")
+            )
+            totals["cancelled"] = state_counts.get("cancelled", 0)
+            totals["unknown"] = state_counts.get("unknown", 0)
+            retries = dict(
+                connection.execute(
+                    "SELECT COUNT(DISTINCT CASE WHEN e.event='started' AND e.run_id!='' THEN e.session_id||e.run_id END) runs, "
+                    "COALESCE(SUM(e.event='retry'),0) automatic_retries "
+                    "FROM events e JOIN sessions s ON s.id=e.session_id WHERE " + where,
+                    args,
+                ).fetchone()
+            )
             session_where, session_args = where, list(args)
             sessions = [
                 dict(row)
@@ -657,7 +688,15 @@ class EventStore:
                     item["data"] = json.loads(item["data"])
                 history.reverse()
             groups = {}
-            for field in ("stage", "error_code", "input_format", "browser"):
+            for field in (
+                "stage",
+                "error_code",
+                "input_format",
+                "browser",
+                "device",
+                "engine",
+                "path",
+            ):
                 groups[field] = [
                     dict(row)
                     for row in connection.execute(
@@ -753,6 +792,43 @@ class EventStore:
                     args,
                 )
             ]
+            # One authoritative receipt per file index. Browser file-ready reports
+            # are intentionally not added again to delivered byte totals.
+            files = dict(
+                connection.execute(
+                    "SELECT COUNT(*) measured_files,COALESCE(SUM(json_extract(e.data,'$.input_bytes')),0) input_bytes, "
+                    "COALESCE(SUM(json_extract(e.data,'$.output_bytes')),0) output_bytes, "
+                    "COALESCE(SUM(CASE WHEN json_extract(e.data,'$.path')='unchanged' THEN 1 ELSE 0 END),0) unchanged, "
+                    "COALESCE(SUM(CASE WHEN json_extract(e.data,'$.path')='remuxed' THEN 1 ELSE 0 END),0) remuxed "
+                    "FROM events e JOIN sessions s ON s.id=e.session_id WHERE "
+                    + where
+                    + " AND s.delivered=1 AND e.event='file_received' AND e.source='server' "
+                    "AND json_extract(e.data,'$.input_bytes')>0 AND json_extract(e.data,'$.output_bytes')>=0 "
+                    "AND e.id=(SELECT MAX(f.id) FROM events f WHERE f.session_id=e.session_id AND f.file_index=e.file_index AND f.event='file_received' AND f.source='server')",
+                    args,
+                ).fetchone()
+            )
+            files["reduction_percent"] = (
+                round(100 * (1 - files["output_bytes"] / files["input_bytes"]), 1)
+                if files["input_bytes"]
+                else None
+            )
+            collection = dict(
+                connection.execute(
+                    "SELECT MIN(created) since,COUNT(*) retained_sessions FROM sessions "
+                    "WHERE status NOT IN ('installed','removed')"
+                ).fetchone()
+            )
+            collection["hidden_test_sessions"] = (
+                0
+                if include_tests
+                else connection.execute(
+                    "SELECT COUNT(*) FROM sessions s WHERE "
+                    + where
+                    + " AND s.is_test=1",
+                    [cutoff, True, *args[2:]],
+                ).fetchone()[0]
+            )
             return {
                 "storage": self.health(),
                 "totals": totals,
@@ -762,6 +838,9 @@ class EventStore:
                 "activity": activity,
                 "adoption": repeat,
                 "performance": performance,
+                "files": files,
+                "retries": retries,
+                "collection": collection,
                 "sessions": sessions,
                 "events": history,
             }

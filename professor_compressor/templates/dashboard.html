@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Operations · Professor Compressor</title>
+  <link rel="stylesheet" href="/brand/dashboard.css">
+  <script src="/brand/dashboard.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to dashboard</a>
+<aside class="sidebar">
+  <a class="brand" href="/ops"><img src="/brand/professor-compressor.png" alt="" width="40" height="40"><span>Professor<br><strong>Compressor</strong></span></a>
+  <p class="eyebrow nav-label">Workspace</p>
+  <nav aria-label="Dashboard sections" role="tablist" aria-orientation="vertical">
+    <button id="tab-overview" role="tab" aria-selected="true" aria-controls="panel-overview" data-tab="overview">Overview</button>
+    <button id="tab-activity" role="tab" aria-selected="false" aria-controls="panel-activity" data-tab="activity" tabindex="-1">Activity &amp; adoption</button>
+    <button id="tab-reliability" role="tab" aria-selected="false" aria-controls="panel-reliability" data-tab="reliability" tabindex="-1">Reliability</button>
+    <button id="tab-performance" role="tab" aria-selected="false" aria-controls="panel-performance" data-tab="performance" tabindex="-1">Performance</button>
+    <button id="tab-sessions" role="tab" aria-selected="false" aria-controls="panel-sessions" data-tab="sessions" tabindex="-1">Session explorer</button>
+    <button id="tab-system" role="tab" aria-selected="false" aria-controls="panel-system" data-tab="system" tabindex="-1">System health</button>
+  </nav>
+  <div class="sidebar-foot"><span class="lock-dot"></span> Private operator workspace<p>Session history retained for up to 30 days.</p></div>
+</aside>
+<main id="main" tabindex="-1">
+  <header class="page-header"><div><p class="eyebrow">Professor Compressor / Operations</p><h1 id="page-title">Overview</h1><p class="subtitle" id="page-description">A clear view of your bot, its users, and every delivery.</p></div><span class="private-tag">Password protected</span></header>
+  <section aria-label="Current bot status" class="live-strip"><div class="live-label"><span class="pulse"></span> LIVE SNAPSHOT <span>Independent of history filters</span></div><div id="live" class="live-grid"><p>Loading bot status…</p></div></section>
+  <form id="filters" class="filter-bar">
+    <label>History window<select id="days"><option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select></label>
+    <label>Session reference<input id="reference" placeholder="PC-…" maxlength="64" autocomplete="off"></label>
+    <label>Filter by<select id="dimension"><option value="">All activity</option><option value="error_code">Error code</option><option value="stage">Stage</option><option value="input_format">Input format</option><option value="browser">Browser</option><option value="device">Device</option><option value="engine">Engine</option><option value="path">Processing path</option><option value="revision">Release</option></select></label>
+    <label>Filter value<input id="value" maxlength="64" placeholder="e.g. METADATA_INVALID" autocomplete="off"></label>
+    <label class="check"><input id="tests" type="checkbox"> Include tests</label>
+    <button type="submit" class="primary">Refresh</button><button type="button" id="reset" class="quiet">Reset</button>
+    <div class="filter-footer"><p id="status" role="status" aria-live="polite">Loading…</p><div class="filter-options"><label class="check"><input id="auto-refresh" type="checkbox"> Refresh every 30s</label><button type="button" id="export" class="text-button" disabled>Export JSON ↗</button></div></div>
+  </form>
+  <div id="notice" class="notice" hidden><div><strong id="notice-title">No production sessions in this view yet</strong><p id="notice-text"></p></div><button id="show-tests" class="quiet" type="button">Show test activity</button></div>
+
+  <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+    <div class="section-heading"><h2>Usage at a glance</h2><span class="scope-label">Selected history window</span></div>
+    <div id="summary" class="stat-grid"></div>
+    <div class="two-column"><section class="card"><div class="card-heading"><div><h2>Daily session activity</h2><p>UTC days · time window and test setting only; category/reference filters do not apply.</p></div></div><div class="legend"><span class="key created"></span> Created <span class="key delivered"></span> Delivered</div><div id="chart" class="activity-chart"></div></section><section class="card"><h2>Session funnel</h2><p>Distinct sessions reaching each step.</p><div id="funnel"></div></section></div>
+    <section class="card"><div class="card-heading"><div><h2>Outcomes</h2><p>Unresolved and cancelled sessions stay separate from reported failures.</p></div><button type="button" class="text-button" data-open="reliability">View reliability →</button></div><div id="outcomes" class="outcome-grid"></div></section>
+  </section>
+
+  <section id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
+    <div class="section-heading"><h2>Adoption &amp; server movement</h2><span class="scope-label">Selected history window</span></div><div id="adoption" class="stat-grid"></div>
+    <section class="card"><h2>Daily activity</h2><p>Recorded joins, removals, sessions and deliveries. This table follows the time window and test setting; reference/category filters do not apply.</p><div id="activity"></div></section>
+    <div class="three-column"><section class="card"><h2>Input formats</h2><div id="group-input_format"></div></section><section class="card"><h2>Browsers</h2><div id="group-browser"></div></section><section class="card"><h2>Devices</h2><div id="group-device"></div></section></div>
+  </section>
+
+  <section id="panel-reliability" role="tabpanel" aria-labelledby="tab-reliability" hidden>
+    <div id="reliability-summary" class="stat-grid"></div>
+    <div class="two-column"><section class="card"><h2>Error categories</h2><p>Reports may come from retries that later succeeded.</p><div id="group-error_code"></div></section><section class="card"><h2>Failures by stage</h2><p>Cancelled operations are excluded.</p><div id="group-failure_stage"></div></section></div>
+    <div class="two-column"><section class="card"><h2>Session outcomes</h2><div id="statuses"></div></section><section class="card"><h2>Stages reached</h2><div id="group-stage"></div></section></div>
+  </section>
+
+  <section id="panel-performance" role="tabpanel" aria-labelledby="tab-performance" hidden>
+    <div id="performance-summary" class="stat-grid"></div>
+    <section class="card"><h2>Time spent at each stage</h2><p>Median and p95 of up to 5,000 recent samples per metric. Encoding is per file; other timings are per run or delivery. Samples may include failed attempts.</p><div id="timings"></div></section>
+    <section class="card"><h2>File size &amp; processing</h2><p>Delivered files with reported input sizes and server-measured outputs. File counts below indicate measurement coverage.</p><div id="file-summary" class="outcome-grid"></div></section>
+    <section class="card"><h2>Comparable encoding groups</h2><p>Grouped by format, duration and output height. Higher “× real time” is faster; this is not a controlled device benchmark or a quality score.</p><div id="performance"></div></section>
+    <div class="two-column"><section class="card"><h2>Video engines</h2><div id="group-engine"></div></section><section class="card"><h2>Processing paths</h2><div id="group-path"></div></section></div>
+  </section>
+
+  <section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" hidden>
+    <section class="card"><h2>Recent sessions</h2><p>Up to 100 matching sessions. Select a reference to inspect the run, file and stage details.</p><div id="sessions"></div></section>
+    <section class="card"><h2>File diagnostics</h2><p>Received files in the selected session. File numbers replace private filenames; input properties and encoding times are browser-reported.</p><div id="session-files"></div></section>
+    <section class="card"><div class="card-heading"><div><h2>Session timeline</h2><p id="timeline-heading">Select a session to inspect its history.</p></div></div><div id="events"></div></section>
+  </section>
+
+  <section id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>
+    <div id="system-summary" class="stat-grid"></div>
+    <div class="two-column"><section class="card"><h2>Service &amp; storage</h2><div id="system"></div></section><section class="card"><h2>Process counters</h2><p>Since this process started. Includes test activity and does not follow history filters.</p><div id="counters"></div></section></div>
+    <section class="card"><h2>Release comparison</h2><div id="group-revision"></div></section>
+  </section>
+  <footer class="page-footer"><p id="history-note"></p><p>Browser measurements are best-effort. Delivery is confirmed by the server. Event times use your local timezone; daily activity uses UTC. Missing reports cannot establish a failure cause.</p></footer>
+</main>
+</body>
+</html>

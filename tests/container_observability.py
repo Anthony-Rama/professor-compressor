@@ -51,7 +51,13 @@ async def main():
         auth = BasicAuth("admin", app.settings.observability_admin_key)
         async with ClientSession() as client:
             base = "http://127.0.0.1:18765"
-            for route in ("/", "/healthz", "/brand/diagnostics.js"):
+            for route in (
+                "/",
+                "/healthz",
+                "/brand/diagnostics.js",
+                "/brand/dashboard.js",
+                "/brand/dashboard.css",
+            ):
                 async with client.get(base + route) as response:
                     assert response.status == 200, route
             async with client.get(base + "/readyz") as response:
@@ -106,6 +112,8 @@ async def main():
                 base + "/ops/data?tests=1&reference=" + REFERENCE, auth=auth
             ) as response:
                 report = await response.json()
+                assert report["runtime"]["connected_servers"] is None
+                assert report["runtime"]["server_count_current"] is False
                 assert report["totals"]["delivered"] == 1
                 assert any(
                     event["event"] == "stage_finished" for event in report["events"]

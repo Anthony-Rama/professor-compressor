@@ -4,6 +4,40 @@ The private `/ops` dashboard provides a session explorer and reliability,
 performance, and adoption summaries. No encoding or media-analysis passes are
 added. Tracking is disabled until configured and does not backfill old alerts.
 
+## Dashboard sections and live information
+
+The live snapshot shows the bot's current installed-server count from the Discord
+gateway cache, service readiness, active sessions/uploads, queue depth, uptime,
+and release. It does not depend on history filters or Include tests. During a
+disconnect it labels the count as last known; before a connection has populated
+the cache it shows unavailable rather than claiming zero installations. No extra
+Discord API calls, member intents, raw guild names, or guild IDs are required.
+
+History is organized into Overview, Activity & adoption, Reliability, Performance,
+Session explorer, and System health. Server installations are distinct from
+servers with usage in a selected window. Daily activity uses UTC event dates;
+session/event timestamps are displayed in the operator browser's local timezone.
+Daily activity ignores reference/category filters, as its captions explain.
+
+Use the session explorer for file-number-based size, format, resolution, frame
+rate, and encoding details, followed by the run timeline. Private filenames are
+not collected. File-size summaries count the latest server receipt per file index
+in delivered sessions with both input/output measurements; browser file-ready
+reports are not added again. Input sizes remain browser-reported. Measurement
+coverage can be smaller than the number of delivered files.
+
+Needs attention counts latest reported failure states. Cancelled, in-progress,
+and unknown outcomes remain separate. Delivered / started includes pending starts
+and is not a final success-rate estimate. Recovery requires a failure recorded
+before server-confirmed delivery. Manual runs require recorded run IDs; automatic
+retries and all other browser events are best-effort.
+
+Process counters and storage-error/drop counts reset on restart and include tests.
+The system section makes this boundary explicit. Optional auto-refresh runs every
+30 seconds only while the dashboard is visible and no refresh is already pending.
+The password-protected endpoint authenticates every refresh. Export captures the
+latest successfully loaded view; stale/failed refreshes cannot export old data.
+
 ## Configuration
 
 Use the separate development bot or credential-free browser harness locally.

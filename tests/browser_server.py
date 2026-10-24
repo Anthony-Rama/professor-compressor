@@ -27,6 +27,24 @@ from professor_compressor import application as app  # noqa: E402
 from professor_compressor.domain import UploadJob  # noqa: E402
 
 delivery_delays = {}
+real_runtime_snapshot = app.dashboard_runtime
+
+
+def test_runtime_snapshot():
+    # Explicitly simulated Discord cache, only in this credential-free harness.
+    snapshot = real_runtime_snapshot()
+    snapshot.update(
+        connected_servers=57,
+        server_count_current=True,
+        discord_ready=True,
+        ready=True,
+        commands_synced=True,
+        gateway_latency_ms=42,
+    )
+    return snapshot
+
+
+app.dashboard_runtime = test_runtime_snapshot
 
 
 async def test_session(request: web.Request) -> web.Response:

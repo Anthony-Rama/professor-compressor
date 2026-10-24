@@ -2116,6 +2116,36 @@ if BOTSTATS_GUILD_ID is not None:
     )(botstats)
 
 
+def dashboard_runtime() -> dict:
+    """Cached Discord/process facts; no API requests or private identifiers."""
+    guilds = client.guilds
+    connected = client.is_ready()
+    workers_ready = len(delivery_workers) == DELIVERY_WORKERS and all(
+        not worker.done() for worker in delivery_workers
+    )
+    latency = client.latency
+    return {
+        "connected_servers": len(guilds) if connected or guilds else None,
+        "server_count_current": connected,
+        "unavailable_servers": sum(bool(guild.unavailable) for guild in guilds),
+        "discord_ready": connected,
+        "ready": connected and commands_synced and workers_ready and not draining,
+        "commands_synced": commands_synced,
+        "draining": draining,
+        "gateway_latency_ms": round(latency * 1000) if math.isfinite(latency) else None,
+        "revision": os.getenv("APP_REVISION", "development")[:64],
+        "active_sessions": len(jobs),
+        "active_uploads": active_relay_uploads,
+        "queue_depth": delivery_queue.qsize() if delivery_queue else 0,
+        "queue_capacity": DELIVERY_QUEUE_SIZE,
+        "delivery_workers": sum(not worker.done() for worker in delivery_workers),
+        "worker_capacity": DELIVERY_WORKERS,
+        "buffer_bytes": delivery_bytes_held,
+        "buffer_limit_bytes": MAX_DELIVERY_BUFFER_BYTES,
+        "counters": metrics.snapshot(),
+    }
+
+
 def create_web_application() -> web.Application:
     """Build the HTTP application so routes can be smoke-tested independently."""
     application = web.Application(
@@ -2133,7 +2163,11 @@ def create_web_application() -> web.Application:
 
     application.cleanup_ctx.append(diagnostic_lifecycle)
     register_dashboard(
-        application, event_store, settings.observability_admin_key, request_ip
+        application,
+        event_store,
+        settings.observability_admin_key,
+        request_ip,
+        runtime_snapshot=dashboard_runtime,
     )
     application.router.add_get("/", home)
     application.router.add_get("/guide/compress-video-for-discord", video_guide)
