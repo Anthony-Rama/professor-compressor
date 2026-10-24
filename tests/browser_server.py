@@ -27,6 +27,10 @@ from professor_compressor import application as app  # noqa: E402
 from professor_compressor.domain import UploadJob  # noqa: E402
 
 delivery_delays = {}
+test_discord_limit = int(os.environ.get("BROWSER_TEST_DISCORD_LIMIT_BYTES", "1100000"))
+if not 1_100_000 <= test_discord_limit <= 20 * 1024 * 1024:
+    raise ValueError("Browser test upload limit is outside the supported test range")
+capture_directory = os.environ.get("BROWSER_TEST_CAPTURE_DIR")
 real_runtime_snapshot = app.dashboard_runtime
 
 
@@ -53,8 +57,9 @@ async def test_session(request: web.Request) -> web.Response:
         token=token,
         user_id=1,
         channel_id=2,
-        expires_at=time.time() + 600,
-        discord_limit=1_100_000,
+        expires_at=time.time()
+        + (1800 if os.environ.get("RUN_LONG_ENCODER_STRESS") == "1" else 600),
+        discord_limit=test_discord_limit,
         interaction=SimpleNamespace(channel=None),
         guild_id=999,
     )
@@ -73,6 +78,13 @@ async def capture_delivery(job: UploadJob, results: list, caption: str = "") -> 
         raise RuntimeError("Invalid browser output")
     if any(len(item.data) > job.discord_limit for item in results):
         raise RuntimeError("Output exceeds target")
+    if capture_directory:
+        directory = Path(capture_directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        for index, item in enumerate(results):
+            await asyncio.to_thread(
+                (directory / f"{job.token}-{index}.mp4").write_bytes, item.data
+            )
     return f"Test delivery accepted: {len(results)} file(s)."
 
 

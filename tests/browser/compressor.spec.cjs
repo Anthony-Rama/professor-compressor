@@ -358,6 +358,8 @@ test('Matroska header is identified as MKV without sending a filename', async ({
 });
 
 test('oversized MOV conversion falls back to size-targeted encoding', async ({ page, request }) => {
+  const events=[];
+  page.on('request',request=>{if(request.url().endsWith('/events'))events.push(...request.postDataJSON().events);});
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.send = function(body) {
@@ -368,10 +370,12 @@ test('oversized MOV conversion falls back to size-targeted encoding', async ({ p
       return originalSend.call(this, body);
     };
   });
-  await openSession(page, request);
+  const diagnosticsLoaded=page.waitForResponse(response=>response.url().endsWith('/brand/diagnostics.js'));
+  await openSession(page, request);await diagnosticsLoaded;
   await deliver(page, join(fixtures, 'large.mov'));
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeGreaterThan(100);
   expect(await page.evaluate(() => window.sentSize)).toBeLessThanOrEqual(1_078_000);
+  await expect.poll(()=>events.some(event=>event.event==='stage_started'&&event.data.command_mode==='bitrate'&&event.data.size_adjustment===true)).toBe(true);
 });
 
 test('portrait variable-frame-rate video retains playable video and audio', async ({ page, request }) => {

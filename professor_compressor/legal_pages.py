@@ -109,7 +109,15 @@ def privacy_policy_html() -> str:
         filenames or video files. When configured, a protected operator dashboard
         stores structured diagnostic events, random session references, keyed
         user/server pseudonyms, browser family and major version, coarse device
-        category, and technical media properties. It does not store raw user agents,
+        category, and technical media properties, including codec profile, bit
+        depth, pixel format, and audio characteristics when available. Diagnostic
+        reports may include engine build and requested processing settings,
+        recognized failure categories, exit codes, browser features needed for
+        processing, attempt numbers, and occasional progress checkpoints. Engine
+        messages are classified locally; their raw text is not uploaded as
+        diagnostic history. The Service does not collect hardware fingerprints,
+        exact available RAM, or browsing history for these reports. It does not
+        store raw user agents,
         raw Discord identifiers, filenames, captions, private session links,
         credentials, raw error text, or video contents in that event history.</li>
       <li><strong>Optional feedback:</strong> email feedback and support links

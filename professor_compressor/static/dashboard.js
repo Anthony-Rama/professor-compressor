@@ -23,6 +23,10 @@ const labels = {
   installed:'Bot installed', removed:'Bot removed', stage_started:'Stage started', stage_finished:'Stage finished', file_ready:'File ready', file_received:'File received', retry:'Automatic retry', client_complete:'Browser finished', client_failed:'Browser failure reported', upload_started:'Upload started', delivery_started:'Discord delivery started', received:'Relay received batch', started:'Compress pressed', refreshed:'Page refreshed', page_left:'Page left', interrupted:'Process interrupted',
   unchanged:'Sent unchanged', remuxed:'Stream-copied', converted:'Converted', compressed:'Compressed', 'single-threaded':'Single-threaded', multithreaded:'Multithreaded', unused:'Engine not needed', desktop:'Desktop', mobile:'Mobile'
 };
+Object.assign(labels, {attempt_started:'File attempt started',processing_progress:'Processing checkpoint',
+  oom:'Out of memory',allocation_failed:'Allocation failed',wasm_bounds:'WASM bounds trap (not proof of OOM)',
+  wasm_trap:'WASM runtime trap',unsupported_codec:'Unsupported codec signal',invalid_media:'Invalid media signal',
+  engine_log:'Engine message signature',exception:'Thrown exception signature',same_settings:'Same settings',size_adjustment:'Size adjustment'});
 const label = value => labels[value] || value || 'Not reported';
 function showPanel(name, focus = false) {
   if (!titles[name]) return;
@@ -112,10 +116,10 @@ function render(d) {
   cards(el('reliability-summary'),[
     ['Needs attention',number(t.needs_attention),'Latest state, rather than every failed attempt',t.needs_attention?'danger':''],['Unknown outcomes',number(t.unknown),'Not counted as confirmed failures'],['Manual runs',number(retries.runs),'Compress starts with a recorded run ID'],['Automatic retries',number(retries.automatic_retries),'Recorded retry attempts; reports may be incomplete']
   ]);
-  for(const field of ['stage','error_code','failure_stage','input_format','browser','device','engine','path','revision'])group(el('group-'+field),groups[field]);
+  for(const field of ['stage','error_code','engine_signal','failure_stage','input_format','browser','device','engine','path','revision'])group(el('group-'+field),groups[field]);
   table(el('statuses'),[['Outcome','status',badge],['Sessions','count',number]],d.statuses||[],'No outcomes yet');
   cards(el('performance-summary'),[
-    ['Median encode',seconds(timings.encoding_seconds?.p50),'Per file · includes failed encoding attempts'],['p95 encode',seconds(timings.encoding_seconds?.p95),'95% of sampled file encodes were at or below this time'],['Median end to end',seconds(timings.total_seconds?.p50),'Browser-reported · per run'],['Median Discord delivery',seconds(timings.discord_delivery_seconds?.p50),'Server-measured · per delivered batch']
+    ['Median encode',seconds(timings.encoding_seconds?.p50),'Files that became ready · includes their retries'],['p95 encode',seconds(timings.encoding_seconds?.p95),'Files that became ready · 95% of samples at or below this time'],['Median end to end',seconds(timings.total_seconds?.p50),'Browser-reported · per run'],['Median Discord delivery',seconds(timings.discord_delivery_seconds?.p50),'Server-measured · per delivered batch']
   ]);
   table(el('timings'),[['Measurement','name',label],['Samples','samples',number],['Median','p50',seconds],['p95','p95',seconds]],Object.entries(timings).map(([name,value])=>({name,...value})),'No stage timings yet','Timing samples appear after processing or delivery reports arrive.');
   outcomes(el('file-summary'),[
@@ -128,17 +132,36 @@ function render(d) {
     ['Created','created',when],['Outcome','status',badge],['Files','files',number],['Failure reports','failures',number],['Release','revision',revision],['Test','is_test',value=>value?'Yes':'No']
   ],d.sessions||[],'No matching sessions','Change the window or filters. Enable Include tests to see development-server activity.');
   el('events').replaceChildren();const history=d.events||[];
-  const received=new Map();for(const event of history)if(event.event==='file_received'&&event.source==='server')received.set(event.file_index,event);
+  const files=new Map();
+  for(const event of history){
+    if(!event.file_index)continue;
+    const key=event.run_id+':'+event.file_index,prior=files.get(key)||{file_index:event.file_index,run_id:event.run_id,reports:[]};
+    prior.reports.push(event);prior.last_event=event.event;files.set(key,prior);
+  }
+  for(const file of files.values()){
+    // Batches can arrive out of order. Order browser facts within this run
+    // by their client sequence; older clients retain server arrival order.
+    const browser=file.reports.filter(event=>event.source==='browser');
+    if(browser.every(event=>Number.isInteger(event.data.client_sequence)))browser.sort((a,b)=>a.data.client_sequence-b.data.client_sequence);
+    file.data=Object.assign({},...browser.map(event=>event.data));
+    // Relay receipt values win over browser reports, including late reports.
+    for(const event of file.reports)if(event.event==='file_received'&&event.source==='server')Object.assign(file.data,event.data);
+  }
   const dimensions=(width,height,fps)=>width&&height?width+' × '+height+(typeof fps==='number'?' · '+fps.toFixed(1)+' fps':''):'Not reported';
-  table(el('session-files'),[['File','file'],['Format','format'],['Path','path',label],['Input','input',bytes],['Output','output',bytes],['Clip length','duration',seconds],['Encode','encode',seconds],['Input video','input_video'],['Output video','output_video'],['Source codecs','codecs']],
-    [...received.values()].sort((a,b)=>a.file_index-b.file_index).map(e=>{
-      const metadata=[...history].reverse().find(row=>row.file_index===e.file_index&&row.run_id===e.run_id&&row.data.video_codec)?.data;
-      return {file:'File '+e.file_index,format:(e.data.input_format||'unknown').toUpperCase()+' → MP4',path:e.data.path,input:e.data.input_bytes,output:e.data.output_bytes,duration:e.data.duration_seconds,encode:e.data.encoding_seconds,input_video:dimensions(e.data.input_width,e.data.input_height,e.data.input_fps),output_video:dimensions(e.data.output_width,e.data.output_height,e.data.output_fps),codecs:metadata?(metadata.video_codec||'Unknown')+' / '+(metadata.audio_codec||'Not reported'):'Not reported'};
+  table(el('session-files'),[['Run','run'],['File','file'],['Latest report','last_event',label],['Format','format'],['Path','path',label],['Input','input',bytes],['Output','output',bytes],['Clip length','duration',seconds],['Encode','encode',seconds],['Input video','input_video'],['Output video','output_video'],['Source codecs','codecs'],['Profile / pixels','profile']],
+    [...files.values()].map(e=>{
+      return {run:e.run_id?.slice(0,8)||'—',file:'File '+e.file_index,last_event:e.last_event,format:(e.data.input_format||'unknown').toUpperCase(),path:e.data.path,input:e.data.input_bytes,output:e.data.output_bytes,duration:e.data.duration_seconds,encode:e.data.encoding_seconds,input_video:dimensions(e.data.input_width,e.data.input_height,e.data.input_fps),output_video:dimensions(e.data.output_width,e.data.output_height,e.data.output_fps),codecs:(e.data.video_codec||'Not reported')+' / '+(e.data.audio_codec||'Not reported'),profile:[e.data.video_profile,e.data.bit_depth?e.data.bit_depth+' bit':null,e.data.pixel_format].filter(Boolean).join(' · ')||'Not reported'};
     }),
-    'No received-file diagnostics','Select a session that reached the relay. Earlier failures can be inspected in the timeline.');
+    'No file diagnostics','Select a session with browser file reports or a relay receipt.');
+  const evidence=history.filter(event=>event.event==='attempt_started'||event.event==='retry'||event.event==='client_failed'||event.event==='processing_progress'||(event.event==='stage_finished'&&(event.data.error_code||event.data.exit_code!==undefined)));
+  // A retry carries the previous failure's evidence, not a new failure of the
+  // next attempt. Make the transition explicit rather than mislabelling it.
+  const attemptLabel=(value,row)=>row.event==='retry'&&row.failed_attempt?row.failed_attempt+' → '+value:number(value);
+  table(el('session-attempts'),[['File','file_index',value=>value?'File '+value:'Batch'],['Attempt','attempt',attemptLabel],['Engine signal','engine_signal',label],['Error','error_code'],['Wrapper','exception_kind'],['Stage','stage',label],['Time','at',when],['Run','run_id',value=>value?.slice(0,8)||'—'],['Report','event',label],['Evidence source','signal_source',label],['Exit code','exit_code',number],['HTTP status','http_status',number],['Decoder','decoder'],['Encoder threads','encoder_threads',number],['Encode pass','encode_pass',number],['Mode','command_mode'],['Last media time','last_media_seconds',seconds],['Progress idle','progress_idle_seconds',seconds]],evidence.map(event=>({...event,...event.data,decoder:event.data.decoder_mode==='auto'?'Auto':event.data.decoder_threads!==undefined?event.data.decoder_threads+' thread(s)':'Not reported'})),
+    'No attempt evidence','Attempt and engine details appear as new sessions run. Raw logs are never shown or stored.');
   el('timeline-heading').textContent=el('reference').value?el('reference').value+' · '+history.length+' most recent events · arrival order':'Select a session to inspect its history.';
   if(!history.length)empty(el('events'),'No session selected','Choose a reference above. A timeline contains up to 500 retained events.');
-  for(const event of history){const item=document.createElement('details'),summary=document.createElement('summary'),time=document.createElement('span'),name=document.createElement('span'),meta=document.createElement('span'),body=document.createElement('pre');item.className='timeline-event';time.className='event-time';time.textContent=when(event.at);name.textContent=label(event.event);meta.className='event-detail';meta.textContent=(event.source==='server'?'Server':'Browser')+' · '+(event.file_index?'File '+event.file_index:'Batch')+' · run '+(event.run_id?.slice(0,8)||'—');body.textContent=JSON.stringify(event.data,null,2);summary.append(time,name,meta);item.append(summary,body);el('events').append(item);}
+  for(const event of history){const item=document.createElement('details'),summary=document.createElement('summary'),time=document.createElement('span'),name=document.createElement('span'),meta=document.createElement('span'),body=document.createElement('pre');item.className='timeline-event';time.className='event-time';time.textContent=when(event.at);name.textContent=label(event.event);meta.className='event-detail';meta.textContent=(event.source==='server'?'Server':'Browser')+' · '+(event.file_index?'File '+event.file_index:'Batch')+' · run '+(event.run_id?.slice(0,8)||'—')+(event.data.client_sequence?' · client #'+event.data.client_sequence:'');body.textContent=JSON.stringify(event.data,null,2);summary.append(time,name,meta);item.append(summary,body);el('events').append(item);}
   cards(el('system-summary'),[
     ['Delivery workers',number(r.delivery_workers)+' / '+number(r.worker_capacity),'Workers currently running'],['Buffered video data',bytes(r.buffer_bytes),'Limit '+bytes(r.buffer_limit_bytes)],['Diagnostic queue',number(s.queued),'Waiting for background storage'],['Storage errors / drops',number(s.errors)+' / '+number(s.dropped),'Since this process started',(s.errors||s.dropped)?'warning':'good']
   ]);

@@ -1610,13 +1610,17 @@ async def receive_browser_failure(request: web.Request) -> web.Response:
     failure_code = sanitize(payload).get("error_code", "UNKNOWN")
     operation = sanitize({"stage": payload.get("operation")}).get("stage", "")
     failure_run = valid_id(payload.get("run_id")) or job.active_run_id
+    failure_file = payload.get("file_index", 0)
+    if type(failure_file) is not int or not 0 <= failure_file <= 10:
+        failure_file = 0
     track(
         job,
         "client_failed",
         source="browser",
         run_id=failure_run,
         event_id=failure_run,
-        data={"error_code": failure_code, "stage": operation},
+        file_index=failure_file,
+        data={**sanitize(payload), "error_code": failure_code, "stage": operation},
     )
     raw_stage = str(payload.get("stage", "Browser processing"))
     stage = "".join(
