@@ -68,6 +68,7 @@ def compression_outcome_alert(
     effective_target: int | None = None,
     unchanged_limit: int | None = None,
     timing: dict | None = None,
+    error_code: str | None = None,
 ) -> str:
     """Build an outcome alert without filenames or user mentions."""
     if elapsed_seconds is None:
@@ -85,6 +86,7 @@ def compression_outcome_alert(
         f"Username: **{safe_alert_text('@' + (job.username or 'unknown'))}**",
         f"User ID: `{job.user_id}`",
         f"Files: `{file_count}`",
+        f"Reference: `{job.diagnostic_reference}`",
     ]
     has_diagnostics = bool(
         results
@@ -195,6 +197,8 @@ def compression_outcome_alert(
             )
     if stage:
         lines.append(f"Stage: `{safe_alert_text(stage, limit=60)}`")
+    if error_code:
+        lines.append(f"Error code: `{safe_alert_text(error_code, limit=40)}`")
     if timing:
         lines.append(
             "Receive / queue / Discord: "
@@ -237,6 +241,7 @@ def compression_progress_alert(job: UploadJob, title: str, detail: str) -> str:
             f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
             f"Username: **{safe_alert_text('@' + (job.username or 'unknown'))}**",
             f"User ID: `{job.user_id}`",
+            f"Reference: `{job.diagnostic_reference}`",
             detail,
         )
     )

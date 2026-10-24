@@ -19,3 +19,7 @@ id_rsa
 id_ed25519
 test-results
 playwright-report
+observability-data
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

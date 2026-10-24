@@ -76,6 +76,33 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "TOPGG_STATS_INTERVAL"):
                 Settings.from_environment(require_token=False)
 
+    def test_operator_configuration_requires_strong_key_https_and_bounded_retention(
+        self,
+    ):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("professor_compressor.config.load_dotenv"),
+        ):
+            self.assertEqual(
+                Settings.from_environment(require_token=False).observability_db_path, ""
+            )
+            os.environ["OBSERVABILITY_ADMIN_KEY"] = "short"
+            with self.assertRaisesRegex(RuntimeError, "32 characters"):
+                Settings.from_environment(require_token=False)
+            os.environ["OBSERVABILITY_ADMIN_KEY"] = "test-only-" * 5
+            os.environ["PUBLIC_BASE_URL"] = "http://public.example.com"
+            with self.assertRaisesRegex(RuntimeError, "HTTPS"):
+                Settings.from_environment(require_token=False)
+            os.environ["PUBLIC_BASE_URL"] = "https://public.example.com"
+            os.environ["OBSERVABILITY_RETENTION_DAYS"] = "31"
+            with self.assertRaisesRegex(RuntimeError, "at most 30"):
+                Settings.from_environment(require_token=False)
+            os.environ["OBSERVABILITY_RETENTION_DAYS"] = "7"
+            os.environ["ALLOWED_GUILD_ID"] = "123"
+            settings = Settings.from_environment(require_token=False)
+            self.assertEqual(settings.diagnostic_test_guild_ids, frozenset())
+            self.assertNotIn(os.environ["OBSERVABILITY_ADMIN_KEY"], repr(settings))
+
 
 if __name__ == "__main__":
     unittest.main()

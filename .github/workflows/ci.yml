@@ -87,8 +87,19 @@ jobs:
             curl --fail --silent --show-error --head "http://127.0.0.1:18765/$path"
           done
 
+      - name: Verify diagnostic storage survives container recreation
+        run: |
+          docker volume create compressor-diagnostics-smoke
+          for phase in seed verify; do
+            docker run --rm --network none --env PYTHONPATH=/app \
+              --mount type=volume,src=compressor-diagnostics-smoke,dst=/data/observability \
+              --mount type=bind,src="$PWD/tests/container_observability.py",dst=/verification/smoke.py,readonly \
+              --entrypoint python professor-compressor:ci /verification/smoke.py "$phase"
+          done
+
       - name: Container diagnostics and cleanup
         if: always()
         run: |
           docker logs compressor-smoke || true
           docker rm --force compressor-smoke || true
+          docker volume rm compressor-diagnostics-smoke || true

@@ -23,7 +23,8 @@ def _integer(name: str, default: int, *, minimum: int = 0) -> int:
 
 
 def _guild_ids(name: str) -> frozenset[int]:
-    raw = os.getenv(name, os.getenv("ALLOWED_GUILD_ID", "")).strip()
+    fallback = os.getenv("ALLOWED_GUILD_ID", "") if name == "ALLOWED_GUILD_IDS" else ""
+    raw = os.getenv(name, fallback).strip()
     if not raw:
         return frozenset()
     try:
@@ -80,6 +81,11 @@ class Settings:
     delivery_workers: int = 2
     max_delivery_buffer_bytes: int = 400 * MIB
     allowed_guild_ids: frozenset[int] = frozenset()
+    observability_db_path: str = ""
+    observability_admin_key: str = field(default="", repr=False)
+    observability_retention_days: int = 30
+    observability_max_events: int = 100000
+    diagnostic_test_guild_ids: frozenset[int] = frozenset()
 
     @classmethod
     def from_environment(cls, *, require_token: bool = True) -> Settings:
@@ -100,6 +106,22 @@ class Settings:
         parsed_url = urlparse(public_base_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
             raise RuntimeError("PUBLIC_BASE_URL must be an absolute HTTP(S) URL.")
+        admin_key = os.getenv("OBSERVABILITY_ADMIN_KEY", "").strip()
+        if admin_key and len(admin_key) < 32:
+            raise RuntimeError(
+                "OBSERVABILITY_ADMIN_KEY must contain at least 32 characters."
+            )
+        if (
+            admin_key
+            and parsed_url.scheme != "https"
+            and parsed_url.hostname not in {"localhost", "127.0.0.1", "::1"}
+        ):
+            raise RuntimeError(
+                "Operator dashboard requires HTTPS outside loopback development."
+            )
+        retention = _integer("OBSERVABILITY_RETENTION_DAYS", 30, minimum=1)
+        if retention > 30:
+            raise RuntimeError("OBSERVABILITY_RETENTION_DAYS must be at most 30.")
 
         return cls(
             discord_token=token,
@@ -138,4 +160,11 @@ class Settings:
                 _integer("MAX_DELIVERY_BUFFER_MIB", 400, minimum=1) * MIB
             ),
             allowed_guild_ids=_guild_ids("ALLOWED_GUILD_IDS"),
+            observability_db_path=os.getenv("OBSERVABILITY_DB_PATH", "").strip(),
+            observability_admin_key=admin_key,
+            observability_retention_days=retention,
+            observability_max_events=_integer(
+                "OBSERVABILITY_MAX_EVENTS", 100000, minimum=1000
+            ),
+            diagnostic_test_guild_ids=_guild_ids("DIAGNOSTIC_TEST_GUILD_IDS"),
         )

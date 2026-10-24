@@ -99,7 +99,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('"/failure"', self.page)
         self.assertIn('runStage = "Browser compression"', self.page)
         self.assertIn('runStage = "Relay upload or Discord delivery"', self.page)
-        self.assertIn("void reportBrowserFailure(runStage)", self.page)
+        self.assertIn("void reportBrowserFailure(runStage, error)", self.page)
 
     def test_targets_most_of_discords_safe_upload_size(self) -> None:
         self.assertIn("const OUTPUT_TARGET_RATIO = 0.97;", self.page)

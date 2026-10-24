@@ -16,6 +16,9 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 "professor_compressor/application.py" = ["E501"]
 "professor_compressor/legal_pages.py" = ["RUF001"]
 "professor_compressor/web_ui.py" = ["E501"]
+# Embedded dashboard markup and parameterized SQL contain long literal lines.
+"professor_compressor/dashboard.py" = ["E501"]
+"professor_compressor/observability.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

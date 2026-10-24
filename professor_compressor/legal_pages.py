@@ -2,7 +2,7 @@
 
 from html import escape
 
-EFFECTIVE_DATE = "October 17, 2026"
+EFFECTIVE_DATE = "October 23, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
@@ -106,7 +106,12 @@ def privacy_policy_html() -> str:
         path, resolution and frame rate, engine mode, retry counts, stage timings,
         and time spent with the page hidden to help
         diagnose compression quality. These alerts do not include
-        filenames or video files.</li>
+        filenames or video files. When configured, a protected operator dashboard
+        stores structured diagnostic events, random session references, keyed
+        user/server pseudonyms, browser family and major version, coarse device
+        category, and technical media properties. It does not store raw user agents,
+        raw Discord identifiers, filenames, captions, private session links,
+        credentials, raw error text, or video contents in that event history.</li>
       <li><strong>Optional feedback:</strong> email feedback and support links
         open your email application. No feedback is sent unless you choose to
         send an email. If you do, the operator receives the email address and
@@ -155,6 +160,12 @@ def privacy_policy_html() -> str:
       a session for a bounded period; idle sessions expire normally.
       Discord may retain delivered attachments according to its own
       policies.</p>
+    <p>When enabled, structured diagnostic history is stored on the operator's
+      server for at most 30 days, subject to row and storage limits. It survives
+      bot restarts. It is available only through the protected operator dashboard.
+      Exports and backups must be protected and follow the same retention period.
+      Keyed pseudonyms are used to measure repeat usage without storing raw
+      Discord user/server IDs in this history.</p>
 
     <h2>7. Cookies and tracking</h2>
     <p>The compressor does not use advertising trackers or third-party analytics.
@@ -175,7 +186,8 @@ def privacy_policy_html() -> str:
       files, remove the bot from a server you manage, decline to send optional
       feedback, or delete delivered files from Discord if you have permission
       to do so. The Service does not maintain user accounts or a persistent
-      personal-information database. Operator alerts and feedback emails may
+      account database; its configured diagnostic history is described above.
+      Operator alerts and feedback emails may
       remain in the operator's Discord channel or mailbox until deleted.</p>
 
     <h2>10. Age requirements</h2>

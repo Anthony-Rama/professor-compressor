@@ -10,6 +10,14 @@ services:
       WEB_HOST: 0.0.0.0
       WEB_PORT: 8080
       PUBLIC_BASE_URL: https://${DOMAIN:?Set DOMAIN in .env}
+      OBSERVABILITY_DB_PATH: ${OBSERVABILITY_DB_PATH:-}
+    volumes:
+      - diagnostics_data:/data/observability
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     expose:
       - "8080"
     mem_limit: 1g
@@ -35,3 +43,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  diagnostics_data:

@@ -17,7 +17,10 @@ WORKDIR /app
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --requirement requirements.txt \
-    && useradd --create-home --uid 10001 compressor
+    && useradd --create-home --uid 10001 compressor \
+    && mkdir -p /data/observability \
+    && chown compressor:compressor /data/observability \
+    && chmod 700 /data/observability
 
 COPY --from=web-assets /build/node_modules ./node_modules
 COPY bot.py ./

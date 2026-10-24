@@ -35,7 +35,11 @@ the security or privacy impact, and how the change was verified.
 
 - Never commit `.env`, credentials, webhook URLs, private keys, production IP
   addresses, user content, or private upload links.
-- Do not add telemetry containing user, server, channel, file, or IP data.
+- Diagnostic history must follow [the observability schema](docs/observability.md):
+  allowlisted numeric media measurements and keyed user/server pseudonyms only.
+  Never add media contents, filenames, captions, raw identifiers, IPs, credentials,
+  private links, or raw errors. Existing private operator alerts have a separate
+  identity-data policy documented in the Privacy Policy.
 - Keep browser compression local. Only completed output files may cross the
   relay boundary.
 - Pin production dependencies and explain new third-party services.

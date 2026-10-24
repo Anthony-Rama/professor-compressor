@@ -24,3 +24,9 @@ id_ed25519
 
 # Local source artwork. Production-ready assets belong in static/.
 private-assets/
+
+# Private diagnostic history and SQLite sidecars.
+observability-data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

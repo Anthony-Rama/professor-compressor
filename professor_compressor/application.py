@@ -24,6 +24,7 @@ from discord import app_commands
 
 from .assets import ASSET_PACKAGES, ASSET_PREFIX, NODE_MODULES
 from .config import MIB, Settings
+from .dashboard import register_dashboard
 from .delivery_policy import bot_upload_limit, channel_delivery_problem
 from .domain import (
     BrowserResult,
@@ -50,6 +51,7 @@ from .notifications import (
     guild_alert_message,
     safe_alert_text,
 )
+from .observability import CLIENT_EVENTS, EventStore, sanitize, valid_id
 from .topgg import TopGGStats
 from .web_ui import browser_compressor, browser_delivery_status
 
@@ -111,6 +113,43 @@ command_sync_task: asyncio.Task[None] | None = None
 application_operator_ids: frozenset[int] | None = None
 effective_allowed_guild_ids: frozenset[int] = ALLOWED_GUILD_IDS
 metrics = RuntimeMetrics()
+event_store = EventStore(
+    settings.observability_db_path,
+    key=settings.observability_admin_key,
+    retention_days=settings.observability_retention_days,
+    max_events=settings.observability_max_events,
+)
+diagnostic_event_counts: dict[str, int] = {}
+
+
+def track(
+    job: UploadJob,
+    event: str,
+    *,
+    data: object = None,
+    run_id: str = "",
+    file_index: int = 0,
+    source: str = "server",
+    event_id: str = "",
+) -> None:
+    """Optional diagnostics never participate in application correctness."""
+    try:
+        event_store.record(
+            job.diagnostic_id,
+            job.diagnostic_reference,
+            event,
+            run_id=run_id or job.active_run_id,
+            file_index=file_index,
+            source=source,
+            data=data,
+            revision=os.getenv("APP_REVISION", "development"),
+            user_key=event_store.pseudonym("user", job.user_id),
+            guild_key=event_store.pseudonym("guild", job.guild_id),
+            is_test=job.guild_id in settings.diagnostic_test_guild_ids,
+            event_id=event_id,
+        )
+    except Exception:
+        logger.warning("Optional session diagnostic could not be recorded")
 
 
 async def send_owner_alert(message: str) -> None:
@@ -586,6 +625,7 @@ def expire_job(token: str, job: UploadJob) -> None:
     """Retire an unfinished session once, with its last confirmed activity."""
     if jobs.pop(token, None) is not job:
         return
+    track(job, "expired")
     if job.browser_failure_reported:
         return
     if job.state is JobState.OPEN:
@@ -627,13 +667,15 @@ def request_ip(request: web.Request) -> str:
     return peer
 
 
-def rate_limit_retry_after(request: web.Request, bucket: str) -> int | None:
+def rate_limit_retry_after(
+    request: web.Request, bucket: str, *, limit: int | None = None
+) -> int | None:
     now = time.monotonic()
     key = (bucket, request_ip(request))
     timestamps = request_times.setdefault(key, deque())
     while timestamps and now - timestamps[0] >= 60:
         timestamps.popleft()
-    if len(timestamps) >= UPLOAD_RATE_LIMIT_PER_MINUTE:
+    if len(timestamps) >= (limit or UPLOAD_RATE_LIMIT_PER_MINUTE):
         metrics.increment("rate_limited_requests")
         return max(1, int(60 - (now - timestamps[0])))
     timestamps.append(now)
@@ -666,6 +708,12 @@ def discard_expired_jobs() -> None:
     for token, outcome in list(outcomes.items()):
         if now > outcome.expires_at:
             outcomes.pop(token, None)
+    retained_ids = {job.diagnostic_id for job in jobs.values()} | {
+        outcome.diagnostic_id for outcome in outcomes.values()
+    }
+    for diagnostic_id in list(diagnostic_event_counts):
+        if diagnostic_id not in retained_ids:
+            diagnostic_event_counts.pop(diagnostic_id, None)
 
     stale_cooldowns = [
         key
@@ -801,7 +849,11 @@ async def terms_of_service(request: web.Request) -> web.Response:
 
 def browser_cookie_matches(request: web.Request, secret: str | None) -> bool:
     supplied = request.cookies.get(RESUME_COOKIE_NAME, "")
-    return bool(secret and supplied and secrets.compare_digest(supplied, secret))
+    return bool(
+        secret
+        and supplied
+        and secrets.compare_digest(supplied.encode(), secret.encode())
+    )
 
 
 def set_browser_cookie(response: web.Response, token: str, secret: str) -> None:
@@ -828,6 +880,8 @@ def compressor_page(job: UploadJob, *, reopened: bool = False) -> web.Response:
             max(1, int(job.expires_at - time.time())),
             discord_limit_bytes=job.discord_limit,
             reopened=reopened,
+            diagnostic_reference=job.diagnostic_reference,
+            diagnostic_events_enabled=bool(settings.observability_db_path),
         ),
     )
 
@@ -861,6 +915,7 @@ async def upload_form(request: web.Request) -> web.Response:
         job.claimed_at = time.time()
         job.expires_at = time.time() + ACTIVE_SESSION_TTL_SECONDS
         job.state = JobState.CLAIMED
+        track(job, "opened")
         metrics.increment("sessions_opened")
         schedule_owner_alert(
             compression_progress_alert(
@@ -874,6 +929,7 @@ async def upload_form(request: web.Request) -> web.Response:
         return response
     if job is not None and browser_cookie_matches(request, job.browser_secret):
         if job.state is JobState.CLAIMED:
+            track(job, "refreshed")
             # A fresh page supersedes any old tab holding the previous API secret.
             job.claim_secret = secrets.token_urlsafe(32)
             job.page_left = False
@@ -886,9 +942,22 @@ async def upload_form(request: web.Request) -> web.Response:
                 time.time() + ACTIVE_SESSION_TTL_SECONDS, hard_deadline
             )
             return compressor_page(job, reopened=True)
-        return page("Delivery status", browser_delivery_status(job.claim_secret or ""))
+        return page(
+            "Delivery status",
+            browser_delivery_status(
+                job.claim_secret or "", diagnostic_reference=job.diagnostic_reference
+            ),
+        )
     if receipt is not None and browser_cookie_matches(request, receipt.browser_secret):
-        return page("Delivery status", browser_delivery_status(receipt.secret))
+        return page(
+            "Delivery status",
+            browser_delivery_status(
+                receipt.secret,
+                diagnostic_reference="PC-" + receipt.diagnostic_id[:12].upper()
+                if receipt.diagnostic_id
+                else "",
+            ),
+        )
     return page(
         "Private link unavailable",
         "<h1>Private link unavailable</h1>"
@@ -915,6 +984,9 @@ def record_outcome(job: UploadJob, status: int, body: dict[str, object]) -> None
         expires_at=time.time() + OUTCOME_TTL_SECONDS,
         status=status,
         body=body,
+        diagnostic_id=job.diagnostic_id,
+        run_id=job.active_run_id,
+        is_test=job.guild_id in settings.diagnostic_test_guild_ids,
     )
     # Bound receipt memory independently from active sessions. No media is retained.
     while len(outcomes) > max(1000, MAX_ACTIVE_JOBS * 4):
@@ -1018,10 +1090,10 @@ async def receive_browser_progress(request: web.Request) -> web.Response:
             "The session is already being delivered.", 409, "session_used"
         )
     try:
-        payload = await request.clone(client_max_size=4096).json()
+        payload = await asyncio.wait_for(request.clone(client_max_size=4096).json(), 5)
     except web.HTTPRequestEntityTooLarge:
         return json_error("Progress report is too large.", 413, "report_too_large")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, TimeoutError):
         return json_error("Expected a JSON object.", 400, "invalid_progress")
     if not isinstance(payload, dict):
         return json_error("Expected a JSON object.", 400, "invalid_progress")
@@ -1044,6 +1116,10 @@ async def receive_browser_progress(request: web.Request) -> web.Response:
                 )
             )
     elif event == "started":
+        next_run = valid_id(payload.get("run_id")) or secrets.token_hex(16)
+        if next_run != job.active_run_id:
+            job.browser_failure_reported = False
+        job.active_run_id = next_run
         job.page_left = False
         job.page_left_at = None
         job.browser_cancelled = False
@@ -1083,6 +1159,63 @@ async def receive_browser_progress(request: web.Request) -> web.Response:
             )
     else:
         return json_error("Unknown progress event.", 400, "invalid_progress")
+    track(job, event, data={"selected_count": job.selected_count})
+    return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
+
+
+async def receive_diagnostic_events(request: web.Request) -> web.Response:
+    job, response = session_access(request)
+    if response is not None and response.status in {403, 410}:
+        return response
+    receipt = outcomes.get(request.match_info["token"]) if job is None else None
+    diagnostic_id = (
+        job.diagnostic_id if job else (receipt.diagnostic_id if receipt else "")
+    )
+    if not diagnostic_id:
+        return json_error("Session unavailable.", 410, "session_expired")
+    if rate_limit_retry_after(request, "diagnostic_events", limit=120) is not None:
+        return json_error("Too many diagnostic reports.", 429, "rate_limited")
+    try:
+        payload = await asyncio.wait_for(request.clone(client_max_size=16384).json(), 3)
+    except (ValueError, TypeError, TimeoutError, web.HTTPException):
+        return json_error("Invalid diagnostic report.", 400, "invalid_report")
+    if not isinstance(payload, dict) or not valid_id(payload.get("run_id")):
+        return json_error("Invalid run.", 400, "invalid_report")
+    events = payload.get("events")
+    if not isinstance(events, list) or len(events) > 20:
+        return json_error("Invalid events.", 400, "invalid_report")
+    count = diagnostic_event_counts.get(diagnostic_id, 0)
+    if count + len(events) > 1000:
+        return json_error("Diagnostic limit reached.", 429, "rate_limited")
+    for item in events:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("event"), str)
+            or item.get("event") not in CLIENT_EVENTS
+            or not valid_id(item.get("event_id"))
+            or type(item.get("file_index")) is not int
+            or not 0 <= item["file_index"] <= MAX_CLIPS
+        ):
+            return json_error("Invalid event.", 400, "invalid_report")
+    diagnostic_event_counts[diagnostic_id] = count + len(events)
+    for item in events:
+        kwargs = {
+            "run_id": payload["run_id"],
+            "event_id": item["event_id"],
+            "file_index": item["file_index"],
+            "source": "browser",
+            "data": item.get("data"),
+        }
+        if job:
+            track(job, item["event"], **kwargs)
+        else:
+            event_store.record(
+                diagnostic_id,
+                "PC-" + diagnostic_id[:12].upper(),
+                item["event"],
+                is_test=receipt.is_test,
+                **kwargs,
+            )
     return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
@@ -1133,6 +1266,8 @@ async def receive_results(request: web.Request) -> web.Response:
     total_size = 0
     upload_slot_held = True
     job.state = JobState.UPLOADING
+    upload_run = valid_id(request.headers.get("X-Diagnostic-Run")) or job.active_run_id
+    track(job, "upload_started", run_id=upload_run)
     active_relay_uploads += 1
     if not job.relay_upload_started:
         job.relay_upload_started = True
@@ -1251,6 +1386,7 @@ async def receive_results(request: web.Request) -> web.Response:
             caption=caption,
             diagnostics=diagnostics,
             received_seconds=time.monotonic() - receive_started,
+            run_id=upload_run,
         )
         try:
             delivery_queue.put_nowait(delivery)
@@ -1268,6 +1404,33 @@ async def receive_results(request: web.Request) -> web.Response:
         active_relay_uploads -= 1
         upload_slot_held = False
         job.state = JobState.QUEUED
+        track(
+            job,
+            "received",
+            run_id=upload_run,
+            data={
+                "files": len(results),
+                "output_bytes": total_size,
+                "relay_receive_seconds": delivery.received_seconds,
+            },
+        )
+        for number, (result, diagnostic) in enumerate(
+            zip(results, diagnostics, strict=False), 1
+        ):
+            track(
+                job,
+                "file_received",
+                run_id=upload_run,
+                file_index=number,
+                data={
+                    **diagnostic.telemetry,
+                    "input_bytes": diagnostic.input_bytes,
+                    "output_bytes": len(result.data),
+                    "duration_seconds": diagnostic.duration_seconds,
+                    "encoding_seconds": diagnostic.encoding_seconds,
+                    "input_format": diagnostic.input_format,
+                },
+            )
         schedule_owner_alert(
             compression_progress_alert(
                 job,
@@ -1298,14 +1461,32 @@ async def receive_results(request: web.Request) -> web.Response:
             headers={"Cache-Control": "no-store"},
         )
     except TimeoutError:
+        track(
+            job,
+            "upload_failed",
+            run_id=upload_run,
+            data={"error_code": "UPLOAD_TIMEOUT", "stage": "upload"},
+        )
         return json_error(
             "The upload stalled. Please try again.", 408, "upload_timeout"
         )
     except (ValueError, web.HTTPException) as error:
+        track(
+            job,
+            "upload_failed",
+            run_id=upload_run,
+            data={"error_code": "INVALID_UPLOAD", "stage": "upload"},
+        )
         job.state = JobState.CLAIMED
         return json_error(str(error), 400, "invalid_upload")
     except Exception as error:
         job.state = JobState.CLAIMED
+        track(
+            job,
+            "upload_failed",
+            run_id=upload_run,
+            data={"error_code": "RELAY_ERROR", "stage": "upload"},
+        )
         logger.warning("Upload relay failed (%s)", type(error).__name__)
         return json_error(
             "The relay could not read the compressed files. "
@@ -1361,7 +1542,37 @@ async def receive_browser_telemetry(request: web.Request) -> web.Response:
     clean["retry_recovered"] = clean.get("outcome") == "delivered" and (
         clean.get("processing_failures", 0) > 0 or clean.get("delivery_failures", 0) > 0
     )
-    logger.info("Browser processing diagnostics %s", json.dumps(clean, allow_nan=False))
+    correlated = dict(clean)
+    correlated_job = _job
+    correlated_receipt = outcomes.get(request.match_info["token"])
+    correlated["diagnostic_id"] = (
+        correlated_job.diagnostic_id
+        if correlated_job
+        else (correlated_receipt.diagnostic_id if correlated_receipt else "")
+    )
+    correlated["run_id"] = valid_id(request.headers.get("X-Diagnostic-Run"))
+    logger.info(
+        "Browser processing diagnostics %s", json.dumps(correlated, allow_nan=False)
+    )
+    receipt = outcomes.get(request.match_info["token"])
+    if _job is not None:
+        track(
+            _job,
+            "client_complete",
+            data={**clean, **sanitize(payload)},
+            source="browser",
+            run_id=valid_id(request.headers.get("X-Diagnostic-Run")),
+        )
+    elif receipt and receipt.diagnostic_id:
+        event_store.record(
+            receipt.diagnostic_id,
+            "PC-" + receipt.diagnostic_id[:12].upper(),
+            "client_complete",
+            is_test=receipt.is_test,
+            source="browser",
+            run_id=valid_id(request.headers.get("X-Diagnostic-Run")) or receipt.run_id,
+            data={**clean, **sanitize(payload)},
+        )
     return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
@@ -1386,26 +1597,42 @@ async def receive_browser_failure(request: web.Request) -> web.Response:
             409,
             "outcome_already_recorded",
         )
+    if rate_limit_retry_after(request, "failure", limit=30) is not None:
+        return json_error("Too many failure reports.", 429, "rate_limited")
     try:
-        payload = await request.clone(client_max_size=4096).json()
+        payload = await asyncio.wait_for(request.clone(client_max_size=4096).json(), 5)
     except web.HTTPRequestEntityTooLarge:
         return json_error("Failure report is too large.", 413, "report_too_large")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, TimeoutError):
         payload = {}
     if not isinstance(payload, dict):
         return json_error("Expected a JSON object.", 400, "invalid_failure_report")
+    failure_code = sanitize(payload).get("error_code", "UNKNOWN")
+    operation = sanitize({"stage": payload.get("operation")}).get("stage", "")
+    failure_run = valid_id(payload.get("run_id")) or job.active_run_id
+    track(
+        job,
+        "client_failed",
+        source="browser",
+        run_id=failure_run,
+        event_id=failure_run,
+        data={"error_code": failure_code, "stage": operation},
+    )
     raw_stage = str(payload.get("stage", "Browser processing"))
     stage = "".join(
         character
         for character in raw_stage
         if character.isalnum() or character in " ._-"
     ).strip()[:60]
-    if not job.browser_failure_reported:
+    if not job.browser_failure_reported and (
+        not job.active_run_id or failure_run == job.active_run_id
+    ):
         schedule_owner_alert(
             compression_outcome_alert(
                 job,
                 succeeded=False,
-                stage=stage or "Browser processing",
+                stage=(operation or stage or "Browser processing"),
+                error_code=failure_code,
             )
         )
         job.browser_failure_reported = True
@@ -1532,7 +1759,14 @@ def log_delivery_diagnostics(
     logger.info(
         "Processing diagnostics %s",
         json.dumps(
-            {"outcome": outcome, "files": files, **delivery_timing(delivery, started)},
+            {
+                "outcome": outcome,
+                "diagnostic_id": delivery.job.diagnostic_id,
+                "reference": delivery.job.diagnostic_reference,
+                "run_id": delivery.run_id,
+                "files": files,
+                **delivery_timing(delivery, started),
+            },
             allow_nan=False,
         ),
     )
@@ -1544,6 +1778,12 @@ async def delivery_worker(worker_number: int) -> None:
     while not client.is_closed():
         delivery = await delivery_queue.get()
         delivery_started = time.monotonic()
+        track(
+            delivery.job,
+            "delivery_started",
+            run_id=delivery.run_id,
+            data={"queue_seconds": max(0, delivery_started - delivery.queued_at)},
+        )
         try:
             message = await asyncio.wait_for(
                 deliver_browser_results(
@@ -1552,7 +1792,20 @@ async def delivery_worker(worker_number: int) -> None:
                 timeout=120,
             )
             total_bytes = sum(len(result.data) for result in delivery.results)
-            log_delivery_diagnostics(delivery, delivery_started, "delivered")
+            try:
+                log_delivery_diagnostics(delivery, delivery_started, "delivered")
+            except Exception:
+                logger.warning("Optional delivery diagnostic formatting failed")
+            track(
+                delivery.job,
+                "delivered",
+                run_id=delivery.run_id,
+                data={
+                    "files": len(delivery.results),
+                    "output_bytes": total_bytes,
+                    **delivery_timing(delivery, delivery_started),
+                },
+            )
             metrics.increment("deliveries_succeeded")
             metrics.increment("files_delivered", len(delivery.results))
             metrics.increment("bytes_delivered", total_bytes)
@@ -1589,7 +1842,22 @@ async def delivery_worker(worker_number: int) -> None:
             if not delivery.completed.done():
                 delivery.completed.set_result(message)
         except Exception as error:
-            log_delivery_diagnostics(delivery, delivery_started, "delivery_failed")
+            try:
+                log_delivery_diagnostics(delivery, delivery_started, "delivery_failed")
+            except Exception:
+                logger.warning("Optional delivery diagnostic formatting failed")
+            track(
+                delivery.job,
+                "delivery_failed",
+                run_id=delivery.run_id,
+                data={
+                    "error_code": "DELIVERY_TIMEOUT"
+                    if isinstance(error, TimeoutError)
+                    else "DISCORD_REJECTED",
+                    "stage": "delivery",
+                    **delivery_timing(delivery, delivery_started),
+                },
+            )
             metrics.increment("deliveries_failed")
             message = (
                 str(error)
@@ -1757,6 +2025,7 @@ async def compress(interaction: discord.Interaction) -> None:
     for old_token, old_job in list(jobs.items()):
         if old_job.user_id == interaction.user.id:
             jobs.pop(old_token, None)
+            track(old_job, "replaced")
             schedule_owner_alert(
                 compression_progress_alert(
                     old_job,
@@ -1781,6 +2050,7 @@ async def compress(interaction: discord.Interaction) -> None:
         username=interaction.user.name,
     )
     metrics.increment("sessions_created")
+    track(jobs[token], "created", data={"discord_limit": jobs[token].discord_limit})
     upload_url = f"{PUBLIC_BASE_URL}/upload/{quote(token)}"
     view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label="Open compressor", url=upload_url))
@@ -1800,6 +2070,7 @@ async def compress(interaction: discord.Interaction) -> None:
         f"User ID: `{interaction.user.id}`\n"
         f"Connected servers: `{len(client.guilds)}`\n"
         f"Sessions since restart: `{metrics.snapshot()['sessions_created']}`"
+        f"\nReference: `{jobs[token].diagnostic_reference}`"
     )
 
 
@@ -1851,6 +2122,19 @@ def create_web_application() -> web.Application:
         client_max_size=MAX_RESULT_TOTAL_BYTES + 2 * MIB,
         middlewares=[browser_security_headers],
     )
+
+    async def diagnostic_lifecycle(_application):
+        event_store.start()
+        yield
+        for job in list(jobs.values()):
+            if job.compression_started or job.relay_upload_started:
+                track(job, "interrupted")
+        await asyncio.to_thread(event_store.stop)
+
+    application.cleanup_ctx.append(diagnostic_lifecycle)
+    register_dashboard(
+        application, event_store, settings.observability_admin_key, request_ip
+    )
     application.router.add_get("/", home)
     application.router.add_get("/guide/compress-video-for-discord", video_guide)
     application.router.add_get("/robots.txt", robots)
@@ -1870,6 +2154,7 @@ def create_web_application() -> web.Application:
     application.router.add_post("/upload/{token}/pause", pause_session)
     application.router.add_post("/upload/{token}/progress", receive_browser_progress)
     application.router.add_post("/upload/{token}/telemetry", receive_browser_telemetry)
+    application.router.add_post("/upload/{token}/events", receive_diagnostic_events)
     application.router.add_post(
         "/upload/{token}/failure",
         receive_browser_failure,
@@ -1913,6 +2198,11 @@ async def start_upload_server() -> None:
 
 @client.event
 async def on_guild_join(guild: discord.Guild) -> None:
+    track(
+        UploadJob("", 0, 0, time.time(), 0, None, guild_id=guild.id),
+        "installed",
+        data={"connected_servers": len(client.guilds)},
+    )
     schedule_owner_alert(
         guild_alert_message(
             "🟢 **Professor Compressor installed**",
@@ -1926,6 +2216,11 @@ async def on_guild_join(guild: discord.Guild) -> None:
 
 @client.event
 async def on_guild_remove(guild: discord.Guild) -> None:
+    track(
+        UploadJob("", 0, 0, time.time(), 0, None, guild_id=guild.id),
+        "removed",
+        data={"connected_servers": len(client.guilds)},
+    )
     schedule_owner_alert(
         guild_alert_message(
             "🔴 **Professor Compressor removed**",

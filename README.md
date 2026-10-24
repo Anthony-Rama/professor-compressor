@@ -4,6 +4,10 @@
 
 <h1 align="center">Professor Compressor</h1>
 
+Operator session history and performance tracking are documented in
+[Session observability](docs/observability.md). The protected `/ops` dashboard
+requires explicit configuration; diagnostic reporting never blocks delivery.
+
 <p align="center">Browser-based video compression with automatic delivery to Discord.</p>
 
 <p align="center">

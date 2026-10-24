@@ -4,6 +4,7 @@ import asyncio
 import os
 import secrets
 import sys
+import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,11 +14,17 @@ os.environ["PYTHON_DOTENV_DISABLED"] = "1"
 os.environ["ALERT_WEBHOOK_URL"] = ""
 os.environ["DSC_API_TOKEN"] = ""
 os.environ["TOPGG_API_TOKEN"] = ""
+diagnostic_directory = tempfile.TemporaryDirectory(prefix="compressor-diagnostics-")
+os.environ["OBSERVABILITY_DB_PATH"] = str(
+    Path(diagnostic_directory.name) / "events.sqlite3"
+)
+os.environ["OBSERVABILITY_ADMIN_KEY"] = "browser-test-only-operator-password"
+os.environ["DIAGNOSTIC_TEST_GUILD_IDS"] = "999"
 
-from aiohttp import web
+from aiohttp import web  # noqa: E402 - configure the isolated harness before app imports
 
-from professor_compressor import application as app
-from professor_compressor.domain import UploadJob
+from professor_compressor import application as app  # noqa: E402
+from professor_compressor.domain import UploadJob  # noqa: E402
 
 delivery_delays = {}
 
@@ -31,10 +38,14 @@ async def test_session(request: web.Request) -> web.Response:
         expires_at=time.time() + 600,
         discord_limit=1_100_000,
         interaction=SimpleNamespace(channel=None),
+        guild_id=999,
     )
     if request.query.get("slow") == "1":
         delivery_delays[token] = 3
-    return web.json_response({"path": f"/upload/{token}"})
+    app.track(app.jobs[token], "created")
+    return web.json_response(
+        {"path": f"/upload/{token}", "reference": app.jobs[token].diagnostic_reference}
+    )
 
 
 async def capture_delivery(job: UploadJob, results: list, caption: str = "") -> str:

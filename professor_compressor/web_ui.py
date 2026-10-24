@@ -30,6 +30,8 @@ def browser_compressor(
     *,
     discord_limit_bytes: int | None = None,
     reopened: bool = False,
+    diagnostic_reference: str = "",
+    diagnostic_events_enabled: bool = False,
 ) -> str:
     """Return the browser-bound page that encodes videos locally."""
     template = r"""
@@ -135,6 +137,27 @@ const TARGET_BYTES = __TARGET_BYTES__;
 const DISCORD_LIMIT_BYTES = __DISCORD_LIMIT_BYTES__;
 const MAX_BATCH_BYTES = __MAX_BATCH_BYTES__;
 const SESSION_SECRET = __SESSION_SECRET__;
+const DIAGNOSTIC_REFERENCE = __DIAGNOSTIC_REFERENCE__;
+let fallbackDiagnosticRun = "";
+const diagnostic = {
+  begin: () => {
+    try { const bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
+      fallbackDiagnosticRun = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+    } catch (_) { fallbackDiagnosticRun = ""; }
+    return fallbackDiagnosticRun;
+  }, run: () => fallbackDiagnosticRun, emit: () => {}, flush: () => {}, fail: () => {},
+  context: () => ({}), code: () => "UNKNOWN", mark: () => {},
+  step: async (_stage, _file, action) => action()
+};
+// Loading diagnostics is optional and must not block the compressor's startup.
+void import("/brand/diagnostics.js").then(module => {
+  const reporter = module.createDiagnostics(SESSION_SECRET, DIAGNOSTIC_REFERENCE, __DIAGNOSTIC_EVENTS_ENABLED__);
+  reporter.resume(diagnostic.run());
+  Object.assign(diagnostic, reporter);
+}).catch(() => {});
+function diagnosticError(message, code) {
+  const error = new Error(message); error.diagnosticCode = code; return error;
+}
 const SESSION_EXPIRES_SECONDS = __EXPIRES_SECONDS__;
 const OUTPUT_TARGET_RATIO = 0.97;
 const SINGLE_CORE_BASE = "__ASSET_PREFIX__/core-esm";
@@ -179,6 +202,7 @@ function hiddenSeconds() {
   return (hiddenMs + (hiddenStarted === null ? 0 : performance.now() - hiddenStarted)) / 1000;
 }
 function reportMetrics(outcome, error = null) {
+  try {
   const category = !error ? "none" : error.name === "AbortError" ? "cancelled" :
     error.status === 0 ? "network" : error.status ? "http" :
       /memory|allocation|out of bounds/i.test(error.message || "") ? "memory" :
@@ -187,13 +211,16 @@ function reportMetrics(outcome, error = null) {
   hiddenMs = hidden * 1000;
   hiddenStarted = null;
   void fetch(window.location.pathname + "/telemetry", {
-    method: "POST", headers: {"Content-Type": "application/json", "X-Upload-Session": SESSION_SECRET},
+    method: "POST", headers: {"Content-Type": "application/json", "X-Upload-Session": SESSION_SECRET,
+      "X-Diagnostic-Run": diagnostic.run()},
     body: JSON.stringify({outcome, category, stage: preparedResults ? "delivery" : "processing",
-      ...batchMetrics, encoding_attempts: selectedFiles.reduce((sum, state) => sum + (state.encodingAttempts || 0), 0),
+      ...batchMetrics, ...diagnostic.context(), ...(error ? {error_code: diagnostic.code(error)} : {}),
+      encoding_attempts: selectedFiles.reduce((sum, state) => sum + (state.encodingAttempts || 0), 0),
       total_seconds: (performance.now() - batchStarted) / 1000,
       hidden_seconds: hidden}),
     keepalive: true, signal: AbortSignal.timeout(5000)
   }).catch(() => {});
+  } catch (_) { /* Optional reporting cannot interrupt delivery or cleanup. */ }
 }
 let selectedFiles = [];
 let currentState = null;
@@ -219,15 +246,16 @@ let progressQueue = Promise.resolve();
 
 function reportProgress(event, count) {
   const body = count === undefined ? {event} : {event, count};
+  if (diagnostic.run()) body.run_id = diagnostic.run();
   // Observability must never hold up local compression or expose file details.
-  const send = () => fetch(window.location.pathname + "/progress", {
+  const send = () => { try { return fetch(window.location.pathname + "/progress", {
     method: "POST",
     headers: {"X-Upload-Session": SESSION_SECRET, "Content-Type": "application/json"},
     body: JSON.stringify(body),
     cache: "no-store",
     keepalive: true,
     signal: event === "page_left" ? undefined : AbortSignal.timeout(5000)
-  }).catch(() => {});
+  }).catch(() => {}); } catch (_) { return Promise.resolve(); } };
   if (event === "page_left") {
     void send();
   } else {
@@ -236,6 +264,7 @@ function reportProgress(event, count) {
 }
 
 window.addEventListener("pagehide", () => {
+  diagnostic.flush();
   pageIsLeaving = true;
   if (!deliveryComplete && !sessionExpired()) reportProgress("page_left");
 });
@@ -355,7 +384,8 @@ function setPhase(phase, title, copy) {
 }
 
 function showMessage(text, kind = "error") {
-  message.textContent = text;
+  message.textContent = text + (kind === "error" && DIAGNOSTIC_REFERENCE ?
+    " Error reference: " + DIAGNOSTIC_REFERENCE : "");
   message.className = "message " + kind;
   message.hidden = false;
 }
@@ -657,7 +687,7 @@ async function loadEncoder() {
   const start = performance.now();
   batchMetrics.stage = "engine";
   try {
-    const mode = await loadEncoderCore();
+    const mode = await diagnostic.step("engine", 0, () => loadEncoderCore(), "ENGINE_LOAD_FAILED");
     batchMetrics.engine = mode;
     return mode;
   }
@@ -733,8 +763,8 @@ async function videoSignature(file) {
     for (let offset = 8; offset + 4 <= boxLength; offset += 4) {
       if (allowedBrands.has(ascii(offset, 4))) return "mp4";
     }
-    throw new Error(file.name + " uses an unsupported media-container signature. " +
-      "Choose a supported video format listed below the upload controls.");
+    throw diagnosticError(file.name + " uses an unsupported media-container signature. " +
+      "Choose a supported video format listed below the upload controls.", "UNSUPPORTED_CONTAINER");
   }
   if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 &&
       bytes[2] === 0xdf && bytes[3] === 0xa3) {
@@ -752,8 +782,8 @@ async function videoSignature(file) {
       bytes[2] === 0x01 && [0xba, 0xb3].includes(bytes[3])) return "mpeg";
   if (bytes.length >= 377 && bytes[0] === 0x47 && bytes[188] === 0x47) return "ts";
   if (bytes.length >= 389 && bytes[4] === 0x47 && bytes[196] === 0x47 && bytes[388] === 0x47) return "m2ts";
-  throw new Error(file.name + " does not have a recognized video signature. " +
-    "Choose a supported video format listed below the upload controls.");
+  throw diagnosticError(file.name + " does not have a recognized video signature. " +
+    "Choose a supported video format listed below the upload controls.", "INVALID_SIGNATURE");
 }
 
 async function removeVirtualFile(name) {
@@ -766,7 +796,7 @@ async function timedEncode(state, args) {
   state.encodingAttempts += 1;
   const start = performance.now();
   try {
-    return await ffmpeg.exec(args);
+    return await diagnostic.step("encoding", state.index, () => ffmpeg.exec(args), "ENCODE_FAILED");
   } finally {
     // Include failed encoding attempts and size retries, but exclude engine
     // loading, probing, file copies, remuxing, upload, and Discord delivery.
@@ -777,7 +807,9 @@ async function timedEncode(state, args) {
 async function compressOne(state) {
   batchMetrics.stage = "metadata";
   const file = state.file;
-  const format = await videoSignature(file);
+  const format = await diagnostic.step("validation", state.index, () => videoSignature(file), "INVALID_SIGNATURE");
+  diagnostic.emit("stage_finished", state.index, {stage: "validation", input_bytes: file.size,
+    input_format: format, target_bytes: outputTargetBytes(), discord_limit: DISCORD_LIMIT_BYTES});
   const effectiveTargetBytes = outputTargetBytes();
   if (file.size <= unchangedLimitBytes() && format === "mp4") {
     updateFile(state, "Already fits", 100);
@@ -792,12 +824,15 @@ async function compressOne(state) {
   const outputName = "output-" + state.index + ".mp4";
   const probeName = "probe-" + state.index + ".json";
   try {
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
+    await diagnostic.step("file_read", state.index, async () => {
+      await ffmpeg.writeFile(inputName, await fetchFile(file));
+    }, "FILE_READ_FAILED");
     updateFile(state, "Reading video metadata", 0);
-    await ffmpeg.ffprobe([
+    const metadataStarted = performance.now();
+    await diagnostic.step("metadata", state.index, () => ffmpeg.ffprobe([
       "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,codec_name,duration,width,height,avg_frame_rate",
       "-of", "json", inputName, "-o", probeName
-    ], 30000);
+    ], 30000), "METADATA_INVALID");
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
     // The pinned wasm core returns -1 even for successful probes; validate its
     // structured output instead of relying on that exit status.
@@ -807,19 +842,23 @@ async function compressOne(state) {
       if (metadata.error || !Array.isArray(metadata.streams)) throw new Error("Invalid metadata");
     } catch (error) {
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
-      throw new Error("Could not determine video metadata for " + file.name +
-        ". The file may be damaged or unsupported by this encoder.");
+      throw diagnosticError("Could not determine video metadata for " + file.name +
+        ". The file may be damaged or unsupported by this encoder.",
+        performance.now() - metadataStarted >= 29500 ? "METADATA_TIMEOUT" : "METADATA_INVALID");
     }
     const videoStream = metadata.streams.find((stream) => stream.codec_type === "video");
     const audioStream = metadata.streams.find((stream) => stream.codec_type === "audio");
-    if (!videoStream) throw new Error("No video stream found in " + file.name + ". Choose a video, not an audio-only file.");
+    if (!videoStream) throw diagnosticError("No video stream found in " + file.name + ". Choose a video, not an audio-only file.", "NO_VIDEO_STREAM");
     const rateParts = String(videoStream.avg_frame_rate || "0/1").split("/").map(Number);
     state.inputMedia = {input_width: videoStream.width, input_height: videoStream.height,
       input_fps: rateParts[0] / (rateParts[1] || 1)};
     const duration = [metadata.format?.duration, videoStream.duration]
       .map(Number).find((value) => Number.isFinite(value) && value > 0);
-    if (!duration) throw new Error(
-      "Could not determine the duration of " + file.name + ". Re-export the clip with a finite duration.");
+    if (!duration) throw diagnosticError(
+      "Could not determine the duration of " + file.name + ". Re-export the clip with a finite duration.", "DURATION_UNKNOWN");
+    diagnostic.emit("stage_finished", state.index, {stage: "metadata", ...state.inputMedia,
+      input_format: format, input_bytes: file.size, duration_seconds: duration,
+      video_codec: videoStream.codec_name, audio_codec: audioStream?.codec_name || "none"});
     const audioKbps = 96;
     const scale = "fps=fps='min(source_fps,30)'," +
       "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease," +
@@ -834,10 +873,10 @@ async function compressOne(state) {
         lastFfmpegMessage = "";
         updateFile(state, "Preparing MP4 without re-encoding", 0);
         batchMetrics.stage = "remux";
-        const remuxExit = await ffmpeg.exec([
+        const remuxExit = await diagnostic.step("remux", state.index, () => ffmpeg.exec([
           "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
           "-c", "copy", "-movflags", "+faststart", outputName
-        ]);
+        ]), "ENCODE_FAILED");
         if (cancelled) throw new DOMException("Cancelled", "AbortError");
         if (remuxExit === 0) {
           const remuxed = await ffmpeg.readFile(outputName);
@@ -864,8 +903,8 @@ async function compressOne(state) {
           "-c:a", "aac", "-b:a", audioKbps + "k", "-movflags", "+faststart", outputName
         ]);
         if (cancelled) throw new DOMException("Cancelled", "AbortError");
-        if (conversionExit !== 0) throw new Error("The encoder could not read " + file.name +
-          ". The video may use an unsupported or damaged codec.");
+        if (conversionExit !== 0) throw diagnosticError("The encoder could not read " + file.name +
+          ". The video may use an unsupported or damaged codec.", "ENCODE_FAILED");
         const converted = await ffmpeg.readFile(outputName);
         if (converted.byteLength <= unchangedLimitBytes()) {
           const blob = new Blob([converted], { type: "video/mp4" });
@@ -882,8 +921,8 @@ async function compressOne(state) {
     const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
     let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
     if (videoKbps < 100) {
-      throw new Error(file.name + " is too long to fit at a usable quality. " +
-        "Trim the video into shorter clips and try again.");
+      throw diagnosticError(file.name + " is too long to fit at a usable quality. " +
+        "Trim the video into shorter clips and try again.", "OUTPUT_TOO_LARGE");
     }
     async function encode(bitrate) {
       lastFfmpegMessage = "";
@@ -898,8 +937,8 @@ async function compressOne(state) {
     currentAttempt = 1;
     let exitCode = await encode(videoKbps);
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
-    if (exitCode !== 0) throw new Error("The encoder could not read " + file.name +
-      ". The video may use an unsupported or damaged codec.");
+    if (exitCode !== 0) throw diagnosticError("The encoder could not read " + file.name +
+      ". The video may use an unsupported or damaged codec.", "ENCODE_FAILED");
     let output = await ffmpeg.readFile(outputName);
     if (output.byteLength > effectiveTargetBytes) {
       const correction = effectiveTargetBytes / output.byteLength;
@@ -911,13 +950,13 @@ async function compressOne(state) {
       updateFile(state, "Adjusting final size", 0);
       exitCode = await encode(videoKbps);
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
-      if (exitCode !== 0) throw new Error("The final size adjustment failed for " +
-        file.name + ". Try that video by itself.");
+      if (exitCode !== 0) throw diagnosticError("The final size adjustment failed for " +
+        file.name + ". Try that video by itself.", "ENCODE_FAILED");
       output = await ffmpeg.readFile(outputName);
     }
     if (output.byteLength > effectiveTargetBytes) {
-      throw new Error(file.name + " could not be reduced below Discord's limit. " +
-        "Trim it into a shorter clip and try again.");
+      throw diagnosticError(file.name + " could not be reduced below Discord's limit. " +
+        "Trim it into a shorter clip and try again.", "OUTPUT_TOO_LARGE");
     }
     const blob = new Blob([output], { type: "video/mp4" });
     updateFile(state, "Compressed", 100);
@@ -961,8 +1000,11 @@ async function compressWithRetry(state) {
         Object.assign(result.diagnostic.telemetry, {output_width: state.inputMedia.input_width,
           output_height: state.inputMedia.input_height, output_fps: state.inputMedia.input_fps});
       }
+      diagnostic.emit("file_ready", state.index, {...result.diagnostic, ...result.diagnostic.telemetry,
+        output_bytes: result.blob.size, audio_kbps: state.encodingAttempts ? 96 : undefined});
       return result;
     } catch (error) {
+      try { error.diagnosticFileIndex = state.index; } catch (_) { /* Optional context. */ }
       if (cancelled || error.name === "AbortError") throw error;
       console.error("Compression attempt failed", error, lastFfmpegMessage);
       batchMetrics.processing_failures = (batchMetrics.processing_failures || 0) + 1;
@@ -971,6 +1013,8 @@ async function compressWithRetry(state) {
         throw error;
       }
       updateFile(state, "Retrying encoder", 0);
+      diagnostic.emit("retry", state.index, {attempt: attempt + 1,
+        error_code: diagnostic.code(error), retryable: true});
       phaseCopy.textContent = "The encoder stopped unexpectedly. Reloading it and retrying " +
         state.file.name + " once.";
       await resetEncoder();
@@ -980,6 +1024,7 @@ async function compressWithRetry(state) {
 
 function xhrUpload(results) {
   return new Promise((resolve, reject) => {
+    diagnostic.mark("upload");
     batchMetrics.stage = "upload";
     batchMetrics.upload_attempts = (batchMetrics.upload_attempts || 0) + 1;
     Object.assign(results[0].diagnostic.telemetry, batchMetrics, {hidden_seconds: hiddenSeconds()});
@@ -994,6 +1039,7 @@ function xhrUpload(results) {
     request.responseType = "json";
     request.timeout = 600000;
     request.setRequestHeader("X-Upload-Session", SESSION_SECRET);
+    request.setRequestHeader("X-Diagnostic-Run", diagnostic.run());
     request.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) return;
       const fraction = event.loaded / event.total;
@@ -1019,6 +1065,7 @@ function xhrUpload(results) {
     });
     request.upload.addEventListener("load", () => {
       batchMetrics.stage = "delivery";
+      diagnostic.mark("delivery");
       overallProgress.value = 98;
       phaseCopy.textContent = "Finished files reached the relay. Waiting for Discord to accept them.";
       setRunDetail("Waiting for Discord");
@@ -1079,7 +1126,7 @@ async function uploadWithRetry(results) {
   }
 }
 
-async function reportBrowserFailure(stage) {
+async function reportBrowserFailure(stage, error) {
   try {
     await fetch(window.location.pathname.replace(/\/$/, "") + "/failure", {
       method: "POST",
@@ -1087,7 +1134,8 @@ async function reportBrowserFailure(stage) {
         "Content-Type": "application/json",
         "X-Upload-Session": SESSION_SECRET
       },
-      body: JSON.stringify({ stage }),
+      body: JSON.stringify({ stage, operation: diagnostic.context().stage,
+        run_id: diagnostic.run(), error_code: diagnostic.code(error) }),
       cache: "no-store",
       credentials: "same-origin",
       keepalive: true
@@ -1195,6 +1243,7 @@ form.addEventListener("submit", async (event) => {
     showMessage("Choose between 1 and " + MAX_CLIPS + " videos.");
     return;
   }
+  diagnostic.begin();
   reportProgress("started");
   cancelled = false;
   running = true;
@@ -1215,7 +1264,7 @@ form.addEventListener("submit", async (event) => {
   startedAt = performance.now();
   if (!preparedResults) {
     batchStarted = startedAt;
-    batchMetrics = {batch_id: crypto.randomUUID().replaceAll("-", ""), engine_seconds: 0, engine: "unused", upload_attempts: 0};
+    batchMetrics = {batch_id: diagnostic.run(), engine_seconds: 0, engine: "unused", upload_attempts: 0};
     hiddenMs = 0;
   }
   hiddenStarted = document.hidden ? performance.now() : null;
@@ -1246,12 +1295,18 @@ form.addEventListener("submit", async (event) => {
     await pauseRequest;
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
     if (!preparedResults) {
-      const session = await sessionRequest("heartbeat");
+      const session = await diagnostic.step("session", 0, () => sessionRequest("heartbeat"), "SESSION_EXPIRED");
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
       if (!session.ready) throw new Error("This session already has a delivery in progress.");
       stopHeartbeat();
       heartbeatTimer = setInterval(() => { void keepSessionAlive(); }, 60000);
-      const formats = await Promise.all(selectedFiles.map((state) => videoSignature(state.file)));
+      const formats = await Promise.all(selectedFiles.map(async state => {
+        // Size is available even if container or metadata reading fails.
+        diagnostic.emit("stage_started", state.index, {stage: "validation", input_bytes: state.file.size});
+        const format = await diagnostic.step("validation", state.index, () => videoSignature(state.file), "INVALID_SIGNATURE");
+        diagnostic.emit("stage_finished", state.index, {stage: "validation", input_format: format, input_bytes: state.file.size});
+        return format;
+      }));
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
       const needsEncoder = selectedFiles.some((state, index) =>
         state.file.size > unchangedLimitBytes() || formats[index] !== "mp4");
@@ -1281,6 +1336,7 @@ form.addEventListener("submit", async (event) => {
       "Compression is complete. Finished MP4 files are now being sent through the relay to Discord.");
     const response = await uploadWithRetry(preparedResults);
     reportMetrics("delivered");
+    diagnostic.flush();
     for (const result of preparedResults) updateFile(result.state, "Delivered", 100);
     overallProgress.value = 100;
     setRunDetail("Complete");
@@ -1316,10 +1372,13 @@ form.addEventListener("submit", async (event) => {
     renderDocumentTitle();
     stopClock();
   } catch (error) {
+    if (!cancelled && error.name !== "AbortError") {
+      try { diagnostic.fail(error); } catch (_) { /* Optional diagnostic only. */ }
+    }
     reportMetrics(cancelled || error.name === "AbortError" ? "cancelled" : "failed", error);
     if (cancelled || error.name === "AbortError") { finishRun(); return; }
     console.error(error);
-    void reportBrowserFailure(runStage);
+    void reportBrowserFailure(runStage, error);
     setPhase("compress", "Action needed", "The process stopped before delivery completed.");
     setRunDetail("Stopped");
     showMessage(friendlyError(error));
@@ -1368,6 +1427,11 @@ expiryTimer = setInterval(updateExpiry, 1000);
         .replace("__MAX_BATCH_BYTES__", _json_script_value(max_batch_bytes))
         .replace("__REVIEW_PROMPT__", REVIEW_PROMPT)
         .replace("__SESSION_SECRET__", _json_script_value(session_secret))
+        .replace("__DIAGNOSTIC_REFERENCE__", _json_script_value(diagnostic_reference))
+        .replace(
+            "__DIAGNOSTIC_EVENTS_ENABLED__",
+            _json_script_value(diagnostic_events_enabled),
+        )
         .replace("__EXPIRES_SECONDS__", _json_script_value(expires_in_seconds))
         .replace(
             "__RECOVERY_NOTICE__",
@@ -1380,7 +1444,9 @@ expiryTimer = setInterval(updateExpiry, 1000);
     )
 
 
-def browser_delivery_status(session_secret: str) -> str:
+def browser_delivery_status(
+    session_secret: str, *, diagnostic_reference: str = ""
+) -> str:
     """Show a status-only view while the relay owns the delivery."""
     return (
         '<img class="brand" src="/brand/professor-compressor.png" '
@@ -1390,6 +1456,7 @@ def browser_delivery_status(session_secret: str) -> str:
         "refreshed while finished files were being sent. Below is the "
         "current status:</p>"
         '<p id="delivery-status" class="message" role="status">Checking status…</p>'
+        '<p id="diagnostic-reference" class="privacy" hidden></p>'
         '<p id="reselect" hidden>That upload did not complete. Videos held by '
         "the previous page cannot be restored. "
         '<a href="" id="return-to-compressor">Return to compressor</a> '
@@ -1398,6 +1465,9 @@ def browser_delivery_status(session_secret: str) -> str:
         + '<p class="privacy"><a href="/privacy">Privacy Policy</a></p>'
         "<script>\n"
         f"const SESSION_SECRET = {_json_script_value(session_secret)};\n"
+        f"const DIAGNOSTIC_REFERENCE = {_json_script_value(diagnostic_reference)};\n"
+        'const referenceLine = document.getElementById("diagnostic-reference");\n'
+        'referenceLine.textContent = "Error reference: " + DIAGNOSTIC_REFERENCE;\n'
         'const statusLine = document.getElementById("delivery-status");\n'
         'const heading = document.getElementById("delivery-heading");\n'
         'const explanation = document.getElementById("delivery-explanation");\n'
@@ -1409,6 +1479,7 @@ def browser_delivery_status(session_secret: str) -> str:
         '      cache: "no-store", signal: AbortSignal.timeout(10000)\n'
         "    });\n"
         "    const body = await response.json();\n"
+        "    referenceLine.hidden = !DIAGNOSTIC_REFERENCE || Boolean(body.pending || body.ok);\n"
         "    if (body.pending) {\n"
         '      statusLine.textContent = "Delivery is still in progress. Check Discord before starting a new session.";\n'
         "      setTimeout(checkDelivery, 2000);\n"
@@ -1434,6 +1505,7 @@ def browser_delivery_status(session_secret: str) -> str:
         '      statusLine.textContent = "Delivery could not be confirmed. Check Discord before running /compress again.";\n'
         "    }\n"
         "  } catch (_) {\n"
+        "    referenceLine.hidden = !DIAGNOSTIC_REFERENCE;\n"
         "    explanation.hidden = true;\n"
         '    statusLine.textContent = "Connection lost while checking delivery. Retrying safely…";\n'
         "    setTimeout(checkDelivery, 3000);\n"

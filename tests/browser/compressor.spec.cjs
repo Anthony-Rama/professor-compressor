@@ -76,7 +76,7 @@ test('browser reports selection and start without filenames or media', async ({ 
   await openSession(page, request);
   await deliver(page, join(fixtures, 'small.mp4'));
   expect(reports).toContainEqual({event: 'selected', count: 1});
-  expect(reports).toContainEqual({event: 'started'});
+  expect(reports).toContainEqual({event: 'started', run_id: expect.stringMatching(/^[0-9a-f]{32}$/)});
   expect(JSON.stringify(reports)).not.toContain('small.mp4');
 });
 

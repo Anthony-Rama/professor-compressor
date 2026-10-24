@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -44,6 +45,12 @@ class UploadJob:
     page_left: bool = False
     page_left_reported: bool = False
     page_left_at: float | None = None
+    diagnostic_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    active_run_id: str = ""
+
+    @property
+    def diagnostic_reference(self) -> str:
+        return "PC-" + self.diagnostic_id[:12].upper()
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +79,7 @@ class DeliveryRequest:
     diagnostics: list[CompressionDiagnostic] = field(default_factory=list)
     received_seconds: float = 0
     queued_at: float = field(default_factory=time.monotonic)
+    run_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,3 +91,6 @@ class DeliveryOutcome:
     expires_at: float
     status: int
     body: dict[str, object]
+    diagnostic_id: str = ""
+    run_id: str = ""
+    is_test: bool = False
