@@ -77,6 +77,81 @@ class StoreTests(unittest.TestCase):
         )
         self.assertEqual(EventStore().pseudonym("user", 123), "")
 
+    def test_engine_details_are_bounded_and_never_accept_raw_logs_or_metadata(self):
+        details = {
+            "engine_signal": "oom",
+            "signal_source": "engine_log",
+            "exception_kind": "TypeError",
+            "video_profile": "Main 10",
+            "pixel_format": "yuv420p10le",
+            "bit_depth": 10,
+            "decoder_mode": "auto",
+            "encoder_threads": 4,
+            "exit_code": 0,
+            "page_hidden": False,
+            "cross_origin_isolated": True,
+            "asset_build": "617df09cbdea3add",
+        }
+        self.assertEqual(sanitize(details), details)
+        self.assertEqual(
+            sanitize(
+                {
+                    "engine_signal": "private filename",
+                    "video_profile": "<script>private</script>",
+                    "pixel_format": "private",
+                    "raw_log": "Aborted(OOM) secret.mp4",
+                    "tags": {"title": "private"},
+                    "device_memory": 8,
+                    "hardware_concurrency": 16,
+                    "asset_build": "https://secret.invalid",
+                    "decoder_threads": -1,
+                    "encoder_threads": True,
+                    "bit_depth": 100,
+                    "exit_code": 256,
+                    "client_sequence": float("nan"),
+                    "page_hidden": "false",
+                }
+            ),
+            {},
+        )
+
+    def test_engine_evidence_persists_and_supports_private_grouping_and_filters(self):
+        self.emit("created")
+        self.emit(
+            "attempt_started", source="browser", file_index=1, data={"attempt": 1}
+        )
+        self.emit(
+            "stage_finished",
+            source="browser",
+            file_index=1,
+            data={
+                "stage": "encoding",
+                "engine_signal": "oom",
+                "signal_source": "engine_log",
+                "error_code": "BROWSER_MEMORY",
+                "video_profile": "Main 10",
+                "bit_depth": 10,
+            },
+        )
+        self.emit(
+            "client_failed",
+            source="browser",
+            file_index=1,
+            data={
+                "stage": "encoding",
+                "error_code": "BROWSER_MEMORY",
+                "engine_signal": "oom",
+            },
+        )
+        result = self.view(dimension="engine_signal", value="oom")
+        self.assertEqual(len(result["sessions"]), 1)
+        self.assertEqual(result["groups"]["engine_signal"][0]["value"], "oom")
+        self.assertEqual(result["groups"]["engine_signal"][0]["sessions"], 1)
+        self.assertTrue(any(e["data"].get("bit_depth") == 10 for e in result["events"]))
+        self.assertEqual(
+            self.view(dimension="engine_signal", value="wasm_bounds")["sessions"], []
+        )
+
     def test_retry_recovery_duplicates_and_late_browser_failure(self):
         self.emit("created")
         self.emit("started")
@@ -610,6 +685,48 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(response.status, 200)
             alert.assert_called_once()
+
+    async def test_compact_failure_sanitizes_evidence_and_file_index(
+        self,
+    ):
+        run = uuid.uuid4().hex
+        with patch.object(app, "schedule_owner_alert"):
+            response = await self.client.post(
+                "/upload/diagnostic-test/failure",
+                headers=self.headers,
+                json={
+                    "run_id": run,
+                    "file_index": 1,
+                    "operation": "encoding",
+                    "error_code": "BROWSER_MEMORY",
+                    "engine_signal": "oom",
+                    "signal_source": "engine_log",
+                    "exception_kind": "TypeError",
+                    "encoder_threads": 4,
+                    "raw_log": "secret.mp4",
+                },
+            )
+        self.assertEqual(response.status, 200)
+        await asyncio.to_thread(self.store._queue.join)
+        result = self.store.query(
+            include_tests=True, reference=self.job.diagnostic_reference
+        )
+        failure = next(e for e in result["events"] if e["event"] == "client_failed")
+        self.assertEqual(failure["file_index"], 1)
+        self.assertEqual(failure["data"]["engine_signal"], "oom")
+        self.assertNotIn("secret.mp4", json.dumps(result))
+        with patch.object(app, "schedule_owner_alert"):
+            response = await self.client.post(
+                "/upload/diagnostic-test/failure",
+                headers=self.headers,
+                json={"run_id": uuid.uuid4().hex, "file_index": True},
+            )
+        self.assertEqual(response.status, 200)
+        await asyncio.to_thread(self.store._queue.join)
+        result = self.store.query(
+            include_tests=True, reference=self.job.diagnostic_reference
+        )
+        self.assertEqual(result["events"][-1]["file_index"], 0)
 
     async def test_non_ascii_cookie_is_rejected_without_server_error(self):
         self.job.browser_secret = "expected-cookie"

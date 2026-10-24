@@ -108,6 +108,51 @@ Input size is reported before validation where possible. Codec/duration fields
 can be absent when metadata fails. Errors use fixed categories; `UNKNOWN` means
 the cause has not been established. Raw error text remains in the user's browser.
 
+### Engine failure evidence
+
+The private `/ops` dashboard uses this same bounded SQLite event history; there
+is no second raw-log database. Session explorer includes files that failed
+before upload, grouped by manual run and file number, plus an attempts/evidence
+table. Reliability can filter/group by `engine_signal`; Export JSON includes
+the sanitized fields in the selected view.
+File summaries use client sequence within each run when available, so late
+batches do not overwrite newer browser facts. Relay receipt values take
+precedence; the timeline itself continues to show server arrival order.
+
+Engine messages are inspected locally (at most 2,048 characters per message)
+and discarded by the diagnostic reporter. Only fixed signatures such as `oom`,
+`allocation_failed`, `wasm_bounds`, or `unsupported_codec` are sent. The
+classification preserves its source (`engine_log` or `exception`) and a fixed
+exception-kind category. Explicit OOM/allocation evidence takes precedence over
+a misleading wrapper error. A WASM bounds trap is **not** proof of OOM and uses
+`WASM_TRAP`. Signals reset between operations, files and retries. Exit codes
+apply to exec operations, not ffprobe's nonstandard success return value.
+
+Attempt records include automatic attempt number, requested decoder mode/thread
+count, encoder threads/preset/mode/bitrate, encode-pass and size-adjustment
+indicators, engine and asset build. HTTP failures can include a numeric response
+status. `auto` means
+the decoder chooses internally; its actual thread count is unknown. Client
+sequence and monotonic elapsed time help interpret batched arrival order; they
+are untrusted, not authoritative execution timestamps. Processing checkpoints
+are emitted no more often than every 15 seconds while progress arrives, never
+on every frame. Last media time and time since the latest progress are recorded
+on completion/failure. A crash can still prevent all final reports.
+
+The existing metadata probe also requests profile, level, pixel format, color
+transfer, nominal/average frame rates, rotation and audio properties. No extra
+probe/encode or frame scan is added. Missing measurements are omitted rather
+than represented as zero. Differing nominal/average rates are a hint, not a
+reliable variable-frame-rate detector. Optional tags, titles, creation times,
+locations and full metadata objects are not logged. Hardware/RAM/GPU probes,
+persistent device identifiers and automatic raw-log/video uploads are not added.
+
+No new consent-dependent advanced-device report is collected. Introducing one
+requires a separate, user-facing opt-in and privacy review. Existing retention,
+private access, range checks and event/report/queue caps apply to all new fields.
+Transport batches are additionally bounded to approximately 12 KiB of events
+to stay below the 16 KiB request cap. Diagnostic delivery remains best-effort.
+
 ## Metric definitions and limitations
 
 - The funnel counts distinct sessions, not retries or unique users at each stage.
@@ -123,8 +168,11 @@ the cause has not been established. Raw error text remains in the user's browser
 - Timelines use server arrival time, not exact browser execution order. Reports
   are batched and best-effort. Missing data does not prove inactivity.
 - Median/p95 stage times use at most 5,000 recent samples per measurement and
-  can include failed runs unless filtered. Encoding is per file; other timings
-  are per delivery or run. Session creation elapsed is a separate boundary.
+  can include failed runs unless filtered. Encoding samples require a file-ready
+  report and include that file's failed encoding attempts before recovery;
+  files that never became ready are not included in those encoding percentiles.
+  Their failed-stage times remain in the timeline. Other timings are per
+  delivery or run. Session creation elapsed is a separate boundary.
 - Coarse encoding groups compare container, duration band, and output height.
   Speed is total media seconds / total encoding seconds. It is not a controlled
   device benchmark or a video-quality score.

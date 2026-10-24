@@ -35,6 +35,8 @@ EVENTS = frozenset(
         "interrupted",
         "stage_started",
         "stage_finished",
+        "attempt_started",
+        "processing_progress",
         "file_ready",
         "retry",
         "client_failed",
@@ -51,7 +53,15 @@ EVENTS = frozenset(
     }
 )
 CLIENT_EVENTS = frozenset(
-    {"stage_started", "stage_finished", "file_ready", "retry", "client_failed"}
+    {
+        "stage_started",
+        "stage_finished",
+        "attempt_started",
+        "processing_progress",
+        "file_ready",
+        "retry",
+        "client_failed",
+    }
 )
 ENUMS = {
     "stage": {
@@ -83,6 +93,7 @@ ENUMS = {
         "ENCODE_FAILED",
         "OUTPUT_TOO_LARGE",
         "BROWSER_MEMORY",
+        "WASM_TRAP",
         "NETWORK",
         "HTTP",
         "SESSION_EXPIRED",
@@ -145,6 +156,69 @@ ENUMS = {
         "other",
     },
     "browser": {"Chrome", "Edge", "Firefox", "Safari", "Opera", "Other"},
+    "engine_signal": {
+        "oom",
+        "allocation_failed",
+        "wasm_bounds",
+        "wasm_trap",
+        "unsupported_codec",
+        "invalid_media",
+    },
+    "signal_source": {"engine_log", "exception"},
+    "exception_kind": {
+        "Error",
+        "TypeError",
+        "RangeError",
+        "RuntimeError",
+        "AbortError",
+        "other",
+    },
+    "decoder_mode": {"auto", "fixed"},
+    "command_mode": {"bitrate", "quality", "copy"},
+    "video_encoder": {"libx264", "copy"},
+    "encoder_preset": {"veryfast"},
+    "retry_reason": {"same_settings", "size_adjustment"},
+    "video_profile": {
+        "Main",
+        "Main 10",
+        "Main Still Picture",
+        "Baseline",
+        "Constrained Baseline",
+        "High",
+        "High 10",
+        "High 4:2:2",
+        "High 4:4:4 Predictive",
+        "Simple Profile",
+        "Advanced Simple Profile",
+        "Profile 0",
+        "Profile 1",
+        "Profile 2",
+        "Profile 3",
+        "other",
+    },
+    "pixel_format": {
+        "yuv420p",
+        "yuv420p10le",
+        "yuv420p12le",
+        "yuv422p",
+        "yuv422p10le",
+        "yuv444p",
+        "yuv444p10le",
+        "nv12",
+        "p010le",
+        "other",
+    },
+    "color_transfer": {
+        "bt709",
+        "smpte2084",
+        "arib-std-b67",
+        "smpte170m",
+        "bt2020-10",
+        "bt2020-12",
+        "unknown",
+        "other",
+    },
+    "chroma_subsampling": {"420", "422", "444", "other"},
     "device": {"desktop", "mobile", "unknown"},
     "engine": {"multithreaded", "single-threaded", "unused"},
     "path": {"unchanged", "remuxed", "converted", "compressed"},
@@ -173,6 +247,9 @@ NUMBERS = {
             "relay_receive_seconds",
             "queue_seconds",
             "discord_delivery_seconds",
+            "last_media_seconds",
+            "progress_idle_seconds",
+            "client_elapsed_seconds",
         ),
         86400,
     ),
@@ -191,12 +268,25 @@ NUMBERS = {
             "processing_failures",
             "delivery_failures",
             "attempt",
+            "failed_attempt",
+            "encode_pass",
             "files",
             "selected_count",
         ),
         100,
     ),
     "browser_major": 999,
+    "client_sequence": 100000,
+    "decoder_threads": 64,
+    "encoder_threads": 64,
+    "exit_code": 255,
+    "http_status": 599,
+    "last_progress_percent": 100,
+    "video_level": 1000,
+    "bit_depth": 32,
+    "audio_channels": 64,
+    "audio_sample_rate": 384000,
+    "rotation_quarter_turns": 3,
     "connected_servers": 10000000,
 }
 
@@ -221,9 +311,21 @@ def sanitize(data: object) -> dict:
             and math.isfinite(value)
         ):
             clean[key] = round(value, 4)
-    for key in ("retryable", "retry_recovered"):
+    for key in (
+        "retryable",
+        "retry_recovered",
+        "cross_origin_isolated",
+        "shared_array_buffer",
+        "webassembly",
+        "page_hidden",
+        "frame_rates_differ",
+        "size_adjustment",
+    ):
         if type(data.get(key)) is bool:
             clean[key] = data[key]
+    build = data.get("asset_build")
+    if isinstance(build, str) and re.fullmatch(r"[a-f0-9]{16}", build):
+        clean["asset_build"] = build
     return clean
 
 
@@ -595,6 +697,7 @@ class EventStore:
                 in {
                     "stage",
                     "error_code",
+                    "engine_signal",
                     "input_format",
                     "browser",
                     "device",
@@ -691,6 +794,7 @@ class EventStore:
             for field in (
                 "stage",
                 "error_code",
+                "engine_signal",
                 "input_format",
                 "browser",
                 "device",

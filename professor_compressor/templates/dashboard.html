@@ -28,7 +28,7 @@
   <form id="filters" class="filter-bar">
     <label>History window<select id="days"><option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select></label>
     <label>Session reference<input id="reference" placeholder="PC-…" maxlength="64" autocomplete="off"></label>
-    <label>Filter by<select id="dimension"><option value="">All activity</option><option value="error_code">Error code</option><option value="stage">Stage</option><option value="input_format">Input format</option><option value="browser">Browser</option><option value="device">Device</option><option value="engine">Engine</option><option value="path">Processing path</option><option value="revision">Release</option></select></label>
+    <label>Filter by<select id="dimension"><option value="">All activity</option><option value="error_code">Error code</option><option value="engine_signal">Engine failure signal</option><option value="stage">Stage</option><option value="input_format">Input format</option><option value="browser">Browser</option><option value="device">Device</option><option value="engine">Engine</option><option value="path">Processing path</option><option value="revision">Release</option></select></label>
     <label>Filter value<input id="value" maxlength="64" placeholder="e.g. METADATA_INVALID" autocomplete="off"></label>
     <label class="check"><input id="tests" type="checkbox"> Include tests</label>
     <button type="submit" class="primary">Refresh</button><button type="button" id="reset" class="quiet">Reset</button>
@@ -52,6 +52,7 @@
   <section id="panel-reliability" role="tabpanel" aria-labelledby="tab-reliability" hidden>
     <div id="reliability-summary" class="stat-grid"></div>
     <div class="two-column"><section class="card"><h2>Error categories</h2><p>Reports may come from retries that later succeeded.</p><div id="group-error_code"></div></section><section class="card"><h2>Failures by stage</h2><p>Cancelled operations are excluded.</p><div id="group-failure_stage"></div></section></div>
+    <section class="card"><h2>Underlying engine signals</h2><p>Recognized locally from engine messages or exceptions; raw logs are not uploaded. A WASM bounds trap alone does not prove memory exhaustion.</p><div id="group-engine_signal"></div></section>
     <div class="two-column"><section class="card"><h2>Session outcomes</h2><div id="statuses"></div></section><section class="card"><h2>Stages reached</h2><div id="group-stage"></div></section></div>
   </section>
 
@@ -65,7 +66,8 @@
 
   <section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" hidden>
     <section class="card"><h2>Recent sessions</h2><p>Up to 100 matching sessions. Select a reference to inspect the run, file and stage details.</p><div id="sessions"></div></section>
-    <section class="card"><h2>File diagnostics</h2><p>Received files in the selected session. File numbers replace private filenames; input properties and encoding times are browser-reported.</p><div id="session-files"></div></section>
+    <section class="card"><h2>File diagnostics</h2><p>Includes files that failed before upload. Each manual run is separate. Missing properties mean not reported, not zero; browser measurements are untrusted. Scroll horizontally for all columns.</p><div id="session-files" tabindex="0" role="region" aria-label="File diagnostics, scroll horizontally for details"></div></section>
+    <section class="card"><h2>Attempts &amp; failure evidence</h2><p>Requested decoder settings, recognized signals, exit codes and last progress. Auto decoder threads are chosen internally by the engine. Missing final reports cannot establish a cause. Scroll horizontally for all columns.</p><div id="session-attempts" tabindex="0" role="region" aria-label="Attempt evidence, scroll horizontally for details"></div></section>
     <section class="card"><div class="card-heading"><div><h2>Session timeline</h2><p id="timeline-heading">Select a session to inspect its history.</p></div></div><div id="events"></div></section>
   </section>
 

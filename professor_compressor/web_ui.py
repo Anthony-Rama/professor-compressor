@@ -147,6 +147,8 @@ const diagnostic = {
     return fallbackDiagnosticRun;
   }, run: () => fallbackDiagnosticRun, emit: () => {}, flush: () => {}, fail: () => {},
   context: () => ({}), code: () => "UNKNOWN", mark: () => {},
+  configure: () => {}, media: () => ({}), attempt: () => {}, log: () => {},
+  progress: () => {}, failureContext: () => ({}),
   step: async (_stage, _file, action) => action()
 };
 // Loading diagnostics is optional and must not block the compressor's startup.
@@ -158,10 +160,16 @@ void import("/brand/diagnostics.js").then(module => {
 function diagnosticError(message, code) {
   const error = new Error(message); error.diagnosticCode = code; return error;
 }
+function processingError(value) {
+  // The worker can reject with a primitive even when diagnostics cannot load.
+  return value && typeof value === "object" ? value :
+    new Error(typeof value === "string" ? value : "The video engine stopped unexpectedly.");
+}
 const SESSION_EXPIRES_SECONDS = __EXPIRES_SECONDS__;
 const OUTPUT_TARGET_RATIO = 0.97;
 const SINGLE_CORE_BASE = "__ASSET_PREFIX__/core-esm";
 const MULTI_CORE_BASE = "__ASSET_PREFIX__/core-mt-esm";
+const DIAGNOSTIC_ASSET_BUILD = "__ASSET_PREFIX__".split("/").pop();
 
 const form = document.getElementById("upload");
 const clips = document.getElementById("clips");
@@ -203,9 +211,10 @@ function hiddenSeconds() {
 }
 function reportMetrics(outcome, error = null) {
   try {
+  const errorCode = error ? diagnostic.code(error) : "";
   const category = !error ? "none" : error.name === "AbortError" ? "cancelled" :
     error.status === 0 ? "network" : error.status ? "http" :
-      /memory|allocation|out of bounds/i.test(error.message || "") ? "memory" :
+      errorCode === "BROWSER_MEMORY" ? "memory" :
       /timeout/i.test(error.code || "") ? "timeout" : "processing";
   const hidden = hiddenSeconds();
   hiddenMs = hidden * 1000;
@@ -641,12 +650,14 @@ function createEncoder() {
   const encoder = new FFmpeg();
   encoder.on("log", ({ message: line }) => {
     lastFfmpegMessage = line;
+    diagnostic.log(line);
   });
   let lastProgressState = null;
   let lastProgressAttempt = 0;
   let lastProgressPercent = -1;
-  encoder.on("progress", ({ progress: fraction }) => {
+  encoder.on("progress", ({ progress: fraction, time }) => {
     if (!currentState || cancelled) return;
+    diagnostic.progress(fraction, time);
     const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
     if (currentState === lastProgressState && currentAttempt === lastProgressAttempt &&
         percent === lastProgressPercent) return;
@@ -717,7 +728,7 @@ async function loadEncoderCore() {
       if (cancelled) throw error;
       console.warn("Multithreaded encoder unavailable; using fallback.", error);
       ffmpeg.terminate();
-      if (error.code === "encoder_start_timeout") {
+      if (error?.code === "encoder_start_timeout") {
         ffmpeg = null;
         throw error;
       }
@@ -791,10 +802,11 @@ async function removeVirtualFile(name) {
   try { await ffmpeg.deleteFile(name); } catch (_) { /* Optional file. */ }
 }
 
-async function timedEncode(state, args) {
+async function timedEncode(state, args, sizeAdjustment = false) {
   batchMetrics.stage = "encoding";
   state.encodingAttempts += 1;
   const start = performance.now();
+  diagnostic.configure(args, encoderMode, DIAGNOSTIC_ASSET_BUILD, state.encodingAttempts, sizeAdjustment);
   try {
     return await diagnostic.step("encoding", state.index, () => ffmpeg.exec(args), "ENCODE_FAILED");
   } finally {
@@ -830,7 +842,7 @@ async function compressOne(state) {
     updateFile(state, "Reading video metadata", 0);
     const metadataStarted = performance.now();
     await diagnostic.step("metadata", state.index, () => ffmpeg.ffprobe([
-      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,codec_name,duration,width,height,avg_frame_rate",
+      "-v", "error", "-show_error", "-show_entries", "format=duration:stream=codec_type,codec_name,duration,width,height,avg_frame_rate,r_frame_rate,pix_fmt,profile,level,color_transfer,channels,sample_rate:stream_side_data=rotation",
       "-of", "json", inputName, "-o", probeName
     ], 30000), "METADATA_INVALID");
     if (cancelled) throw new DOMException("Cancelled", "AbortError");
@@ -851,7 +863,7 @@ async function compressOne(state) {
     if (!videoStream) throw diagnosticError("No video stream found in " + file.name + ". Choose a video, not an audio-only file.", "NO_VIDEO_STREAM");
     const rateParts = String(videoStream.avg_frame_rate || "0/1").split("/").map(Number);
     state.inputMedia = {input_width: videoStream.width, input_height: videoStream.height,
-      input_fps: rateParts[0] / (rateParts[1] || 1)};
+      input_fps: rateParts[0] / (rateParts[1] || 1), ...diagnostic.media(videoStream, audioStream)};
     const duration = [metadata.format?.duration, videoStream.duration]
       .map(Number).find((value) => Number.isFinite(value) && value > 0);
     if (!duration) throw diagnosticError(
@@ -873,10 +885,12 @@ async function compressOne(state) {
         lastFfmpegMessage = "";
         updateFile(state, "Preparing MP4 without re-encoding", 0);
         batchMetrics.stage = "remux";
-        const remuxExit = await diagnostic.step("remux", state.index, () => ffmpeg.exec([
+        const remuxArgs = [
           "-i", inputName, "-map", "0:v:0", "-map", "0:a:0?",
           "-c", "copy", "-movflags", "+faststart", outputName
-        ]), "ENCODE_FAILED");
+        ];
+        diagnostic.configure(remuxArgs, encoderMode, DIAGNOSTIC_ASSET_BUILD);
+        const remuxExit = await diagnostic.step("remux", state.index, () => ffmpeg.exec(remuxArgs), "ENCODE_FAILED");
         if (cancelled) throw new DOMException("Cancelled", "AbortError");
         if (remuxExit === 0) {
           const remuxed = await ffmpeg.readFile(outputName);
@@ -932,7 +946,7 @@ async function compressOne(state) {
         "-preset", "veryfast", "-b:v", bitrate + "k", "-maxrate", bitrate + "k",
         "-bufsize", (bitrate * 2) + "k", "-vf", scale, "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", audioKbps + "k", "-movflags", "+faststart", outputName
-      ]);
+      ], format !== "mp4" || currentAttempt > 1);
     }
     currentAttempt = 1;
     let exitCode = await encode(videoKbps);
@@ -988,6 +1002,7 @@ async function compressWithRetry(state) {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       currentState = state;
+      diagnostic.attempt(state.index, attempt);
       updateFile(state, attempt === 1 ? "Starting" : "Retrying automatically", 0);
       const result = await compressOne(state);
       if (cancelled) throw new DOMException("Cancelled", "AbortError");
@@ -1003,7 +1018,10 @@ async function compressWithRetry(state) {
       diagnostic.emit("file_ready", state.index, {...result.diagnostic, ...result.diagnostic.telemetry,
         output_bytes: result.blob.size, audio_kbps: state.encodingAttempts ? 96 : undefined});
       return result;
-    } catch (error) {
+    } catch (value) {
+      // Optional diagnostics may not be loaded. Handle worker string/null
+      // rejections here too, so retries and user-facing errors remain safe.
+      const error = processingError(value);
       try { error.diagnosticFileIndex = state.index; } catch (_) { /* Optional context. */ }
       if (cancelled || error.name === "AbortError") throw error;
       console.error("Compression attempt failed", error, lastFfmpegMessage);
@@ -1013,7 +1031,8 @@ async function compressWithRetry(state) {
         throw error;
       }
       updateFile(state, "Retrying encoder", 0);
-      diagnostic.emit("retry", state.index, {attempt: attempt + 1,
+      diagnostic.emit("retry", state.index, {...diagnostic.failureContext(error), attempt: attempt + 1,
+        failed_attempt: attempt, retry_reason: "same_settings",
         error_code: diagnostic.code(error), retryable: true});
       phaseCopy.textContent = "The encoder stopped unexpectedly. Reloading it and retrying " +
         state.file.name + " once.";
@@ -1135,6 +1154,7 @@ async function reportBrowserFailure(stage, error) {
         "X-Upload-Session": SESSION_SECRET
       },
       body: JSON.stringify({ stage, operation: diagnostic.context().stage,
+        ...diagnostic.failureContext(error),
         run_id: diagnostic.run(), error_code: diagnostic.code(error) }),
       cache: "no-store",
       credentials: "same-origin",
@@ -1153,8 +1173,11 @@ function friendlyError(error) {
   if (error.status === 0) {
     return "Delivery could not be confirmed. Check your connection and Discord, then use Check delivery / retry. Prepared files will not be recompressed.";
   }
-  if (/memory|allocation|out of bounds/i.test(error.message || "")) {
-    return "This browser ran out of memory. Close other tabs and try fewer or smaller videos.";
+  if (diagnostic.code(error) === "BROWSER_MEMORY") {
+    return "The video engine could not allocate enough memory in this browser. Close other tabs and try fewer or smaller videos.";
+  }
+  if (diagnostic.code(error) === "WASM_TRAP") {
+    return "The video engine hit a runtime error while processing this clip. Try the clip by itself or use another desktop browser.";
   }
   return error.message || "The operation failed. Try fewer videos or reload the page and run /compress again.";
 }
@@ -1371,7 +1394,8 @@ form.addEventListener("submit", async (event) => {
     void releaseWakeLock();
     renderDocumentTitle();
     stopClock();
-  } catch (error) {
+  } catch (value) {
+    const error = processingError(value);
     if (!cancelled && error.name !== "AbortError") {
       try { diagnostic.fail(error); } catch (_) { /* Optional diagnostic only. */ }
     }
