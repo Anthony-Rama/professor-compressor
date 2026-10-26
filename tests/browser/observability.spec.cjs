@@ -353,7 +353,8 @@ test('progress checkpoints are throttled and expanded event batches stay below t
     } finally {window.fetch=originalFetch;Object.defineProperty(performance,'now',{configurable:true,value:originalNow});}
   });
   expect(result.events.filter(e=>e.event==='processing_progress')).toHaveLength(1);
-  expect(result.events.find(e=>e.event==='processing_progress').data).toMatchObject({last_media_seconds:9,last_progress_percent:90});
+  // A later regressing sample cannot erase the furthest observed progress.
+  expect(result.events.find(e=>e.event==='processing_progress').data).toMatchObject({last_media_seconds:9.9,last_progress_percent:99,progress_idle_seconds:15});
   expect(result.sizes.every(size=>size<16384)).toBe(true);
   expect(result.events.every((e,index)=>e.data.client_sequence===index+1)).toBe(true);
   expect(result.events.filter(e=>e.data.ignored)).toHaveLength(40);
@@ -400,4 +401,260 @@ test('file summaries keep runs separate and prefer newer browser facts and relay
     await expect(rows.nth(0)).not.toContainText('640 × 360');
     await expect(rows.nth(1)).toContainText('1920 × 1080');
   } finally {await context.close();}
+});
+
+test('failure reporting retries a temporary outage and retains file evidence without the event stream',async({page,request})=>{
+  let reports=0;
+  await page.route('**/failure',async route=>{
+    if(++reports===1)return route.fulfill({status:503,json:{error:'temporary test outage'}});
+    return route.continue();
+  });
+  await page.route('**/events',route=>route.abort());
+  await page.addInitScript(()=>{
+    const send=Worker.prototype.postMessage;
+    Worker.prototype.postMessage=function(message,...rest){
+      if(message?.type==='EXEC'){
+        queueMicrotask(()=>{
+          this.onmessage?.({data:{type:'LOG',data:{type:'stderr',message:'Aborted(OOM) private-engine-marker'}}});
+          this.onmessage?.({data:{id:message.id,type:'ERROR',data:'TypeError: private-engine-marker'}});
+        });return;
+      }
+      return send.call(this,message,...rest);
+    };
+  });
+  const session=await open(page,request);
+  await page.locator('#clips').setInputFiles(join(fixtures,'oversized.mp4'));await page.locator('#submit').click();
+  await expect(page.locator('#page-heading')).toHaveText('Compression failed');
+  await expect(page.locator('#message')).toContainText('could not allocate enough memory');
+  await expect(page.locator('#message')).toContainText('Video 1:');
+  await expect(page.locator('#message')).toBeFocused();
+  await expect(page.locator('#message')).toContainText(session.reference);
+  await expect.poll(async()=> (await data(request,session.reference)).events.some(event=>event.event==='client_failed')).toBe(true);
+  const result=await data(request,session.reference),failures=result.events.filter(event=>event.event==='client_failed');
+  expect(reports).toBe(2);expect(failures).toHaveLength(1);
+  expect(failures[0]).toMatchObject({file_index:1,data:{error_code:'BROWSER_MEMORY',engine_signal:'oom',input_bytes:1200000,input_width:320,input_height:240,pixel_format:'yuv420p',video_codec:'h264',audio_codec:'none',exception_kind:'TypeError',browser:'Chrome',device:'desktop'}});
+  expect(JSON.stringify(result)).not.toMatch(/private-engine-marker|oversized\.mp4/);
+});
+
+test('dashboard explains known and unknown failures and exposes the 90-day history window',async({browser})=>{
+  const context=await browser.newContext({httpCredentials:operator,viewport:{width:375,height:900}});
+  try {
+    const page=await context.newPage();let days;
+    await page.route('**/ops/data?**',route=>{
+      days=new URL(route.request().url()).searchParams.get('days');
+      return route.fulfill({json:{storage:{ready:true,retention_days:90},sessions:[
+        {reference:'PC-111111111111',status:'client_failed',failure_data:{error_code:'BROWSER_MEMORY'}},
+        {reference:'PC-222222222222',status:'client_failed',failure_data:{error_code:'UNKNOWN'}}
+      ],events:[{event:'client_failed',source:'browser',run_id:'aaaa',file_index:1,data:{stage:'encoding',error_code:'BROWSER_MEMORY'}}]}});
+    });
+    await page.goto('/ops');await expect(page.locator('#status')).toContainText('Updated');
+    await expect(page.locator('#retention-note')).toContainText('90 days');
+    await page.locator('#days').selectOption('90');await page.getByRole('button',{name:'Refresh',exact:true}).click();
+    await expect.poll(()=>days).toBe('90');await page.getByRole('tab',{name:'Session explorer',exact:true}).click();
+    await expect(page.locator('#sessions')).toContainText('could not allocate enough memory');
+    await expect(page.locator('#sessions')).toContainText('cause was not captured');
+    await expect(page.locator('#events summary')).toContainText('Encoding failed');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  } finally {await context.close();}
+});
+
+test('explicit unsupported-codec evidence gets a specific user-facing explanation',async({page,request})=>{
+  await page.addInitScript(()=>{
+    const send=Worker.prototype.postMessage;
+    Worker.prototype.postMessage=function(message,...rest){
+      if(message?.type==='EXEC'){
+        queueMicrotask(()=>{
+          for(const line of ['Invalid data found when processing input','Decoder (codec av1) not found for input stream #0:0'])
+            this.onmessage?.({data:{type:'LOG',data:{type:'stderr',message:line}}});
+          this.onmessage?.({data:{id:message.id,type:'ERROR',data:'TypeError: generic wrapper'}});
+        });return;
+      }
+      return send.call(this,message,...rest);
+    };
+  });
+  const session=await open(page,request);
+  await page.locator('#clips').setInputFiles(join(fixtures,'oversized.mp4'));await page.locator('#submit').click();
+  await expect(page.locator('#message')).toContainText('codec is not supported');
+  await expect(page.locator('#message')).toContainText('H.264 MP4 with AAC audio');
+  await expect.poll(async()=> (await data(request,session.reference)).events.some(event=>event.data.error_code==='UNSUPPORTED_CODEC')).toBe(true);
+});
+
+test('90-day history chart scales only against visible recent activity',async({browser})=>{
+  const context=await browser.newContext({httpCredentials:operator});
+  try {
+    const page=await context.newPage();
+    const today=new Date().toISOString().slice(0,10);
+    const old=new Date(Date.now()-60*86400000).toISOString().slice(0,10);
+    await page.route('**/ops/data?**',route=>route.fulfill({json:{storage:{ready:true,retention_days:90},activity:[
+      {day:old,event:'created',count:1000},{day:today,event:'created',count:2}
+    ]}}));
+    await page.goto('/ops');
+    await page.locator('#days').selectOption('90');
+    await page.getByRole('button',{name:'Refresh',exact:true}).click();
+    await expect(page.locator('#chart .chart-day').last().locator('.bar').first()).toHaveCSS('height','125px');
+    await page.getByRole('tab',{name:'Activity & adoption',exact:true}).click();
+    await expect(page.locator('#activity')).toContainText(old);
+  } finally {await context.close();}
+});
+
+for (const kind of ['error','messageerror']) {
+  test(`worker ${kind} rejects encoding and displays a useful failure`,async({page,request})=>{
+    await page.addInitScript(kind=>{
+      const send=Worker.prototype.postMessage;
+      Worker.prototype.postMessage=function(message,...rest){
+        if(message?.type==='EXEC') {
+          queueMicrotask(()=>this.dispatchEvent(kind==='error' ?
+            new ErrorEvent('error',{message:'private-worker-details',cancelable:true}) : new MessageEvent('messageerror')));
+          return;
+        }
+        return send.call(this,message,...rest);
+      };
+    },kind);
+    const session=await open(page,request);
+    await page.locator('#clips').setInputFiles(join(fixtures,'oversized.mp4'));
+    await page.locator('#submit').click();
+    await expect(page.locator('#page-heading')).toHaveText('Compression failed');
+    await expect(page.locator('#message')).toContainText(kind==='error'?'background worker crashed':'could not communicate');
+    await expect(page.locator('#message')).toContainText(session.reference);
+    const code=kind==='error'?'WORKER_CRASH':'WORKER_MESSAGE_ERROR';
+    await expect.poll(async()=> (await data(request,session.reference)).events.some(e=>e.data.error_code===code)).toBe(true);
+    expect(JSON.stringify(await data(request,session.reference))).not.toContain('private-worker-details');
+  });
+}
+
+test('stall warning is nonfatal, recovers with progress, and cleans up on completion',async({page})=>{
+  await page.goto('/');
+  await page.clock.install();
+  await page.evaluate(async()=>{
+    const {createDiagnostics}=await import('/brand/diagnostics.js');
+    window.stallChanges=[];
+    window.reporter=createDiagnostics('test','test',false,value=>window.stallChanges.push(value));
+    window.reporter.begin();
+    window.encodingDone=false;
+    window.operation=window.reporter.step('encoding',1,()=>new Promise(resolve=>window.finishEncoding=resolve),'ENCODE_FAILED')
+      .then(()=>window.encodingDone=true);
+  });
+  await page.clock.runFor(125000);
+  expect(await page.evaluate(()=>({changes:stallChanges,done:encodingDone}))).toEqual({changes:[true],done:false});
+  await page.evaluate(()=>reporter.progress(0.2,1000000));
+  await page.clock.runFor(5000);
+  expect(await page.evaluate(()=>stallChanges)).toEqual([true,false]);
+  await page.evaluate(async()=>{finishEncoding(0);await operation;});
+  await page.clock.runFor(130000);
+  expect(await page.evaluate(()=>stallChanges)).toEqual([true,false]);
+});
+
+test('one worker crash recovers on the bounded retry without duplicate delivery',async({page,request})=>{
+  await page.addInitScript(()=>{
+    let crashed=false;
+    const send=Worker.prototype.postMessage;
+    Worker.prototype.postMessage=function(message,...rest){
+      if(message?.type==='EXEC'&&!crashed){
+        crashed=true;
+        queueMicrotask(()=>this.dispatchEvent(new ErrorEvent('error',{cancelable:true})));
+        return;
+      }
+      return send.call(this,message,...rest);
+    };
+  });
+  const session=await open(page,request);
+  await page.locator('#clips').setInputFiles(join(fixtures,'oversized.mp4'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#page-heading')).toHaveText('Delivered to Discord');
+  await expect.poll(async()=> (await data(request,session.reference)).events.some(e=>e.event==='delivered')).toBe(true);
+  const result=await data(request,session.reference);
+  expect(result.events.filter(e=>e.event==='delivered')).toHaveLength(1);
+  await expect.poll(async()=> (await data(request,session.reference)).events
+    .filter(e=>e.event==='retry').map(e=>e.data.error_code)).toContain('WORKER_CRASH');
+});
+
+test('worker transport rejects all pending requests on send failure and ignores late replies',async({page})=>{
+  await page.goto('/');
+  const result=await page.evaluate(async()=>{
+    const {EncoderClient}=await import('/brand/encoder-client.js');
+    const Original=window.Worker;
+    let fake;
+    class FakeWorker {
+      constructor(){fake=this;this.messages=[];}
+      addEventListener(){}
+      postMessage(message){this.messages.push(message);if(this.broken)throw new Error('private-clone-error');}
+      terminate(){this.stopped=true;}
+    }
+    window.Worker=FakeWorker;
+    try {
+      const client=new EncoderClient('/unused');
+      const load=client.load({});
+      fake.onmessage({data:{id:fake.messages[0].id,type:'LOAD',data:true}});
+      await load;
+      const late=fake.onmessage;
+      const first=client.exec([]).catch(e=>e.diagnosticCode);
+      fake.broken=true;
+      const second=client.readFile('private.mp4').catch(e=>e.diagnosticCode);
+      const errors=await Promise.all([first,second]);
+      late({data:{id:2,type:'EXEC',data:0}});
+      return {errors,loaded:client.loaded,pending:client.pending.size,stopped:fake.stopped};
+    } finally {window.Worker=Original;}
+  });
+  expect(result).toEqual({errors:['WORKER_MESSAGE_ERROR','WORKER_MESSAGE_ERROR'],loaded:false,pending:0,stopped:true});
+});
+
+test('regressing and invalid progress cannot suppress a stall warning',async({page})=>{
+  await page.goto('/');
+  await page.clock.install();
+  await page.evaluate(async()=>{
+    const {createDiagnostics}=await import('/brand/diagnostics.js');
+    window.stalls=[];
+    window.reporter=createDiagnostics('test','test',false,value=>stalls.push(value));
+    reporter.begin();
+    window.operation=reporter.step('encoding',1,()=>new Promise(resolve=>window.done=resolve),'ENCODE_FAILED');
+    reporter.progress(2,2000000);
+  });
+  for(let i=0;i<3;i++){
+    await page.clock.runFor(40000);
+    await page.evaluate(()=>{
+      reporter.progress(0.1,1000000);
+      reporter.progress(2,2000000);
+      reporter.progress(NaN,-1);
+    });
+  }
+  await page.clock.runFor(5000);
+  expect(await page.evaluate(()=>stalls)).toEqual([true]);
+  expect(await page.evaluate(()=>reporter.failureContext({}))).toMatchObject({last_media_seconds:2,last_progress_percent:100});
+  await page.evaluate(async()=>{done(0);await operation;});
+  expect(await page.evaluate(()=>stalls)).toEqual([true,false]);
+});
+
+test('malformed worker replies fail safely and cancellation permits a clean reload',async({page})=>{
+  await page.goto('/');
+  const result=await page.evaluate(async()=>{
+    const {EncoderClient}=await import('/brand/encoder-client.js');
+    const Original=window.Worker;let worker;
+    window.Worker=class {
+      constructor(){worker=this;}
+      addEventListener(){}
+      postMessage(message){this.last=message;}
+      terminate(){this.stopped=true;}
+    };
+    try {
+      const failures=[];
+      for(const reply of [null,{}, {id:999,type:'LOAD',data:true}, {id:1,type:'UNEXPECTED',data:true}]){
+        const client=new EncoderClient('/unused');
+        const pending=client.load({}).catch(e=>e.diagnosticCode);
+        worker.onmessage({data:reply});
+        failures.push({code:await pending,pending:client.pending.size,stopped:worker.stopped});
+      }
+      const client=new EncoderClient('/unused');
+      const pending=client.load({}).catch(e=>e.name);
+      const late=worker.onmessage;
+      client.terminate();
+      const cancellation=await pending;
+      const reloaded=client.load({});
+      late({data:{id:1,type:'LOAD',data:true}});
+      const pendingAfterLate=client.pending.size;
+      worker.onmessage({data:{id:worker.last.id,type:'LOAD',data:true}});
+      await reloaded;
+      return {failures,cancellation,pendingAfterLate,loaded:client.loaded};
+    } finally {window.Worker=Original;}
+  });
+  expect(result).toEqual({failures:Array(4).fill({code:'WORKER_MESSAGE_ERROR',pending:0,stopped:true}),cancellation:'AbortError',pendingAfterLate:1,loaded:true});
 });

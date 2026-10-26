@@ -500,7 +500,9 @@ test('unsupported AV1 fails without uploading and allows a supported replacement
   await openSession(page, request);
   await page.locator('#clips').setInputFiles(join(fixtures, 'av1.mkv'));
   await page.locator('#submit').click();
-  await expect(page.locator('#message')).toContainText('unsupported or damaged codec', {timeout:30000});
+  // The pinned core may reject AV1 during metadata probing before it can
+  // identify the codec. Explain only the evidence actually reported.
+  await expect(page.locator('#message')).toContainText(/codec is not supported|reported invalid media data/, {timeout:30000});
   await expect(page.locator('#feedback-actions')).toBeVisible();
   await expect(page.locator('#format-help')).toBeVisible();
   await expect(page.getByRole('link', {name: 'Contact Us'})).toBeVisible();
@@ -639,7 +641,7 @@ test('audio-only and damaged containers fail clearly and allow another selection
   await page.locator('#clips').setInputFiles({name:'broken.mkv', mimeType:'video/x-matroska',
     buffer:Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0])});
   await page.locator('#submit').click();
-  await expect(page.locator('#message')).toContainText('Could not determine video metadata', { timeout: 30000 });
+  await expect(page.locator('#message')).toContainText('reported invalid media data', { timeout: 30000 });
   await page.getByRole('button', {name: 'Remove broken.mkv'}).click();
   await deliver(page, join(fixtures, 'small.mp4'));
 });

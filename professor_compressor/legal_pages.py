@@ -169,7 +169,7 @@ def privacy_policy_html() -> str:
       Discord may retain delivered attachments according to its own
       policies.</p>
     <p>When enabled, structured diagnostic history is stored on the operator's
-      server for at most 30 days, subject to row and storage limits. It survives
+      server for up to 90 days, subject to row and storage limits. It survives
       bot restarts. It is available only through the protected operator dashboard.
       Exports and backups must be protected and follow the same retention period.
       Keyed pseudonyms are used to measure repeat usage without storing raw

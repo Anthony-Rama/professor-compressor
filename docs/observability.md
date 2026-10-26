@@ -48,10 +48,16 @@ Set these variables in the ignored local `.env`; never commit the actual key:
 ```dotenv
 OBSERVABILITY_DB_PATH=/absolute/private/directory/events.sqlite3
 OBSERVABILITY_ADMIN_KEY=replace-with-a-random-secret-of-at-least-32-characters
-OBSERVABILITY_RETENTION_DAYS=30
-OBSERVABILITY_MAX_EVENTS=100000
+OBSERVABILITY_RETENTION_DAYS=90
+OBSERVABILITY_MAX_EVENTS=300000
 DIAGNOSTIC_TEST_GUILD_IDS=comma-separated-development-server-ids
 ```
+
+For an existing deployment, explicitly update its private environment file to
+the 90-day/300,000-event values above; an existing 30-day setting still takes
+precedence over the new defaults. Select **Last 90 days** in the dashboard to
+search the full window. Older history that has already been pruned cannot be
+recovered by extending retention.
 
 Generate the operator key using a password manager or `secrets.token_urlsafe(48)`.
 Open `/ops`, username `admin`, password the operator key. Production requires
@@ -152,6 +158,41 @@ requires a separate, user-facing opt-in and privacy review. Existing retention,
 private access, range checks and event/report/queue caps apply to all new fields.
 Transport batches are additionally bounded to approximately 12 KiB of events
 to stay below the 16 KiB request cap. Diagnostic delivery remains best-effort.
+The compact terminal-failure report includes sanitized input metadata when
+available and retries once after a network error or transient 408/5xx response.
+Retries retain the same run ID for deduplication. Neither transport can guarantee
+a report after a browser crash, tab closure or permanent network loss.
+
+Recent sessions include a plain-language explanation for the active run's
+reported failure. The timeline distinguishes a failed step from a step ending,
+and source labels such as browser/server are separate from the cause. `UNKNOWN`
+means the client did not capture the cause; it is never interpreted as memory
+exhaustion. Existing old records cannot be enriched retrospectively.
+
+The application-owned `encoder-client.js` transport uses the unmodified pinned
+FFmpeg worker protocol. Worker `error`, `messageerror`, malformed RPC replies,
+and synchronous post failures reject pending operations instead of leaving the
+UI waiting indefinitely. Only `WORKER_CRASH` / `WORKER_MESSAGE_ERROR` categories
+are reported, never the browser's raw error, script URL or stack. A worker crash
+does not by itself prove memory exhaustion. Cancellation remains distinct and
+terminates pending operations without being counted as a processing failure.
+Keep transport regression tests in the dependency-upgrade review: the adapter
+implements only the worker RPC methods this application uses.
+
+During encoding/remuxing, 120 seconds without advancing progress shows a
+non-fatal warning and emits at most one `processing_stalled` event per operation.
+Progress resumes normally without an automatic timeout/re-encode. The warning
+clears on advancing progress or operation completion/cancellation. Background
+timer throttling can delay detection; no warning proves that the engine crashed.
+Advancement uses per-operation high-water marks; repeated, regressing or invalid
+progress cannot indefinitely suppress the warning. Recorded media time and
+percentage reflect the furthest reported progress within that operation.
+No additional encoding passes or video copies are introduced.
+
+Sessions without a confirmed final outcome remain explicitly unknown in the
+dashboard. Missing telemetry is not classified as a confirmed compression
+failure. Existing storage errors/drops and unavailable-storage warnings should
+be monitored alongside processing failures.
 
 ## Metric definitions and limitations
 
@@ -187,9 +228,11 @@ without waiting for disk. A full queue drops diagnostics, never videos. Storage
 startup/write failures do not fail the bot; `/ops` reports readiness, queued
 events, drops, and errors. Browser/network failures can lose reports too.
 
-Retention is at most 30 days with default caps of 100,000 events and 20,000
+Retention is up to 90 days with default caps of 300,000 events and 60,000
 sessions. Pruning runs at startup and approximately every minute. The database
-is capped near 128 MiB; WAL/SHM and rotated container logs take additional space.
+is capped near 384 MiB; WAL/SHM and rotated container logs take additional space.
+The row/disk safeguards can shorten the available history during unusually high
+volume; 90 days is an upper retention bound, not a promise of unlimited capacity.
 Freed DB pages are reused, so the file need not shrink after pruning. Compose
 rotates bot logs at 10 MiB × 3 files. Exports need private storage and retention.
 

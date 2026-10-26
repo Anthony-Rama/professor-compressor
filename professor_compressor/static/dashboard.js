@@ -24,10 +24,38 @@ const labels = {
   unchanged:'Sent unchanged', remuxed:'Stream-copied', converted:'Converted', compressed:'Compressed', 'single-threaded':'Single-threaded', multithreaded:'Multithreaded', unused:'Engine not needed', desktop:'Desktop', mobile:'Mobile'
 };
 Object.assign(labels, {attempt_started:'File attempt started',processing_progress:'Processing checkpoint',
+  processing_stalled:'No recent processing progress (not a confirmed failure)',
+  client_failed:'Processing failed',
+  encoding:'Encoding',metadata:'Metadata',engine:'Video engine',file_read:'File reading',validation:'File validation',remux:'MP4 conversion',upload:'Upload',delivery:'Delivery',session:'Session',
   oom:'Out of memory',allocation_failed:'Allocation failed',wasm_bounds:'WASM bounds trap (not proof of OOM)',
   wasm_trap:'WASM runtime trap',unsupported_codec:'Unsupported codec signal',invalid_media:'Invalid media signal',
   engine_log:'Engine message signature',exception:'Thrown exception signature',same_settings:'Same settings',size_adjustment:'Size adjustment'});
 const label = value => labels[value] || value || 'Not reported';
+const failureReasons = {
+  WORKER_CRASH:'The video engine worker crashed; the underlying cause was not reported',
+  WORKER_MESSAGE_ERROR:'Communication with the video engine worker failed',
+  BROWSER_MEMORY:'The video engine could not allocate enough memory',
+  WASM_TRAP:'The video engine encountered a runtime error; the underlying cause is unconfirmed',
+  UNSUPPORTED_CODEC:'The engine reported an unsupported codec', INVALID_MEDIA:'The engine reported invalid media data',
+  METADATA_INVALID:'The video metadata could not be read', METADATA_TIMEOUT:'Reading video metadata timed out',
+  ENGINE_LOAD_FAILED:'The video engine could not start', ENGINE_LOAD_TIMEOUT:'Starting the video engine timed out',
+  FILE_READ_FAILED:'The browser could not read the selected file', INVALID_SIGNATURE:'The file did not have a supported video signature',
+  NO_VIDEO_STREAM:'No video stream was found', DURATION_UNKNOWN:'The clip duration could not be determined',
+  OUTPUT_TOO_LARGE:'The video could not fit within the upload target', ENCODE_FAILED:'Encoding failed; the engine did not report a specific cause',
+  NETWORK:'The connection failed; delivery may be unconfirmed', HTTP:'The server returned an HTTP error',
+  UPLOAD_TIMEOUT:'The upload timed out', SESSION_EXPIRED:'The compressor session expired',
+  INVALID_UPLOAD:'The relay rejected the uploaded files', RELAY_ERROR:'The relay could not process the upload',
+  DISCORD_REJECTED:'Discord rejected delivery', DELIVERY_TIMEOUT:'Discord delivery timed out',
+  ENCODE_TIMEOUT:'Video encoding timed out', UNKNOWN:'The cause was not captured by this client'
+};
+function failureReason(data={}) {return failureReasons[data.error_code]||'No specific failure cause was reported';}
+function eventLabel(event) {
+  if(event.event==='client_failed')return (event.data.stage?label(event.data.stage)+' failed':'Processing failed')+' — '+failureReason(event.data);
+  if(event.event==='stage_finished')return (event.data.stage?label(event.data.stage):'Processing')+
+    (event.data.outcome==='failed'?' failed':event.data.outcome==='cancelled'?' cancelled':' step ended');
+  if(event.event==='client_complete')return event.data.outcome==='failed'?'Browser run ended with failure':event.data.outcome==='cancelled'?'Browser run cancelled':label(event.event);
+  return label(event.event);
+}
 function showPanel(name, focus = false) {
   if (!titles[name]) return;
   for (const button of document.querySelectorAll('[data-tab]')) {
@@ -74,10 +102,12 @@ function chart(rows) {
   const target=el('chart');target.replaceChildren();target.style.gridTemplateColumns='minmax(0, 1fr)';
   const relevant=rows.filter(row=>['created','delivered'].includes(row.event));
   if(!relevant.length){empty(target,'No session activity yet','Your first recorded sessions and deliveries will appear here.');return;}
-  const now=new Date(),start=new Date(now.getTime()-Number(el('days').value)*86400000),dates=[];
+  // Keep this daily chart readable; the table/export still covers the full window.
+  const now=new Date(),start=new Date(now.getTime()-Math.min(30,Number(el('days').value))*86400000),dates=[];
   start.setUTCHours(0,0,0,0);
   while(start<=now&&dates.length<31){dates.push(start.toISOString().slice(0,10));start.setUTCDate(start.getUTCDate()+1);}
-  const max=Math.max(1,...relevant.map(row=>row.count));
+  const visible=relevant.filter(row=>dates.includes(row.day));
+  const max=Math.max(1,...visible.map(row=>row.count));
   target.style.gridTemplateColumns=`repeat(${dates.length}, minmax(22px, 1fr))`;
   for (const day of dates) {const column=document.createElement('div'),bars=document.createElement('div'),caption=document.createElement('span');column.className='chart-day';bars.className='bars';
     const counts={};for(const event of ['created','delivered']){const count=relevant.find(row=>row.day===day&&row.event===event)?.count||0;counts[event]=count;const bar=document.createElement('div');bar.className='bar'+(event==='delivered'?' delivery':'');bar.style.height=(count/max*125)+'px';bar.setAttribute('aria-hidden','true');bars.append(bar);}
@@ -129,14 +159,14 @@ function render(d) {
   table(el('activity'),[['UTC day','day'],['Event','event',label],['Count','count',number]],d.activity||[],'No activity recorded yet','History begins when tracking was enabled; older Discord logs are not imported.');
   table(el('sessions'),[
     ['Reference','reference',(value)=>{const button=document.createElement('button');button.className='reference-button';button.textContent=value;button.type='button';button.addEventListener('click',()=>{el('reference').value=value;showPanel('sessions');void load();});return button;}],
-    ['Created','created',when],['Outcome','status',badge],['Files','files',number],['Failure reports','failures',number],['Release','revision',revision],['Test','is_test',value=>value?'Yes':'No']
+    ['Created','created',when],['Outcome','status',badge],['Failure detail','failure_data',(value,row)=>row.status==='unknown'?'Outcome unknown: no confirmed final result. This does not prove compression failed.':['client_failed','upload_failed','delivery_failed'].includes(row.status)?failureReason(value):'—'],['Files','files',number],['Failure reports','failures',number],['Release','revision',revision],['Test','is_test',value=>value?'Yes':'No']
   ],d.sessions||[],'No matching sessions','Change the window or filters. Enable Include tests to see development-server activity.');
   el('events').replaceChildren();const history=d.events||[];
   const files=new Map();
   for(const event of history){
     if(!event.file_index)continue;
     const key=event.run_id+':'+event.file_index,prior=files.get(key)||{file_index:event.file_index,run_id:event.run_id,reports:[]};
-    prior.reports.push(event);prior.last_event=event.event;files.set(key,prior);
+    prior.reports.push(event);prior.last_event=eventLabel(event);files.set(key,prior);
   }
   for(const file of files.values()){
     // Batches can arrive out of order. Order browser facts within this run
@@ -157,11 +187,11 @@ function render(d) {
   // A retry carries the previous failure's evidence, not a new failure of the
   // next attempt. Make the transition explicit rather than mislabelling it.
   const attemptLabel=(value,row)=>row.event==='retry'&&row.failed_attempt?row.failed_attempt+' → '+value:number(value);
-  table(el('session-attempts'),[['File','file_index',value=>value?'File '+value:'Batch'],['Attempt','attempt',attemptLabel],['Engine signal','engine_signal',label],['Error','error_code'],['Wrapper','exception_kind'],['Stage','stage',label],['Time','at',when],['Run','run_id',value=>value?.slice(0,8)||'—'],['Report','event',label],['Evidence source','signal_source',label],['Exit code','exit_code',number],['HTTP status','http_status',number],['Decoder','decoder'],['Encoder threads','encoder_threads',number],['Encode pass','encode_pass',number],['Mode','command_mode'],['Last media time','last_media_seconds',seconds],['Progress idle','progress_idle_seconds',seconds]],evidence.map(event=>({...event,...event.data,decoder:event.data.decoder_mode==='auto'?'Auto':event.data.decoder_threads!==undefined?event.data.decoder_threads+' thread(s)':'Not reported'})),
+  table(el('session-attempts'),[['File','file_index',value=>value?'File '+value:'Batch'],['Attempt','attempt',attemptLabel],['Engine signal','engine_signal',label],['Error','error_code'],['Explanation','explanation'],['Wrapper','exception_kind'],['Stage','stage',label],['Time','at',when],['Run','run_id',value=>value?.slice(0,8)||'—'],['Report','event',label],['Evidence source','signal_source',label],['Exit code','exit_code',number],['HTTP status','http_status',number],['Decoder','decoder'],['Encoder threads','encoder_threads',number],['Encode pass','encode_pass',number],['Mode','command_mode'],['Last media time','last_media_seconds',seconds],['Progress idle','progress_idle_seconds',seconds]],evidence.map(event=>({...event,...event.data,explanation:event.data.error_code?failureReason(event.data):'—',decoder:event.data.decoder_mode==='auto'?'Auto':event.data.decoder_threads!==undefined?event.data.decoder_threads+' thread(s)':'Not reported'})),
     'No attempt evidence','Attempt and engine details appear as new sessions run. Raw logs are never shown or stored.');
   el('timeline-heading').textContent=el('reference').value?el('reference').value+' · '+history.length+' most recent events · arrival order':'Select a session to inspect its history.';
   if(!history.length)empty(el('events'),'No session selected','Choose a reference above. A timeline contains up to 500 retained events.');
-  for(const event of history){const item=document.createElement('details'),summary=document.createElement('summary'),time=document.createElement('span'),name=document.createElement('span'),meta=document.createElement('span'),body=document.createElement('pre');item.className='timeline-event';time.className='event-time';time.textContent=when(event.at);name.textContent=label(event.event);meta.className='event-detail';meta.textContent=(event.source==='server'?'Server':'Browser')+' · '+(event.file_index?'File '+event.file_index:'Batch')+' · run '+(event.run_id?.slice(0,8)||'—')+(event.data.client_sequence?' · client #'+event.data.client_sequence:'');body.textContent=JSON.stringify(event.data,null,2);summary.append(time,name,meta);item.append(summary,body);el('events').append(item);}
+  for(const event of history){const item=document.createElement('details'),summary=document.createElement('summary'),time=document.createElement('span'),name=document.createElement('span'),meta=document.createElement('span'),body=document.createElement('pre');item.className='timeline-event';time.className='event-time';time.textContent=when(event.at);name.textContent=eventLabel(event);meta.className='event-detail';meta.textContent=(event.source==='server'?'Server':'Browser')+' · '+(event.file_index?'File '+event.file_index:'Batch')+' · run '+(event.run_id?.slice(0,8)||'—')+(event.data.client_sequence?' · client #'+event.data.client_sequence:'');body.textContent=JSON.stringify(event.data,null,2);summary.append(time,name,meta);item.append(summary,body);el('events').append(item);}
   cards(el('system-summary'),[
     ['Delivery workers',number(r.delivery_workers)+' / '+number(r.worker_capacity),'Workers currently running'],['Buffered video data',bytes(r.buffer_bytes),'Limit '+bytes(r.buffer_limit_bytes)],['Diagnostic queue',number(s.queued),'Waiting for background storage'],['Storage errors / drops',number(s.errors)+' / '+number(s.dropped),'Since this process started',(s.errors||s.dropped)?'warning':'good']
   ]);
@@ -177,6 +207,7 @@ function render(d) {
   el('notice-title').textContent=!el('tests').checked&&hidden?'No production sessions in this view yet':'No matching sessions in this view';
   el('notice-text').textContent=hidden?number(hidden)+' development session(s) are hidden. Include tests to inspect them; production metrics stay separate by default.':'Tracking is active. New sessions will appear here automatically. Try a wider window if filters are applied.';
   el('history-note').textContent='History '+(d.collection?.since?'available since '+when(d.collection.since):'begins with the first tracked session')+' · up to '+number(s.retention_days)+' days · bounded by storage limits.';
+  el('retention-note').textContent=s.ready?'History retained for up to '+number(s.retention_days)+' days, subject to storage limits.':'History storage is unavailable.';
   el('status').textContent=s.ready?'Updated '+new Date((d.generated_at||Date.now()/1000)*1000).toLocaleTimeString()+' · '+(el('tests').checked?'Tests included':'Tests excluded'):'Diagnostic storage unavailable · live process snapshot is still shown.';
   el('status').className=s.errors||s.dropped||!s.ready?'warning':'good';
 }

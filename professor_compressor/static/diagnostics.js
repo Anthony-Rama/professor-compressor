@@ -30,7 +30,7 @@ export function engineSignal(value) {
   if (/cannot allocate memory|allocation failed|failed to allocate/i.test(line)) return "allocation_failed";
   if (/memory access out of bounds/i.test(line)) return "wasm_bounds";
   if (/RuntimeError:.*(?:unreachable|indirect call.*mismatch)/i.test(line)) return "wasm_trap";
-  if (/unknown decoder|decoder .* not found|unsupported codec/i.test(line)) return "unsupported_codec";
+  if (/unknown decoder|no decoder found|decoder .* not found|unsupported codec/i.test(line)) return "unsupported_codec";
   if (/invalid data found when processing input/i.test(line)) return "invalid_media";
   return "";
 }
@@ -76,7 +76,7 @@ export function mediaDetails(video, audio) {
   if (rotation !== undefined && rotation % 90 === 0) facts.rotation_quarter_turns = ((rotation / 90) % 4 + 4) % 4;
   return facts;
 }
-export function createDiagnostics(secret, reference, collect = true) {
+export function createDiagnostics(secret, reference, collect = true, onStall = () => {}) {
   let runId = "";
   let queue = [];
   let timer = null;
@@ -91,7 +91,7 @@ export function createDiagnostics(secret, reference, collect = true) {
   const failureFacts = error => ({...facts(), ...error?.diagnosticFacts,
     ...(Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599 ? {http_status: error.status} : {})});
   const memorySignals = new Set(["oom", "allocation_failed"]);
-  const signalPriority = value => memorySignals.has(value) ? 3 : ["wasm_bounds", "wasm_trap"].includes(value) ? 2 : value ? 1 : 0;
+  const signalPriority = value => memorySignals.has(value) ? 4 : ["wasm_bounds", "wasm_trap"].includes(value) ? 3 : value === "unsupported_codec" ? 2 : value ? 1 : 0;
   function observeSignal(next, source) {
     if (next && signalPriority(next) > signalPriority(signal)) { signal = next; signalSource = source; }
   }
@@ -158,6 +158,8 @@ export function createDiagnostics(secret, reference, collect = true) {
       const evidence = signalPriority(thrown) > signalPriority(recorded) ? thrown : recorded;
       if (memorySignals.has(evidence)) return "BROWSER_MEMORY";
       if (["wasm_bounds", "wasm_trap"].includes(evidence)) return "WASM_TRAP";
+      if (evidence === "unsupported_codec") return "UNSUPPORTED_CODEC";
+      if (evidence === "invalid_media") return "INVALID_MEDIA";
       if (error.diagnosticCode) return error.diagnosticCode;
       if (error.status === 0) return "NETWORK";
       if (error.code === "session_expired") return "SESSION_EXPIRED";
@@ -173,6 +175,17 @@ export function createDiagnostics(secret, reference, collect = true) {
     lastProgressReport = performance.now();
     if (!execution) command = {};
     const start = performance.now();
+    let warned = false, reportedStall = false;
+    const notifyStall = value => { try { onStall(value); } catch (_) { /* Optional UI. */ } };
+    const watchdog = execution ? setInterval(() => {
+      const idle = (performance.now() - (lastProgress ?? start)) / 1000;
+      const stalled = idle >= 120;
+      if (stalled && !reportedStall) {
+        reportedStall = true;
+        emit("processing_stalled", fileIndex, {stage: operation, ...facts(), progress_idle_seconds: idle});
+      }
+      if (stalled !== warned) { warned = stalled; notifyStall(stalled); }
+    }, 5000) : null;
     emit("stage_started", fileIndex, {stage, ...facts()});
     try {
       const result = await action();
@@ -198,6 +211,9 @@ export function createDiagnostics(secret, reference, collect = true) {
         seconds: (performance.now() - start) / 1000, error_code: code(error),
         outcome: code(error) === "CANCELLED" ? "cancelled" : "failed"});
       throw error;
+    } finally {
+      clearInterval(watchdog);
+      if (warned) notifyStall(false);
     }
   }
   return {
@@ -222,11 +238,17 @@ export function createDiagnostics(secret, reference, collect = true) {
       emit("attempt_started", fileIndex, {attempt: number}); },
     log(line) { try { observeSignal(engineSignal(line), "engine_log"); } catch (_) {} },
     progress(fraction, time) { try {
-      if (Number.isFinite(fraction)) lastPercent = Math.max(0, Math.min(100, fraction * 100));
-      if (Number.isFinite(time) && time >= 0) lastMedia = time / 1000000;
-      lastProgress = performance.now();
-      if (lastProgress - lastProgressReport >= 15000 && ["encoding", "remux"].includes(stage)) {
-        lastProgressReport = lastProgress;
+      // Keep high-water marks: repeated, regressing, or out-of-range progress
+      // must not make a stuck operation look as if it is advancing.
+      const percent = Number.isFinite(fraction) && fraction >= 0 ? Math.min(100, fraction * 100) : null;
+      const media = Number.isFinite(time) && time >= 0 ? time / 1000000 : null;
+      const advanced = (media !== null && media > (lastMedia ?? -1)) ||
+        (percent !== null && percent > (lastPercent ?? -1));
+      if (percent !== null) lastPercent = Math.max(lastPercent ?? 0, percent);
+      if (media !== null) lastMedia = Math.max(lastMedia ?? 0, media);
+      if (advanced) lastProgress = performance.now();
+      if (performance.now() - lastProgressReport >= 15000 && ["encoding", "remux"].includes(stage)) {
+        lastProgressReport = performance.now();
         emit("processing_progress", activeFile, {stage, ...facts()});
       }
     } catch (_) {} },

@@ -74,6 +74,7 @@ __RECOVERY_NOTICE__
   <p id="completion-summary" class="completion-summary" hidden role="status"></p>
   <div id="files" class="file-list" hidden></div>
   <div id="work" class="work" hidden>
+    <div id="stall-warning" class="background-warning" hidden role="status">This video is taking longer than expected. No recent progress was reported, but processing may still be running. Keep this page active, or cancel and try again.</div>
     <div id="background-warning" class="background-warning" hidden role="status">
       Compression may slow down or pause while this tab is hidden. Keep this
       window visible for full speed.
@@ -95,7 +96,7 @@ __RECOVERY_NOTICE__
     <button id="submit" type="submit" disabled>Compress and send to Discord</button>
     <button id="cancel" class="secondary" type="button" hidden>Cancel</button>
   </div>
-  <div id="message" class="message" hidden aria-live="assertive"></div>
+  <div id="message" class="message" hidden tabindex="-1" aria-live="assertive"></div>
   <div id="downloads" class="feedback-actions" hidden aria-label="Save prepared videos"></div>
   __REVIEW_PROMPT__
   <div id="feedback-actions" class="feedback-actions contact-actions" hidden>
@@ -129,7 +130,7 @@ __RECOVERY_NOTICE__
 </form>
 
 <script type="module">
-import { FFmpeg } from "__ASSET_PREFIX__/ffmpeg-esm/index.js";
+import { EncoderClient } from "/brand/encoder-client.js";
 import { fetchFile } from "__ASSET_PREFIX__/util-esm/index.js";
 
 const MAX_CLIPS = __MAX_CLIPS__;
@@ -146,14 +147,16 @@ const diagnostic = {
     } catch (_) { fallbackDiagnosticRun = ""; }
     return fallbackDiagnosticRun;
   }, run: () => fallbackDiagnosticRun, emit: () => {}, flush: () => {}, fail: () => {},
-  context: () => ({}), code: () => "UNKNOWN", mark: () => {},
+  context: () => ({}), code: error => error?.diagnosticCode || "UNKNOWN", mark: () => {},
   configure: () => {}, media: () => ({}), attempt: () => {}, log: () => {},
   progress: () => {}, failureContext: () => ({}),
   step: async (_stage, _file, action) => action()
 };
 // Loading diagnostics is optional and must not block the compressor's startup.
 void import("/brand/diagnostics.js").then(module => {
-  const reporter = module.createDiagnostics(SESSION_SECRET, DIAGNOSTIC_REFERENCE, __DIAGNOSTIC_EVENTS_ENABLED__);
+  const reporter = module.createDiagnostics(SESSION_SECRET, DIAGNOSTIC_REFERENCE, __DIAGNOSTIC_EVENTS_ENABLED__, stalled => {
+    document.getElementById("stall-warning").hidden = !stalled || !running;
+  });
   reporter.resume(diagnostic.run());
   Object.assign(diagnostic, reporter);
 }).catch(() => {});
@@ -647,7 +650,7 @@ dropZone.addEventListener("drop", (event) => {
 });
 
 function createEncoder() {
-  const encoder = new FFmpeg();
+  const encoder = new EncoderClient(new URL("__ASSET_PREFIX__/ffmpeg-esm/worker.js", location.origin));
   encoder.on("log", ({ message: line }) => {
     lastFfmpegMessage = line;
     diagnostic.log(line);
@@ -820,6 +823,7 @@ async function compressOne(state) {
   batchMetrics.stage = "metadata";
   const file = state.file;
   const format = await diagnostic.step("validation", state.index, () => videoSignature(file), "INVALID_SIGNATURE");
+  state.inputFormat = format;
   diagnostic.emit("stage_finished", state.index, {stage: "validation", input_bytes: file.size,
     input_format: format, target_bytes: outputTargetBytes(), discord_limit: DISCORD_LIMIT_BYTES});
   const effectiveTargetBytes = outputTargetBytes();
@@ -863,11 +867,13 @@ async function compressOne(state) {
     if (!videoStream) throw diagnosticError("No video stream found in " + file.name + ". Choose a video, not an audio-only file.", "NO_VIDEO_STREAM");
     const rateParts = String(videoStream.avg_frame_rate || "0/1").split("/").map(Number);
     state.inputMedia = {input_width: videoStream.width, input_height: videoStream.height,
-      input_fps: rateParts[0] / (rateParts[1] || 1), ...diagnostic.media(videoStream, audioStream)};
+      input_fps: rateParts[0] / (rateParts[1] || 1), video_codec: videoStream.codec_name,
+      audio_codec: audioStream?.codec_name || "none", ...diagnostic.media(videoStream, audioStream)};
     const duration = [metadata.format?.duration, videoStream.duration]
       .map(Number).find((value) => Number.isFinite(value) && value > 0);
     if (!duration) throw diagnosticError(
       "Could not determine the duration of " + file.name + ". Re-export the clip with a finite duration.", "DURATION_UNKNOWN");
+    state.inputDuration = duration;
     diagnostic.emit("stage_finished", state.index, {stage: "metadata", ...state.inputMedia,
       input_format: format, input_bytes: file.size, duration_seconds: duration,
       video_codec: videoStream.codec_name, audio_codec: audioStream?.codec_name || "none"});
@@ -1146,22 +1152,33 @@ async function uploadWithRetry(results) {
 }
 
 async function reportBrowserFailure(stage, error) {
-  try {
-    await fetch(window.location.pathname.replace(/\/$/, "") + "/failure", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Upload-Session": SESSION_SECRET
-      },
-      body: JSON.stringify({ stage, operation: diagnostic.context().stage,
-        ...diagnostic.failureContext(error),
-        run_id: diagnostic.run(), error_code: diagnostic.code(error) }),
-      cache: "no-store",
-      credentials: "same-origin",
-      keepalive: true
-    });
-  } catch (reportError) {
-    console.debug("The failure notification could not reach the relay.", reportError);
+  // Reuse the same run ID so retrying this fallback report cannot duplicate
+  // failure counts or alerts. No raw exception/log text is transmitted.
+  const context = diagnostic.failureContext(error);
+  const environment = diagnostic.context();
+  const state = currentState?.index === context.file_index ? currentState : null;
+  const body = JSON.stringify({ ...environment, stage, operation: environment.stage,
+    ...(state ? {input_bytes: state.file.size, input_format: state.inputFormat,
+      duration_seconds: state.inputDuration, ...state.inputMedia} : {}), ...context,
+    run_id: diagnostic.run(), error_code: diagnostic.code(error) });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(window.location.pathname.replace(/\/$/, "") + "/failure", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Upload-Session": SESSION_SECRET
+        },
+        body, signal: AbortSignal.timeout(4000),
+        cache: "no-store",
+        credentials: "same-origin",
+        keepalive: true
+      });
+      if (response.ok || ![408, 500, 502, 503, 504].includes(response.status)) return;
+    } catch (reportError) {
+      console.debug("The failure notification could not reach the relay.", reportError);
+    }
+    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500));
   }
 }
 
@@ -1177,9 +1194,17 @@ function friendlyError(error) {
     return "The video engine could not allocate enough memory in this browser. Close other tabs and try fewer or smaller videos.";
   }
   if (diagnostic.code(error) === "WASM_TRAP") {
-    return "The video engine hit a runtime error while processing this clip. Try the clip by itself or use another desktop browser.";
+    return "Compression failed because the video engine hit a runtime error. Its underlying cause could not be confirmed. Try the clip by itself or use another desktop browser.";
   }
-  return error.message || "The operation failed. Try fewer videos or reload the page and run /compress again.";
+  const code = diagnostic.code(error);
+  if (code === "WORKER_CRASH") return "Compression stopped because the video engine's background worker crashed. The underlying cause was not reported. Try again, or use another desktop browser. Contact support with the error reference if it repeats.";
+  if (code === "WORKER_MESSAGE_ERROR") return "Compression stopped because the browser could not communicate with the video engine. Reload the page and try again. Contact support with the error reference if it repeats.";
+  if (code === "UNSUPPORTED_CODEC") return "Compression failed because this video's codec is not supported by the browser video engine. Re-export the video as H.264 MP4 with AAC audio and try again.";
+  if (code === "INVALID_MEDIA") return "Compression failed because the video engine reported invalid media data. Try playing the original video, then re-export it and try again.";
+  if (["ENGINE_LOAD_TIMEOUT", "ENGINE_LOAD_FAILED"].includes(code)) return "Compression could not start because the video engine failed to load" + (code === "ENGINE_LOAD_TIMEOUT" ? " in time" : "") + ". Check your connection, reload the page and try again.";
+  if (code === "ENCODE_FAILED") return "Compression failed while encoding this video. The engine did not report a specific cause. Try the clip by itself or another desktop browser. If it fails again, contact support with the error reference.";
+  if (error.diagnosticCode || error.status || error.code) return error.message || "The request failed. Contact support with the error reference.";
+  return "Compression failed because the video engine stopped unexpectedly. A specific cause was not reported. Try again, or contact support with the error reference.";
 }
 
 function startClock() {
@@ -1212,6 +1237,7 @@ function setProcessingView(active) {
 
 function finishRun() {
   running = false;
+  document.getElementById("stall-warning").hidden = true;
   stopHeartbeat();
   pauseRequest = sessionRequest("pause").catch(() => {});
   backgroundWarning.hidden = true;
@@ -1310,6 +1336,8 @@ form.addEventListener("submit", async (event) => {
       state.encodingAttempts = 0;
       state.inputMedia = null;
       state.outputMedia = null;
+      state.inputFormat = undefined;
+      state.inputDuration = undefined;
       state.meta.textContent = readableSize(state.file.size) + " original";
       updateFile(state, "Checking file", 0);
     }
@@ -1403,11 +1431,13 @@ form.addEventListener("submit", async (event) => {
     if (cancelled || error.name === "AbortError") { finishRun(); return; }
     console.error(error);
     void reportBrowserFailure(runStage, error);
-    setPhase("compress", "Action needed", "The process stopped before delivery completed.");
+    setPhase("compress", "Action needed", preparedResults ? "Delivery could not be confirmed. Check Discord before retrying." : "Compression failed. No videos from this batch were sent to Discord. See the reason below.");
     setRunDetail("Stopped");
-    showMessage(friendlyError(error));
+    showMessage((error.diagnosticFileIndex ? "Video " + error.diagnosticFileIndex + ": " : "") + friendlyError(error));
     showFeedback("failure");
     finishRun();
+    pageHeading.textContent = preparedResults ? "Delivery needs attention" : "Compression failed";
+    message.focus();
     if ([403, 409, 410].includes(error.status) || error.code === "discord_delivery_failed") {
       submit.hidden = true;
       clips.disabled = true;
