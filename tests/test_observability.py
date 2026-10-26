@@ -436,7 +436,7 @@ class StoreTests(unittest.TestCase):
                 connection.execute("SELECT COUNT(*) FROM events").fetchone()[0], 3
             )
             connection.execute(
-                "UPDATE sessions SET updated=?", (time.time() - 40 * 86400,)
+                "UPDATE sessions SET updated=?", (time.time() - 100 * 86400,)
             )
             self.store._prune(connection)
             self.assertEqual(
@@ -459,6 +459,78 @@ class StoreTests(unittest.TestCase):
             broken._thread.join(timeout=2)
         self.assertFalse(broken.ready)
         self.assertEqual(broken.errors, 1)
+
+    def test_stall_is_diagnostic_not_a_failure_and_worker_codes_are_preserved(self):
+        self.emit("created")
+        self.emit("started")
+        self.emit(
+            "processing_stalled",
+            source="browser",
+            data={"stage": "encoding", "progress_idle_seconds": 125},
+        )
+        result = self.view()
+        self.assertEqual(result["sessions"][0]["status"], "processing")
+        self.assertEqual(result["sessions"][0]["failures"], 0)
+        self.emit(
+            "client_failed",
+            source="browser",
+            data={"error_code": "WORKER_CRASH", "raw_error": "private details"},
+        )
+        self.assertEqual(
+            self.view()["sessions"][0]["failure_data"],
+            {"error_code": "WORKER_CRASH"},
+        )
+
+    def test_ninety_day_window_preserves_older_history_and_prunes_expired_history(self):
+        self.emit("created")
+        self.view()
+        with sqlite3.connect(self.store.path) as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
+            old = time.time() - 65 * 86400
+            connection.execute("UPDATE sessions SET created=?,updated=?", (old, old))
+            connection.execute("UPDATE events SET at=?", (old,))
+            self.store._prune(connection)
+        self.assertEqual(self.view(days=30)["totals"]["sessions"], 0)
+        self.assertEqual(self.view(days=90)["totals"]["sessions"], 1)
+        with sqlite3.connect(self.store.path) as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute(
+                "UPDATE sessions SET updated=?", (time.time() - 91 * 86400,)
+            )
+            self.store._prune(connection)
+        self.assertEqual(self.view(days=90)["totals"]["sessions"], 0)
+
+    def test_session_failure_detail_uses_active_run_and_excludes_late_old_failures(
+        self,
+    ):
+        self.emit("created")
+        self.emit("started")
+        self.emit(
+            "client_failed",
+            source="browser",
+            data={
+                "stage": "encoding",
+                "error_code": "BROWSER_MEMORY",
+                "engine_signal": "oom",
+            },
+        )
+        self.assertEqual(
+            self.view()["sessions"][0]["failure_data"]["error_code"], "BROWSER_MEMORY"
+        )
+        previous = self.run
+        self.run = uuid.uuid4().hex
+        self.emit("started")
+        self.store.record(
+            self.session,
+            self.reference,
+            "client_failed",
+            source="browser",
+            run_id=previous,
+            data={"error_code": "UNKNOWN"},
+        )
+        result = self.view()["sessions"][0]
+        self.assertEqual(result["status"], "processing")
+        self.assertEqual(result["failure_data"], {})
 
     def test_transient_write_error_is_counted_and_later_records_recover(self):
         with patch.object(

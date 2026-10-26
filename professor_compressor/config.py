@@ -83,8 +83,8 @@ class Settings:
     allowed_guild_ids: frozenset[int] = frozenset()
     observability_db_path: str = ""
     observability_admin_key: str = field(default="", repr=False)
-    observability_retention_days: int = 30
-    observability_max_events: int = 100000
+    observability_retention_days: int = 90
+    observability_max_events: int = 300000
     diagnostic_test_guild_ids: frozenset[int] = frozenset()
 
     @classmethod
@@ -119,9 +119,9 @@ class Settings:
             raise RuntimeError(
                 "Operator dashboard requires HTTPS outside loopback development."
             )
-        retention = _integer("OBSERVABILITY_RETENTION_DAYS", 30, minimum=1)
-        if retention > 30:
-            raise RuntimeError("OBSERVABILITY_RETENTION_DAYS must be at most 30.")
+        retention = _integer("OBSERVABILITY_RETENTION_DAYS", 90, minimum=1)
+        if retention > 90:
+            raise RuntimeError("OBSERVABILITY_RETENTION_DAYS must be at most 90.")
 
         return cls(
             discord_token=token,
@@ -164,7 +164,7 @@ class Settings:
             observability_admin_key=admin_key,
             observability_retention_days=retention,
             observability_max_events=_integer(
-                "OBSERVABILITY_MAX_EVENTS", 100000, minimum=1000
+                "OBSERVABILITY_MAX_EVENTS", 300000, minimum=1000
             ),
             diagnostic_test_guild_ids=_guild_ids("DIAGNOSTIC_TEST_GUILD_IDS"),
         )

@@ -37,6 +37,7 @@ EVENTS = frozenset(
         "stage_finished",
         "attempt_started",
         "processing_progress",
+        "processing_stalled",
         "file_ready",
         "retry",
         "client_failed",
@@ -58,6 +59,7 @@ CLIENT_EVENTS = frozenset(
         "stage_finished",
         "attempt_started",
         "processing_progress",
+        "processing_stalled",
         "file_ready",
         "retry",
         "client_failed",
@@ -80,6 +82,8 @@ ENUMS = {
     },
     "error_code": {
         "UNKNOWN",
+        "WORKER_CRASH",
+        "WORKER_MESSAGE_ERROR",
         "FILE_READ_FAILED",
         "UNSUPPORTED_CONTAINER",
         "INVALID_SIGNATURE",
@@ -88,6 +92,7 @@ ENUMS = {
         "NO_VIDEO_STREAM",
         "DURATION_UNKNOWN",
         "UNSUPPORTED_CODEC",
+        "INVALID_MEDIA",
         "ENGINE_LOAD_FAILED",
         "ENGINE_LOAD_TIMEOUT",
         "ENCODE_FAILED",
@@ -356,10 +361,10 @@ class EventStore:
         path: str = "",
         *,
         key: str = "",
-        retention_days: int = 30,
-        max_events: int = 100000,
+        retention_days: int = 90,
+        max_events: int = 300000,
         queue_size: int = 2048,
-        max_mib: int = 128,
+        max_mib: int = 384,
     ) -> None:
         self.path = path
         self._key = key.encode()
@@ -689,7 +694,7 @@ class EventStore:
             connection.set_progress_handler(
                 lambda: int(time.monotonic() > deadline), 10000
             )
-            cutoff = time.time() - max(1, min(30, days)) * 86400
+            cutoff = time.time() - max(1, min(90, days)) * 86400
             where = "s.created >= ? AND (? OR s.is_test=0) AND s.status NOT IN ('installed','removed')"
             args: list = [cutoff, include_tests]
             if (
@@ -771,13 +776,18 @@ class EventStore:
                 for row in connection.execute(
                     "SELECT id,reference,created,updated,revision,is_test, "
                     "CASE WHEN status IN ('processing','uploading','queued','delivering') AND updated < strftime('%s','now')-7200 THEN 'unknown' ELSE status END status, "
-                    "CASE WHEN delivered=1 THEN files ELSE 0 END files,failures,user_key,guild_key "
+                    "CASE WHEN delivered=1 THEN files ELSE 0 END files,failures,user_key,guild_key, "
+                    "(SELECT e.data FROM events e WHERE e.session_id=s.id "
+                    "AND (s.active_run='' OR e.run_id=s.active_run) AND e.event IN ('client_failed','upload_failed','delivery_failed') "
+                    "ORDER BY e.id DESC LIMIT 1) failure_data "
                     "FROM sessions s WHERE "
                     + session_where
                     + " ORDER BY updated DESC LIMIT 100",
                     session_args,
                 )
             ]
+            for session in sessions:
+                session["failure_data"] = json.loads(session["failure_data"] or "{}")
             history = []
             if search and sessions:
                 history = [

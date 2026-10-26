@@ -94,8 +94,21 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "HTTPS"):
                 Settings.from_environment(require_token=False)
             os.environ["PUBLIC_BASE_URL"] = "https://public.example.com"
-            os.environ["OBSERVABILITY_RETENTION_DAYS"] = "31"
-            with self.assertRaisesRegex(RuntimeError, "at most 30"):
+            self.assertEqual(
+                Settings.from_environment(
+                    require_token=False
+                ).observability_retention_days,
+                90,
+            )
+            os.environ["OBSERVABILITY_RETENTION_DAYS"] = "90"
+            self.assertEqual(
+                Settings.from_environment(
+                    require_token=False
+                ).observability_retention_days,
+                90,
+            )
+            os.environ["OBSERVABILITY_RETENTION_DAYS"] = "91"
+            with self.assertRaisesRegex(RuntimeError, "at most 90"):
                 Settings.from_environment(require_token=False)
             os.environ["OBSERVABILITY_RETENTION_DAYS"] = "7"
             os.environ["ALLOWED_GUILD_ID"] = "123"

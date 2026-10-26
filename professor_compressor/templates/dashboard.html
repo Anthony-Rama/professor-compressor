@@ -20,13 +20,13 @@
     <button id="tab-sessions" role="tab" aria-selected="false" aria-controls="panel-sessions" data-tab="sessions" tabindex="-1">Session explorer</button>
     <button id="tab-system" role="tab" aria-selected="false" aria-controls="panel-system" data-tab="system" tabindex="-1">System health</button>
   </nav>
-  <div class="sidebar-foot"><span class="lock-dot"></span> Private operator workspace<p>Session history retained for up to 30 days.</p></div>
+  <div class="sidebar-foot"><span class="lock-dot"></span> Private operator workspace<p id="retention-note">Loading history retention…</p></div>
 </aside>
 <main id="main" tabindex="-1">
   <header class="page-header"><div><p class="eyebrow">Professor Compressor / Operations</p><h1 id="page-title">Overview</h1><p class="subtitle" id="page-description">A clear view of your bot, its users, and every delivery.</p></div><span class="private-tag">Password protected</span></header>
   <section aria-label="Current bot status" class="live-strip"><div class="live-label"><span class="pulse"></span> LIVE SNAPSHOT <span>Independent of history filters</span></div><div id="live" class="live-grid"><p>Loading bot status…</p></div></section>
   <form id="filters" class="filter-bar">
-    <label>History window<select id="days"><option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select></label>
+    <label>History window<select id="days"><option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
     <label>Session reference<input id="reference" placeholder="PC-…" maxlength="64" autocomplete="off"></label>
     <label>Filter by<select id="dimension"><option value="">All activity</option><option value="error_code">Error code</option><option value="engine_signal">Engine failure signal</option><option value="stage">Stage</option><option value="input_format">Input format</option><option value="browser">Browser</option><option value="device">Device</option><option value="engine">Engine</option><option value="path">Processing path</option><option value="revision">Release</option></select></label>
     <label>Filter value<input id="value" maxlength="64" placeholder="e.g. METADATA_INVALID" autocomplete="off"></label>
@@ -39,7 +39,7 @@
   <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
     <div class="section-heading"><h2>Usage at a glance</h2><span class="scope-label">Selected history window</span></div>
     <div id="summary" class="stat-grid"></div>
-    <div class="two-column"><section class="card"><div class="card-heading"><div><h2>Daily session activity</h2><p>UTC days · time window and test setting only; category/reference filters do not apply.</p></div></div><div class="legend"><span class="key created"></span> Created <span class="key delivered"></span> Delivered</div><div id="chart" class="activity-chart"></div></section><section class="card"><h2>Session funnel</h2><p>Distinct sessions reaching each step.</p><div id="funnel"></div></section></div>
+    <div class="two-column"><section class="card"><div class="card-heading"><div><h2>Daily session activity</h2><p>UTC days · chart shows up to 30 recent days; the activity table covers the full selected window. Category/reference filters do not apply.</p></div></div><div class="legend"><span class="key created"></span> Created <span class="key delivered"></span> Delivered</div><div id="chart" class="activity-chart"></div></section><section class="card"><h2>Session funnel</h2><p>Distinct sessions reaching each step.</p><div id="funnel"></div></section></div>
     <section class="card"><div class="card-heading"><div><h2>Outcomes</h2><p>Unresolved and cancelled sessions stay separate from reported failures.</p></div><button type="button" class="text-button" data-open="reliability">View reliability →</button></div><div id="outcomes" class="outcome-grid"></div></section>
   </section>
 
