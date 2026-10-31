@@ -1689,7 +1689,7 @@ async def deliver_browser_results(
         clip_label = "Clip" if len(results) == 1 else "Clips"
         message = f"🎬 **{clip_label} from** <@{job.user_id}>"
         if caption:
-            message += f"\n\n{caption}"
+            message += "\n\n> " + caption.replace("\n", "\n> ")
         if channel is None:
             raise RuntimeError(
                 "The bot cannot access the channel where compression started."
