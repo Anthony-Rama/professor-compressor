@@ -52,7 +52,7 @@ __RECOVERY_NOTICE__
   <div class="picker-row" id="picker-row">
     <label class="file-picker" id="drop-zone" for="clips">
       <span class="picker-plus" aria-hidden="true">+</span>
-      <span><strong>Choose videos or drag them here</strong><small>Add videos in batches, up to __MAX_CLIPS__ total</small></span>
+      <span><strong>Choose videos or drop them anywhere on this page</strong><small>Add videos in batches, up to __MAX_CLIPS__ total</small></span>
     </label>
     <button class="clear-selection" id="clear-selection" type="button"
       aria-label="Clear selected videos" title="Clear selected videos" disabled>
@@ -396,10 +396,17 @@ function setPhase(phase, title, copy) {
 }
 
 function showMessage(text, kind = "error") {
+  document.querySelector(".controls").after(message);
   message.textContent = text + (kind === "error" && DIAGNOSTIC_REFERENCE ?
     " Error reference: " + DIAGNOSTIC_REFERENCE : "");
   message.className = "message " + kind;
   message.hidden = false;
+}
+
+function showSelectionError(text) {
+  showMessage(text);
+  document.getElementById("picker-row").before(message);
+  message.focus();
 }
 
 function hideMessage() {
@@ -576,12 +583,12 @@ function addSelectedFiles(incoming) {
   });
   if (current.length + additions.length > MAX_CLIPS) {
     setSelectedFiles(current);
-    showMessage("Choose no more than " + MAX_CLIPS + " videos total. Remove some before adding more.", "error");
+    showSelectionError("Choose no more than " + MAX_CLIPS + " videos total. Remove some before adding more.");
     return;
   }
   if (!additions.length) {
     setSelectedFiles(current);
-    showMessage("Those videos are already selected.", "error");
+    showSelectionError("Those videos are already selected.");
     return;
   }
   setSelectedFiles([...current, ...additions]);
@@ -615,39 +622,37 @@ function clearDrag() {
   dropZone.classList.remove("drag-over");
 }
 // Prevent dropped files from navigating away from this single-use session.
-document.addEventListener("dragover", (event) => event.preventDefault());
-document.addEventListener("drop", (event) => {
-  event.preventDefault();
-  clearDrag();
-});
-dropZone.addEventListener("dragenter", (event) => {
+document.addEventListener("dragenter", (event) => {
+  if (!Array.from(event.dataTransfer?.types || []).includes("Files")) return;
   event.preventDefault();
   if (running || clips.disabled) return;
   dragDepth += 1;
   dropZone.classList.add("drag-over");
 });
-dropZone.addEventListener("dragleave", () => {
+document.addEventListener("dragleave", () => {
   dragDepth = Math.max(0, dragDepth - 1);
   if (!dragDepth) clearDrag();
 });
-dropZone.addEventListener("dragover", (event) => {
+document.addEventListener("dragover", (event) => {
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect =
     running || clips.disabled ? "none" : "copy";
 });
-dropZone.addEventListener("drop", (event) => {
+document.addEventListener("drop", (event) => {
   event.preventDefault();
   clearDrag();
   if (running || clips.disabled || !event.dataTransfer) return;
   const items = Array.from(event.dataTransfer.items || []);
   if (items.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) {
-    showMessage("Drop video files, not folders.", "error");
+    showSelectionError("Drop video files, not folders.");
     return;
   }
   const files = Array.from(event.dataTransfer.files);
   if (!files.length) return;
   addSelectedFiles(files);
-});
+}, true);
+window.addEventListener("dragend", clearDrag);
+window.addEventListener("blur", clearDrag);
 
 function createEncoder() {
   const encoder = new EncoderClient(new URL("__ASSET_PREFIX__/ffmpeg-esm/worker.js", location.origin));
@@ -1289,7 +1294,7 @@ form.addEventListener("submit", async (event) => {
     return;
   }
   if (selectedFiles.length < 1 || selectedFiles.length > MAX_CLIPS) {
-    showMessage("Choose between 1 and " + MAX_CLIPS + " videos.");
+    showSelectionError("Choose between 1 and " + MAX_CLIPS + " videos.");
     return;
   }
   diagnostic.begin();

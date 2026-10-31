@@ -134,17 +134,24 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=channel),
             ),
         ):
-            await deliver_browser_results(
-                job, results, "Clips from yesterday @everyone <@456>"
-            )
-        sent = channel.send.await_args.kwargs
-        self.assertEqual(
-            sent["content"],
-            "🎬 **Clips from** <@123>\n\nClips from yesterday @everyone <@456>",
-        )
-        self.assertFalse(sent["allowed_mentions"].everyone)
-        self.assertFalse(sent["allowed_mentions"].roles)
-        self.assertTrue(sent["allowed_mentions"].users)
+            for caption, quoted in (
+                (
+                    "Clips from yesterday @everyone <@456>",
+                    "> Clips from yesterday @everyone <@456>",
+                ),
+                ("First line\n\nLast line", "> First line\n> \n> Last line"),
+                ("x" * 1000, "> " + "x" * 1000),
+            ):
+                with self.subTest(caption_length=len(caption)):
+                    await deliver_browser_results(job, results, caption)
+                    sent = channel.send.await_args.kwargs
+                    self.assertEqual(
+                        sent["content"], "🎬 **Clips from** <@123>\n\n" + quoted
+                    )
+                    self.assertLessEqual(len(sent["content"]), 2000)
+                    self.assertFalse(sent["allowed_mentions"].everyone)
+                    self.assertFalse(sent["allowed_mentions"].roles)
+                    self.assertTrue(sent["allowed_mentions"].users)
 
 
 if __name__ == "__main__":

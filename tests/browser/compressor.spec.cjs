@@ -514,13 +514,13 @@ test('unsupported AV1 fails without uploading and allows a supported replacement
   await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
 });
 
-async function dropFiles(page, count) {
+async function dropFiles(page, count, target = '#drop-zone') {
   const transfer = await page.evaluateHandle(({ bytes, count }) => {
     const dt = new DataTransfer();
-    for (let i = 0; i < count; i++) dt.items.add(new File([new Uint8Array(bytes)], `clip-${i}.mp4`, {type:'video/mp4'}));
+    for (let i = 0; i < count; i++) dt.items.add(new File([new Uint8Array(bytes)], `clip-${i}.mp4`, {type:'video/mp4', lastModified:123}));
     return dt;
   }, {bytes:Array.from(readFileSync(join(fixtures, 'small.mp4'))), count});
-  await page.locator('#drop-zone').dispatchEvent('drop', {dataTransfer:transfer});
+  await page.locator(target).dispatchEvent('drop', {dataTransfer:transfer});
   await transfer.dispose();
 }
 
@@ -532,6 +532,51 @@ test('dropped videos populate the input and deliver together', async ({ page, re
   await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
   await dropFiles(page, 1);
   await expect(page.locator('.file-card')).toHaveCount(2);
+});
+
+test('page-wide drops append once, preserve the caption, and show selection errors above the picker', async ({ page, request }) => {
+  await openSession(page, request);
+  await page.locator('#caption').fill('Keep this caption');
+  await dropFiles(page, 1, '#page-heading');
+  await expect(page.locator('.file-card')).toHaveCount(1);
+  await dropFiles(page, 2, '#caption');
+  await expect(page.locator('.file-card')).toHaveCount(2);
+  await dropFiles(page, 11, 'body');
+  await expect(page.locator('#message')).toContainText('no more than 10');
+  await expect(page.locator('.file-card')).toHaveCount(2);
+  await expect(page.locator('#caption')).toHaveValue('Keep this caption');
+  expect(await page.evaluate(() => Boolean(document.getElementById('message')
+    .compareDocumentPosition(document.getElementById('picker-row')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await expect(page.locator('#message')).toBeFocused();
+  await page.getByRole('button', {name: 'Remove clip-0.mp4'}).click();
+  await expect(page.locator('#message')).toBeHidden();
+  await page.locator('#submit').click();
+  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
+  expect(await page.evaluate(() => Boolean(document.querySelector('.controls')
+    .compareDocumentPosition(document.getElementById('message')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await dropFiles(page, 3, 'body');
+  await expect(page.locator('.file-card')).toHaveCount(1);
+});
+
+test('page-wide file drag feedback clears and text drops do not select files', async ({ page, request }) => {
+  await openSession(page, request);
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['test'], 'clip.mp4', {type:'video/mp4'}));
+    document.body.dispatchEvent(new DragEvent('dragenter', {bubbles:true, dataTransfer:transfer}));
+  });
+  await expect(page.locator('#drop-zone')).toHaveClass(/drag-over/);
+  await page.evaluate(() => window.dispatchEvent(new Event('dragend')));
+  await expect(page.locator('#drop-zone')).not.toHaveClass(/drag-over/);
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.setData('text/plain', 'not a video');
+    document.body.dispatchEvent(new DragEvent('dragenter', {bubbles:true, dataTransfer:transfer}));
+    document.body.dispatchEvent(new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:transfer}));
+  });
+  await expect(page.locator('#drop-zone')).not.toHaveClass(/drag-over/);
+  await expect(page.locator('.file-card')).toHaveCount(0);
+  await expect(page.locator('#message')).toBeHidden();
 });
 
 test('later selections add to the batch and per-file removal keeps the rest', async ({ page, request }) => {
@@ -663,7 +708,7 @@ test('drops cannot replace files while compression is running', async ({ page, r
   await expect(page.locator('#phase-title')).toHaveText('Loading video engine');
   await expect(page.locator('#run-detail')).toHaveText('Starting video engine');
   await expect(page.locator('.file-status')).toHaveText('Loading video engine');
-  await dropFiles(page, 2);
+  await dropFiles(page, 2, 'body');
   await expect(page.locator('.file-card')).toHaveCount(1);
   await expect(page.locator('.file-name')).toHaveText('large.mp4');
   release();
@@ -678,7 +723,7 @@ test('folder drops are rejected and outside drops do not navigate away', async (
     Object.defineProperty(event, 'dataTransfer', {value:{items:[{
       webkitGetAsEntry: () => ({isDirectory:true}),
     }], files:[]}});
-    return document.getElementById('drop-zone').dispatchEvent(event);
+    return document.body.dispatchEvent(event);
   })).toBe(false);
   await expect(page.locator('#message')).toBeVisible();
   await expect(page.locator('#message')).toContainText('not folders');
@@ -693,6 +738,8 @@ test('invalid input can be removed and retried in the same session', async ({ pa
   await page.locator('#clips').setInputFiles({name:'bad.mp4', mimeType:'video/mp4', buffer:Buffer.from('not video')});
   await page.locator('#submit').click();
   await expect(page.locator('#phase-title')).toHaveText('Action needed');
+  expect(await page.evaluate(() => Boolean(document.querySelector('.controls')
+    .compareDocumentPosition(document.getElementById('message')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await expect(page.locator('#picker-row')).toBeVisible();
   await expect(page.locator('#caption')).toBeVisible();
   await page.getByRole('button', {name: 'Remove bad.mp4'}).click();
