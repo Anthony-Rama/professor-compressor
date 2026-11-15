@@ -59,7 +59,12 @@ class DevelopmentLauncherTests(unittest.TestCase):
         )
 
     def test_cannot_use_production_environment_file(self):
-        with self.assertRaisesRegex(dev.DevelopmentError, "production .env"):
+        # Clean CI checkouts deliberately have no production .env. Refuse that
+        # path before checking existence, without depending on local secrets.
+        with (
+            patch.object(dev, "ROOT", self.path.parent),
+            self.assertRaisesRegex(dev.DevelopmentError, "production .env"),
+        ):
             dev.development_environment(dev.ROOT / ".env")
 
     def test_missing_file_does_not_fall_back_to_dotenv(self):

@@ -50,12 +50,12 @@ def snowflake(value: str, label: str) -> str:
 def development_environment(path: Path) -> dict[str, str]:
     """Use only the explicit dev file and safe OS settings, not inherited secrets."""
     path = path.resolve()
+    if path == (ROOT / ".env").resolve():
+        raise DevelopmentError("The production .env cannot be used for development.")
     if not path.is_file():
         raise DevelopmentError(
             "Dev configuration file not found. Create dev.env first."
         )
-    if path == (ROOT / ".env").resolve():
-        raise DevelopmentError("The production .env cannot be used for development.")
     if os.name == "posix" and path.stat().st_mode & 0o077:
         raise DevelopmentError("Dev credentials must be owner-only: chmod 600 dev.env")
     parsed = dotenv_values(path, interpolate=False)
