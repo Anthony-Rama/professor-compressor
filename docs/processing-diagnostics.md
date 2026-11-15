@@ -36,7 +36,7 @@ bounded diagnostics and never control upload limits or delivery decisions.
 Use encoding speed together with resolution/FPS and engine mode when comparing
 devices. Use successful server deliveries divided by attempts, failure categories,
 and recovered retries to judge reliability; do not count cancellations as errors.
-# Recovery behavior on the development branch
+## Recovery behavior
 
 The pinned browser cores recognize AV1 metadata but do not provide a usable
 software AV1 decoding path. When re-encoding is required, AV1 is rejected after
@@ -69,3 +69,40 @@ prepared output without recompression. Backoff includes jitter unless a bounded
 server retry interval is provided. After exhaustion, the user can check/retry
 delivery or download prepared files while the page remains open. Browser upload
 progress alone does not confirm relay receipt or Discord delivery.
+
+### Delivery certainty and required error handling
+
+Delivery receipts distinguish a confirmed rejection from an unknown outcome.
+`DELIVERY_ACCESS_DENIED` covers missing destination access or permissions;
+`DELIVERY_LIMIT_CHANGED` means the destination allowance changed after preparation.
+`DISCORD_REJECTED` means Discord returned a definitive rejection. Network errors,
+server errors and unexpected failures use `DELIVERY_UNCONFIRMED`; a delivery
+timeout uses `DELIVERY_TIMEOUT`. Neither unknown category proves that no message
+was posted. Users must check the channel before starting another session.
+The original page and refreshed status page preserve the same safe recovery
+message, and neither automatically resubmits a failed delivery.
+
+`static/processing-errors.js` owns required error normalization/classification.
+The optional diagnostics reporter uses the same rules; missing diagnostics must
+not change retries or file-replacement actions. Failed required module downloads
+produce an independent startup error before files can be selected. Startup also
+catches module syntax/evaluation errors and initialization exceptions, and times
+out after 30 seconds. A late module response cannot reactivate a timed-out page;
+the user must reload. The watchdog and startup error listener are removed after
+successful initialization so unrelated later errors do not disable the picker.
+
+User-facing encoding/remux inactivity warnings do not depend on optional
+diagnostics. After two minutes without advancing media time or percentage, the
+page explains that processing may be slow or paused, not necessarily failed.
+Repeated identical progress events do not reset this timer. Returning after at
+least 15 seconds in the background shows foreground/screen-unlocked guidance
+until progress resumes or the operation ends. Warnings never cancel or retry
+processing automatically, and do not change encoding settings or collect new data.
+Mobile guidance is shown before starting; long videos are best processed on a
+desktop. A hidden page or sleeping device may suspend the warning timers too;
+visibility restoration immediately rechecks activity when the browser resumes.
+
+Relay MP4 validation is a bounded structural plausibility check, not a full
+decoder or a guarantee that media is playable. The file-type box is limited to
+4 KiB and only major/compatible brands are considered; minor-version bytes are
+not brands. Header parsing does not materialize an upload-sized brand table.

@@ -122,9 +122,11 @@ class BrowserPageTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_generated_module_has_valid_javascript(self) -> None:
-        script = self.page.split('<script type="module">', 1)[1].split("</script>", 1)[
-            0
-        ]
+        script = (
+            self.page.split('<script type="module"', 1)[1]
+            .split(">", 1)[1]
+            .split("</script>", 1)[0]
+        )
         subprocess.run(
             ["node", "--input-type=module", "--check"],
             input=script,

@@ -4,6 +4,32 @@ import discord
 
 from .config import MIB
 
+UNCONFIRMED_DELIVERY_MESSAGE = (
+    "Delivery could not be confirmed. Check the Discord channel before starting "
+    "another session to avoid posting duplicate clips."
+)
+
+
+class DeliveryFailure(RuntimeError):
+    """A bounded, user-safe failure with explicit delivery certainty."""
+
+    def __init__(self, message: str, error_code: str, *, outcome: str = "rejected"):
+        super().__init__(message)
+        self.error_code = error_code
+        self.outcome = outcome
+
+
+def delivery_failure(error: Exception) -> DeliveryFailure:
+    if isinstance(error, DeliveryFailure):
+        return error
+    return DeliveryFailure(
+        UNCONFIRMED_DELIVERY_MESSAGE,
+        "DELIVERY_TIMEOUT"
+        if isinstance(error, TimeoutError)
+        else "DELIVERY_UNCONFIRMED",
+        outcome="unknown",
+    )
+
 
 def channel_delivery_problem(channel, permissions) -> str | None:
     if channel is None or not hasattr(channel, "send"):

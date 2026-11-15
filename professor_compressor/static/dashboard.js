@@ -52,7 +52,9 @@ const failureReasons = {
   NETWORK:'The connection failed; delivery may be unconfirmed', HTTP:'The server returned an HTTP error',
   UPLOAD_TIMEOUT:'The upload timed out', SESSION_EXPIRED:'The compressor session expired',
   INVALID_UPLOAD:'The relay rejected the uploaded files', RELAY_ERROR:'The relay could not process the upload',
-  DISCORD_REJECTED:'Discord rejected delivery', DELIVERY_TIMEOUT:'Discord delivery timed out',
+  DISCORD_REJECTED:'Discord rejected delivery', DELIVERY_TIMEOUT:'Delivery timed out; outcome unknown',
+  DELIVERY_UNCONFIRMED:'Delivery outcome unknown', DELIVERY_ACCESS_DENIED:'Destination unavailable or missing permissions',
+  DELIVERY_LIMIT_CHANGED:'Destination upload allowance changed',
   ENCODE_TIMEOUT:'Video encoding timed out', UNKNOWN:'The cause was not captured by this client'
 };
 function failureReason(data={}) {
@@ -67,6 +69,9 @@ function failureReason(data={}) {
 function recovery(row) {
   if(row.status==='delivered')return row.failures?'Recovered and delivered':'Delivered';
   const code=row.failure_data?.error_code;
+  if(['DELIVERY_UNCONFIRMED','DELIVERY_TIMEOUT'].includes(code))return 'Check Discord before starting another session';
+  if(code==='DELIVERY_ACCESS_DENIED')return 'Ask an admin to restore destination access';
+  if(code==='DELIVERY_LIMIT_CHANGED')return 'Start a new session with the current allowance';
   if(['UNSUPPORTED_CODEC','TARGET_NOT_FEASIBLE','INVALID_SIGNATURE','FILE_READ_FAILED','INVALID_MEDIA'].includes(code))return 'Replace or re-export the affected file';
   if(['UPLOAD_CONNECTION_RESET','UPLOAD_TIMEOUT','NETWORK','RELAY_ERROR'].includes(code))return 'Check receipt, then retry prepared files';
   return ['client_failed','upload_failed','delivery_failed'].includes(row.status)?'Needs investigation':'—';

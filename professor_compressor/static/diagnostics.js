@@ -1,39 +1,7 @@
 // Optional diagnostics: no filenames, captions, URLs, raw errors, or video bytes.
 // Every method is best-effort; the compressor must work if this transport fails.
-function normalizeError(value) {
-  // FFmpeg workers reject with strings. Always use a fresh, mutable Error;
-  // DOMExceptions and frozen Error objects must also retain their context.
-  const error = new Error("The video engine stopped unexpectedly.");
-  try {
-    if (typeof value === "string") {
-      error.message = value;
-      const kind = value.match(/^(?:Uncaught )?(TypeError|RangeError|RuntimeError|AbortError):/);
-      if (kind) error.name = kind[1];
-    }
-    else if (value) {
-      for (const key of ["message", "name", "code", "status", "diagnosticCode", "diagnosticFileIndex"]) {
-        if (["string", "number"].includes(typeof value[key])) error[key] = value[key];
-      }
-      if (value.diagnosticFacts) error.diagnosticFacts = value.diagnosticFacts;
-    }
-  } catch (_) { /* Unknown thrown values must not break error reporting. */ }
-  return error;
-}
-// Classify locally. Never retain or transmit the line that matched.
-export function engineSignal(value) {
-  if (typeof value !== "string") return "";
-  const line = value.slice(0, 2048);
-  // FFmpeg can print arbitrary embedded tag values; don't classify metadata
-  // headings (e.g. a title named "out of memory") as engine failures.
-  if (/^\s+[\w ._-]+\s*:\s/.test(line)) return "";
-  if (/Aborted\(\s*OOM\s*\)|out of memory/i.test(line)) return "oom";
-  if (/cannot allocate memory|allocation failed|failed to allocate/i.test(line)) return "allocation_failed";
-  if (/memory access out of bounds/i.test(line)) return "wasm_bounds";
-  if (/RuntimeError:.*(?:unreachable|indirect call.*mismatch)/i.test(line)) return "wasm_trap";
-  if (/unknown decoder|no decoder found|decoder .* not found|unsupported codec|platform doesn't supp?port hardware accelerated AV1 decoding/i.test(line)) return "unsupported_codec";
-  if (/invalid data found when processing input/i.test(line)) return "invalid_media";
-  return "";
-}
+import { normalizeError, engineSignal, errorCode, signalPriority, stageError } from "./processing-errors.js";
+export { engineSignal } from "./processing-errors.js";
 
 export function commandSettings(args) {
   const value = flag => { const index = args.indexOf(flag); return index < 0 ? undefined : args[index + 1]; };
@@ -90,8 +58,6 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
     ...(lastPercent === null ? {} : {last_progress_percent: lastPercent}), page_hidden: document.hidden});
   const failureFacts = error => ({...facts(), ...error?.diagnosticFacts,
     ...(Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599 ? {http_status: error.status} : {})});
-  const memorySignals = new Set(["oom", "allocation_failed"]);
-  const signalPriority = value => memorySignals.has(value) ? 4 : ["wasm_bounds", "wasm_trap"].includes(value) ? 3 : value === "unsupported_codec" ? 2 : value ? 1 : 0;
   function observeSignal(next, source) {
     if (next && signalPriority(next) > signalPriority(signal)) { signal = next; signalSource = source; }
   }
@@ -150,25 +116,7 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
     } catch (_) { /* Diagnostics never affect processing. */ }
   }
   function code(error) {
-    try {
-      error = normalizeError(error);
-      if (error.name === "AbortError") return "CANCELLED";
-      // Deterministic preflight findings outrank incidental probe log lines.
-      if (["UNSUPPORTED_CODEC", "TARGET_NOT_FEASIBLE"].includes(error.diagnosticCode)) return error.diagnosticCode;
-      const recorded = failureFacts(error).engine_signal;
-      const thrown = engineSignal(error.message);
-      const evidence = signalPriority(thrown) > signalPriority(recorded) ? thrown : recorded;
-      if (memorySignals.has(evidence)) return "BROWSER_MEMORY";
-      if (["wasm_bounds", "wasm_trap"].includes(evidence)) return "WASM_TRAP";
-      if (evidence === "unsupported_codec") return "UNSUPPORTED_CODEC";
-      if (evidence === "invalid_media") return "INVALID_MEDIA";
-      if (error.diagnosticCode) return error.diagnosticCode;
-      if (error.status === 0) return "NETWORK";
-      if (error.code === "session_expired") return "SESSION_EXPIRED";
-      if (error.code === "upload_connection_reset") return "UPLOAD_CONNECTION_RESET";
-      if (error.status) return "HTTP";
-      return "UNKNOWN";
-    } catch (_) { return "UNKNOWN"; }
+    return errorCode(error, signal);
   }
   async function step(operation, fileIndex, action, failureCode) {
     stage = operation;
@@ -197,18 +145,10 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
         ...(execution && result !== 0 ? {outcome: "failed", error_code: code({diagnosticCode: "ENCODE_FAILED"})} : {})});
       return result;
     } catch (value) {
-      const error = normalizeError(value);
-      observeSignal(engineSignal(error.message), "exception");
-      error.diagnosticFacts = {...facts(), stage: operation,
+      observeSignal(engineSignal(normalizeError(value).message), "exception");
+      const error = stageError(value, operation, fileIndex, performance.now() - start, failureCode, facts());
+      error.diagnosticFacts = {...error.diagnosticFacts,
         exception_kind: ["Error", "TypeError", "RangeError", "RuntimeError", "AbortError"].includes(error.name) ? error.name : "other"};
-      try {
-        if (!error.diagnosticCode) error.diagnosticCode =
-          error.name === "AbortError" ? "CANCELLED" :
-          memorySignals.has(signal) ? "BROWSER_MEMORY" :
-          error.code === "encoder_start_timeout" ? "ENGINE_LOAD_TIMEOUT" :
-          operation === "metadata" && performance.now() - start >= 29500 ? "METADATA_TIMEOUT" : failureCode;
-        error.diagnosticFileIndex = fileIndex;
-      } catch (_) { /* Some errors are immutable. */ }
       error.diagnosticCode = code(error);
       emit("stage_finished", fileIndex, {...error.diagnosticFacts, stage: operation,
         seconds: (performance.now() - start) / 1000, error_code: code(error),

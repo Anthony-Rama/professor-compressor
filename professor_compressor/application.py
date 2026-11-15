@@ -25,7 +25,12 @@ from discord import app_commands
 from .assets import ASSET_PACKAGES, ASSET_PREFIX, NODE_MODULES
 from .config import MIB, Settings
 from .dashboard import register_dashboard
-from .delivery_policy import bot_upload_limit, channel_delivery_problem
+from .delivery_policy import (
+    DeliveryFailure,
+    bot_upload_limit,
+    channel_delivery_problem,
+    delivery_failure,
+)
 from .domain import (
     BrowserResult,
     CompressionDiagnostic,
@@ -1730,23 +1735,26 @@ async def deliver_browser_results(
         if caption:
             message += "\n\n> " + caption.replace("\n", "\n> ")
         if channel is None:
-            raise RuntimeError(
-                "The bot cannot access the channel where compression started."
+            raise DeliveryFailure(
+                "The bot cannot access the channel where compression started. Ask a server admin to restore access, then run /compress again.",
+                "DELIVERY_ACCESS_DENIED",
             )
         guild = client.get_guild(job.guild_id) if job.guild_id is not None else None
         if guild is None or guild.me is None:
-            raise RuntimeError(
-                "The bot is no longer a member of the destination server."
+            raise DeliveryFailure(
+                "The bot is no longer a member of the destination server. Ask a server admin to invite it again.",
+                "DELIVERY_ACCESS_DENIED",
             )
         problem = channel_delivery_problem(channel, channel.permissions_for(guild.me))
         if problem:
-            raise RuntimeError(problem)
+            raise DeliveryFailure(problem, "DELIVERY_ACCESS_DENIED")
         if any(
             len(result.data) > bot_upload_limit(guild, BOT_BASE_UPLOAD_BYTES)
             for result in results
         ):
-            raise RuntimeError(
-                "The server's bot upload allowance changed. Run /compress again to prepare smaller files."
+            raise DeliveryFailure(
+                "The server's bot upload allowance changed. Run /compress again to prepare smaller files.",
+                "DELIVERY_LIMIT_CHANGED",
             )
         await send_result_batch(channel.send, results, message)
         return "Your compressed videos were delivered to Discord."
@@ -1757,17 +1765,18 @@ async def deliver_browser_results(
             getattr(error, "status", None),
             getattr(error, "code", None),
         )
-        if isinstance(error, RuntimeError):
+        if isinstance(error, DeliveryFailure):
             raise
         if not isinstance(error, (discord.Forbidden, discord.NotFound)) and (
             not isinstance(error, discord.HTTPException) or error.status >= 500
         ):
-            raise RuntimeError(
-                "Delivery could not be confirmed. Check the Discord channel before starting another session."
-            ) from error
-        raise RuntimeError(
+            raise delivery_failure(error) from error
+        raise DeliveryFailure(
             "Discord rejected the files. Confirm that the bot can view the "
-            "channel, send messages, and attach files, then run /compress again."
+            "channel, send messages, and attach files, then run /compress again.",
+            "DELIVERY_ACCESS_DENIED"
+            if isinstance(error, (discord.Forbidden, discord.NotFound))
+            else "DISCORD_REJECTED",
         ) from error
 
 
@@ -1885,6 +1894,7 @@ async def delivery_worker(worker_number: int) -> None:
             if not delivery.completed.done():
                 delivery.completed.set_result(message)
         except Exception as error:
+            failure = delivery_failure(error)
             try:
                 log_delivery_diagnostics(delivery, delivery_started, "delivery_failed")
             except Exception:
@@ -1894,21 +1904,13 @@ async def delivery_worker(worker_number: int) -> None:
                 "delivery_failed",
                 run_id=delivery.run_id,
                 data={
-                    "error_code": "DELIVERY_TIMEOUT"
-                    if isinstance(error, TimeoutError)
-                    else "DISCORD_REJECTED",
+                    "error_code": failure.error_code,
                     "stage": "delivery",
                     **delivery_timing(delivery, delivery_started),
                 },
             )
             metrics.increment("deliveries_failed")
-            message = (
-                str(error)
-                if isinstance(error, RuntimeError)
-                else (
-                    "Delivery could not be confirmed. Check the Discord channel before starting another session."
-                )
-            )
+            message = str(failure)
             record_outcome(
                 delivery.job,
                 502,
@@ -1916,6 +1918,8 @@ async def delivery_worker(worker_number: int) -> None:
                     "ok": False,
                     "error": message,
                     "code": "discord_delivery_failed",
+                    "delivery_outcome": failure.outcome,
+                    "error_code": failure.error_code,
                 },
             )
             schedule_owner_alert(

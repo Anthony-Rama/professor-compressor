@@ -44,11 +44,17 @@ __RECOVERY_NOTICE__
 <div class="stay-open" id="stay-open">
   <span aria-hidden="true">⏱</span>
   <span><strong>Keep this page open and active until it finishes.</strong><br>
-  This helps compression run at full speed.</span>
+  This helps compression run at full speed. On phones, keep the screen unlocked
+  and this browser in the foreground. Long videos are best processed on a desktop.</span>
 </div>
+<div id="startup-error" class="message error" hidden role="alert" tabindex="-1">
+  The video engine could not load. Nothing has been uploaded. Check your connection,
+  then reload this page before selecting videos. If it keeps happening, contact support.
+</div>
+<noscript><p class="message error">JavaScript is required to process videos. Enable it, then reload this page.</p></noscript>
 <form id="upload">
   <input class="file-input" id="clips" name="clips" type="file"
-    accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.mpeg,.mpg,.ogv,.ogg,.flv,.ts,.mts,.m2ts,.3gp,.3g2,.wmv,.asf" multiple required>
+    accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.mpeg,.mpg,.ogv,.ogg,.flv,.ts,.mts,.m2ts,.3gp,.3g2,.wmv,.asf" multiple required disabled>
   <div class="picker-row" id="picker-row">
     <label class="file-picker" id="drop-zone" for="clips">
       <span class="picker-plus" aria-hidden="true">+</span>
@@ -75,10 +81,10 @@ __RECOVERY_NOTICE__
   <p id="completion-summary" class="completion-summary" hidden role="status"></p>
   <div id="files" class="file-list" hidden></div>
   <div id="work" class="work" hidden>
-    <div id="stall-warning" class="background-warning" hidden role="status">This video is taking longer than expected. No recent progress was reported, but processing may still be running. Keep this page active, or cancel and try again.</div>
+    <div id="stall-warning" class="background-warning" hidden role="status">No processing progress has been reported for at least 2 minutes. Processing may be slow or paused; this is not a confirmed failure. Keep this page visible and your screen unlocked. You can keep waiting, or cancel and retry on a desktop if it does not resume.</div>
     <div id="background-warning" class="background-warning" hidden role="status">
       Compression may slow down or pause while this tab is hidden. Keep this
-      window visible for full speed.
+      browser in the foreground and your screen unlocked.
     </div>
     <div class="phase-panel">
       <div class="phase-track" aria-label="Processing steps">
@@ -130,9 +136,46 @@ __RECOVERY_NOTICE__
     <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></p>
 </form>
 
-<script type="module">
-import { EncoderClient } from "/brand/encoder-client.js";
-import { fetchFile } from "__ASSET_PREFIX__/util-esm/index.js";
+<script>
+// Independent of module imports: a failed dependency must not leave a silent form.
+(() => {
+  let state = "loading";
+  const cleanup = () => {
+    clearTimeout(timer);
+    window.removeEventListener("error", fail);
+  };
+  function fail() {
+    if (state !== "loading") return;
+    state = "failed";
+    cleanup();
+    const notice = document.getElementById("startup-error");
+    notice.hidden = false;
+    document.getElementById("clips").disabled = true;
+    document.getElementById("submit").disabled = true;
+    notice.focus();
+  }
+  const timer = setTimeout(fail, 30000);
+  window.addEventListener("error", fail);
+  window.compressorStartup = {
+    pending: () => state === "loading",
+    fail,
+    ready() {
+      if (state !== "loading") return;
+      state = "ready";
+      cleanup();
+    }
+  };
+})();
+</script>
+<script type="module" id="compressor-module">
+async function initializeCompressor() {
+const [{ EncoderClient }, { fetchFile }, { createProcessingFallback }] = await Promise.all([
+  import("/brand/encoder-client.js"),
+  import("__ASSET_PREFIX__/util-esm/index.js"),
+  import("/brand/processing-errors.js")
+]);
+// Imports cannot be cancelled. A late response must not revive a timed-out page.
+if (!window.compressorStartup.pending()) return;
 
 const MAX_CLIPS = __MAX_CLIPS__;
 const TARGET_BYTES = __TARGET_BYTES__;
@@ -141,6 +184,7 @@ const MAX_BATCH_BYTES = __MAX_BATCH_BYTES__;
 const SESSION_SECRET = __SESSION_SECRET__;
 const DIAGNOSTIC_REFERENCE = __DIAGNOSTIC_REFERENCE__;
 let fallbackDiagnosticRun = "";
+const processing = createProcessingFallback();
 const diagnostic = {
   begin: () => {
     try { const bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
@@ -151,15 +195,22 @@ const diagnostic = {
   context: () => ({}), code: error => error?.diagnosticCode || "UNKNOWN", mark: () => {},
   configure: () => {}, media: () => ({}), attempt: () => {}, log: () => {},
   progress: () => {}, failureContext: () => ({}),
-  step: async (_stage, _file, action) => action()
+  step: async (_stage, _file, action) => action(),
+  ...processing
 };
 // Loading diagnostics is optional and must not block the compressor's startup.
 void import("/brand/diagnostics.js").then(module => {
-  const reporter = module.createDiagnostics(SESSION_SECRET, DIAGNOSTIC_REFERENCE, __DIAGNOSTIC_EVENTS_ENABLED__, stalled => {
-    document.getElementById("stall-warning").hidden = !stalled || !running;
-  });
+  const reporter = module.createDiagnostics(SESSION_SECRET, DIAGNOSTIC_REFERENCE, __DIAGNOSTIC_EVENTS_ENABLED__);
   reporter.resume(diagnostic.run());
-  Object.assign(diagnostic, reporter);
+  // Telemetry may decorate processing, but cannot replace its error semantics.
+  Object.assign(diagnostic, reporter, {
+    code: processing.code,
+    step: (stage, file, action, failureCode) => processing.step(stage, file,
+      () => reporter.step(stage, file, action, failureCode), failureCode),
+    log: line => { processing.log(line); reporter.log(line); },
+    attempt: (...args) => { processing.attempt(...args); reporter.attempt(...args); },
+    mark: (...args) => { processing.mark(...args); reporter.mark(...args); }
+  });
 }).catch(() => {});
 function diagnosticError(message, code) {
   const error = new Error(message); error.diagnosticCode = code; return error;
@@ -202,7 +253,43 @@ const elapsedElement = document.getElementById("elapsed");
 const runDetailElement = document.getElementById("run-detail");
 const expiresElement = document.getElementById("expires");
 const backgroundWarning = document.getElementById("background-warning");
+const stallWarning = document.getElementById("stall-warning");
 const ORIGINAL_TITLE = document.title;
+
+// User-facing activity warnings must work even when optional telemetry is unavailable.
+let encodingActivity = null;
+function updateActivityWarning() {
+  stallWarning.hidden = !running || !encodingActivity ||
+    performance.now() - encodingActivity.lastProgress < 120000;
+}
+function noteEncodingProgress(fraction, time) {
+  if (!encodingActivity) return;
+  const boundedFraction = Number.isFinite(fraction) && fraction >= 0 ? Math.min(1, fraction) : null;
+  const mediaTime = Number.isFinite(time) && time >= 0 ? time : null;
+  const advanced = (mediaTime !== null && mediaTime > encodingActivity.mediaTime) ||
+    (boundedFraction !== null && boundedFraction > encodingActivity.fraction);
+  if (!advanced) return;
+  if (mediaTime !== null) encodingActivity.mediaTime = Math.max(encodingActivity.mediaTime, mediaTime);
+  if (boundedFraction !== null) encodingActivity.fraction = Math.max(encodingActivity.fraction, boundedFraction);
+  encodingActivity.lastProgress = performance.now();
+  updateActivityWarning();
+  if (!document.hidden) backgroundWarning.hidden = true;
+}
+async function executeWithActivity(stage, index, action) {
+  encodingActivity = {lastProgress: performance.now(), mediaTime: 0, fraction: 0};
+  if (document.hidden) {
+    backgroundWarning.textContent = "Compression may slow down or pause while this tab is hidden. Keep this browser in the foreground and your screen unlocked.";
+    backgroundWarning.hidden = false;
+  }
+  updateActivityWarning();
+  try {
+    return await diagnostic.step(stage, index, action, "ENCODE_FAILED");
+  } finally {
+    encodingActivity = null;
+    stallWarning.hidden = true;
+    backgroundWarning.hidden = true;
+  }
+}
 
 let ffmpeg = null;
 let encoderMode = "single-threaded";
@@ -533,14 +620,21 @@ document.addEventListener("visibilitychange", () => {
   if (!running) return;
   if (document.hidden && hiddenStarted === null) hiddenStarted = performance.now();
   if (!document.hidden && hiddenStarted !== null) {
-    hiddenMs += performance.now() - hiddenStarted;
+    const away = performance.now() - hiddenStarted;
+    hiddenMs += away;
     hiddenStarted = null;
+    if (encodingActivity && away >= 15000) {
+      backgroundWarning.textContent = "This page was in the background, which can slow or pause compression. Keep this browser visible and your screen unlocked. Waiting for the next progress update; nothing has been uploaded yet.";
+      backgroundWarning.hidden = false;
+    } else backgroundWarning.hidden = true;
   }
   if (document.hidden) {
-    backgroundWarning.hidden = false;
+    backgroundWarning.textContent = "Compression may slow down or pause while this tab is hidden. Keep this browser in the foreground and your screen unlocked.";
+    backgroundWarning.hidden = !encodingActivity;
     renderDocumentTitle();
     return;
   }
+  updateActivityWarning();
   renderDocumentTitle();
   void requestWakeLock();
 });
@@ -889,6 +983,7 @@ function createEncoder() {
   encoder.on("progress", ({ progress: fraction, time }) => {
     if (!currentState || cancelled) return;
     diagnostic.progress(fraction, time);
+    noteEncodingProgress(fraction, time);
     const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
     if (currentState === lastProgressState && currentAttempt === lastProgressAttempt &&
         percent === lastProgressPercent) return;
@@ -1045,7 +1140,7 @@ async function timedEncode(state, args, sizeAdjustment = false) {
   const start = performance.now();
   diagnostic.configure(args, encoderMode, DIAGNOSTIC_ASSET_BUILD, state.encodingAttempts, sizeAdjustment);
   try {
-    return await diagnostic.step("encoding", state.index, () => ffmpeg.exec(args), "ENCODE_FAILED");
+    return await executeWithActivity("encoding", state.index, () => ffmpeg.exec(args));
   } finally {
     // Include failed encoding attempts and size retries, but exclude engine
     // loading, probing, file copies, remuxing, upload, and Discord delivery.
@@ -1152,7 +1247,7 @@ async function compressOne(state) {
           "-c", "copy", "-movflags", "+faststart", outputName
         ];
         diagnostic.configure(remuxArgs, encoderMode, DIAGNOSTIC_ASSET_BUILD);
-        const remuxExit = await diagnostic.step("remux", state.index, () => ffmpeg.exec(remuxArgs), "ENCODE_FAILED");
+        const remuxExit = await executeWithActivity("remux", state.index, () => ffmpeg.exec(remuxArgs));
         if (cancelled) throw new DOMException("Cancelled", "AbortError");
         if (remuxExit === 0) {
           const remuxed = await ffmpeg.readFile(outputName);
@@ -1474,6 +1569,7 @@ function startClock() {
   clearInterval(timer);
   timer = setInterval(() => {
     elapsedElement.textContent = "Elapsed " + readableTime((performance.now() - startedAt) / 1000);
+    updateActivityWarning();
   }, 500);
 }
 
@@ -1770,8 +1866,14 @@ function updateExpiry() {
     }
   }
 }
+// No browser event can interleave this synchronous finalization. Expiry must
+// still disable selection and clean up storage if the session elapsed at startup.
+clips.disabled = false;
 updateExpiry();
 expiryTimer = setInterval(updateExpiry, 1000);
+window.compressorStartup.ready();
+}
+await initializeCompressor().catch(() => window.compressorStartup.fail());
 </script>
 """
     return (
@@ -1855,9 +1957,9 @@ def browser_delivery_status(
         '      statusLine.textContent = "The upload stopped before Discord delivery.";\n'
         "      reselect.hidden = false;\n"
         '    } else if (body.code === "discord_delivery_failed") {\n'
-        '      heading.textContent = "Delivery failed";\n'
+        '      heading.textContent = body.delivery_outcome === "rejected" ? "Delivery failed" : "Delivery needs checking";\n'
         "      explanation.hidden = true;\n"
-        '      statusLine.textContent = "Discord rejected this delivery. Run /compress again or contact support if it keeps happening.";\n'
+        '      statusLine.textContent = body.error || "Delivery could not be confirmed. Check the Discord channel before starting another session to avoid duplicate clips.";\n'
         '      statusLine.classList.add("error");\n'
         "    } else {\n"
         '      heading.textContent = "Delivery status unavailable";\n'

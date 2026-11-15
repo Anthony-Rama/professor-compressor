@@ -31,8 +31,13 @@ async function storedFiles(page) {
     const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('professor-compressor-inputs-v1');
     let files = 0;
     for await (const handle of root.values()) {
-      if (handle.kind === 'directory') for await (const file of handle.values()) {
-        if (file.kind === 'file') files++;
+      if (handle.kind !== 'directory') continue;
+      try {
+        for await (const file of handle.values()) if (file.kind === 'file') files++;
+      } catch (error) {
+        // The other tab can remove an abandoned directory after enumeration.
+        // Missing active copies still fail the expected file-count assertion.
+        if (error.name !== 'NotFoundError') throw error;
       }
     }
     return files;

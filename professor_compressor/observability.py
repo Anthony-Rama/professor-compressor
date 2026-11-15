@@ -115,6 +115,9 @@ ENUMS = {
         "RELAY_ERROR",
         "DISCORD_REJECTED",
         "DELIVERY_TIMEOUT",
+        "DELIVERY_UNCONFIRMED",
+        "DELIVERY_ACCESS_DENIED",
+        "DELIVERY_LIMIT_CHANGED",
         "ENCODE_TIMEOUT",
     },
     "input_format": {
@@ -589,7 +592,9 @@ class EventStore:
             source == "browser"
             and event == "client_failed"
             and (
-                current[0] in {"uploading", "queued", "delivering"}
+                # Receipt handling can report a generic browser HTTP failure
+                # after the server has already classified the delivery outcome.
+                current[0] in {"uploading", "queued", "delivering", "delivery_failed"}
                 or (current[2] and run_id != current[2])
             )
         ):
@@ -794,7 +799,7 @@ class EventStore:
                     "CASE WHEN delivered=1 THEN files ELSE 0 END files,failures,user_key,guild_key, "
                     "(SELECT e.data FROM events e WHERE e.session_id=s.id "
                     "AND (s.active_run='' OR e.run_id=s.active_run) AND e.event IN ('client_failed','upload_failed','delivery_failed') "
-                    "ORDER BY e.id DESC LIMIT 1) failure_data "
+                    "ORDER BY (e.event='delivery_failed' AND e.source='server') DESC, e.id DESC LIMIT 1) failure_data "
                     "FROM sessions s WHERE "
                     + session_where
                     + " ORDER BY updated DESC LIMIT 100",

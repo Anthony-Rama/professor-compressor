@@ -397,6 +397,33 @@ class StoreTests(unittest.TestCase):
         self.emit("client_failed", source="browser")
         self.assertEqual(self.view()["totals"]["recovered"], 0)
 
+    def test_late_browser_failure_preserves_server_delivery_failure(self):
+        self.emit("started")
+        self.emit(
+            "delivery_failed",
+            source="server",
+            data={"stage": "delivery", "error_code": "DELIVERY_UNCONFIRMED"},
+        )
+        # The original page observes the receipt as HTTP 502 and reports it.
+        self.emit("client_failed", source="browser", data={"error_code": "HTTP"})
+        result = self.view()
+        self.assertEqual(result["sessions"][0]["status"], "delivery_failed")
+        self.assertEqual(
+            result["sessions"][0]["failure_data"]["error_code"],
+            "DELIVERY_UNCONFIRMED",
+        )
+        self.assertEqual(result["events"][-1]["data"]["error_code"], "HTTP")
+        # A later authoritative success still wins; prior failures remain history.
+        self.emit("delivered", source="server", data={"files": 1})
+        self.assertEqual(self.view()["sessions"][0]["status"], "delivered")
+        # A different run must not inherit the old delivery failure details.
+        self.run = uuid.uuid4().hex
+        self.emit("started")
+        self.emit("client_failed", source="browser", data={"error_code": "NETWORK"})
+        self.assertEqual(
+            self.view()["sessions"][0]["failure_data"]["error_code"], "NETWORK"
+        )
+
     def test_distinct_manual_runs_and_automatic_retries(self):
         self.emit("started")
         self.emit("started")

@@ -17,6 +17,143 @@ test.beforeAll(()=>{
   }
 });
 test.afterAll(()=>rmSync(fixtures,{recursive:true,force:true}));
+
+for (const asset of ['encoder-client.js', 'processing-errors.js', 'util-esm/index.js']) {
+  test(`missing required asset ${asset} shows an actionable startup error`, async ({page, request}) => {
+    await page.route('**/' + asset, route => route.abort());
+    const session = await (await request.post('/test/session')).json();
+    await page.goto(session.path);
+    await expect(page.locator('#startup-error')).toBeVisible();
+    await expect(page.locator('#startup-error')).toContainText('Nothing has been uploaded');
+    await expect(page.locator('#clips')).toBeDisabled();
+    await expect(page.locator('#submit')).toBeDisabled();
+  });
+}
+
+for (const kind of ['syntax', 'evaluation', 'initialization']) {
+  test(`${kind} startup failure displays recovery and keeps selection disabled`, async ({page, request}) => {
+    await page.route('**/brand/encoder-client.js', async route => {
+      if (kind === 'initialization') return route.continue();
+      await route.fulfill({contentType: 'application/javascript', body: kind === 'syntax'
+        ? 'export class EncoderClient { broken'
+        : 'throw new Error("test module evaluation failed"); export class EncoderClient {}'});
+    });
+    if (kind === 'initialization') {
+      await page.route('**/brand/processing-errors.js', route => route.fulfill({
+        contentType: 'application/javascript',
+        body: 'export function createProcessingFallback() { throw new Error("test initialization failed"); }'
+      }));
+    }
+    const session = await (await request.post('/test/session')).json();
+    await page.goto(session.path);
+    await expect(page.locator('#startup-error')).toBeVisible();
+    await expect(page.locator('#startup-error')).toBeFocused();
+    await expect(page.locator('#clips')).toBeDisabled();
+    await expect(page.locator('#submit')).toBeDisabled();
+    expect(await page.locator('#startup-error').evaluate(node =>
+      Boolean(node.compareDocumentPosition(document.querySelector('#picker-row')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  });
+}
+
+test('stalled startup times out and late imports cannot revive the picker', async ({page, request}) => {
+  await page.addInitScript(() => {
+    const original = window.setTimeout;
+    window.setTimeout = (fn, delay, ...args) => original(fn, delay === 30000 ? 200 : delay, ...args);
+  });
+  let release, preparationRequests = 0;
+  page.on('request', request => { if (request.url().endsWith('/brand/input-preservation.js')) preparationRequests++; });
+  await page.route('**/brand/encoder-client.js', async route => {
+    const response = await route.fetch();
+    await new Promise(resolve => { release = () => route.fulfill({response}).then(resolve); });
+  });
+  const session = await (await request.post('/test/session')).json();
+  await page.goto(session.path, {waitUntil: 'commit'});
+  await expect(page.locator('#clips')).toBeDisabled();
+  await expect(page.locator('#startup-error')).toBeVisible();
+  await expect.poll(() => Boolean(release)).toBe(true);
+  await release();
+  await page.waitForLoadState('load');
+  await expect(page.locator('#startup-error')).toBeVisible();
+  await expect(page.locator('#clips')).toBeDisabled();
+  await expect(page.locator('#submit')).toBeDisabled();
+  expect(preparationRequests).toBe(0);
+});
+
+test('syntax error in the main inline module is caught by the independent guard', async ({page, request}) => {
+  const session = await (await request.post('/test/session')).json();
+  await page.route('**' + session.path, async route => {
+    const response = await route.fetch();
+    const body = (await response.text()).replace('async function initializeCompressor() {', 'async function initializeCompressor( {');
+    await route.fulfill({response, body});
+  });
+  await page.goto(session.path);
+  await expect(page.locator('#startup-error')).toBeVisible();
+  await expect(page.locator('#clips')).toBeDisabled();
+  await expect(page.locator('#submit')).toBeDisabled();
+});
+
+test('successful startup removes the watchdog and ignores later unrelated errors', async ({page, request}) => {
+  await page.addInitScript(() => {
+    const original = window.setTimeout;
+    window.startupTimer = null;
+    window.setTimeout = (fn, delay, ...args) => {
+      if (delay === 30000 && !window.startupTimer) window.startupTimer = fn;
+      return original(fn, delay, ...args);
+    };
+  });
+  const session = await (await request.post('/test/session')).json();
+  await page.goto(session.path);
+  await expect(page.locator('#clips')).toBeEnabled();
+  await page.evaluate(() => {
+    window.startupTimer();
+    window.dispatchEvent(new ErrorEvent('error', {message: 'unrelated later error'}));
+  });
+  await expect(page.locator('#startup-error')).toBeHidden();
+  await expect(page.locator('#clips')).toBeEnabled();
+});
+
+test('required error handling classifies failures without optional diagnostics', async ({page, request}) => {
+  await page.route('**/brand/diagnostics.js', route => route.abort());
+  const session = await (await request.post('/test/session')).json();
+  await page.goto(session.path);
+  const codes = await page.evaluate(async () => {
+    const {createProcessingFallback, errorCode} = await import('/brand/processing-errors.js');
+    const processing = createProcessingFallback();
+    const result = [];
+    for (const value of ['RuntimeError: memory access out of bounds', 'out of memory', new DOMException('cancelled', 'AbortError')]) {
+      try { await processing.step('encoding', 1, () => Promise.reject(value), 'ENCODE_FAILED'); }
+      catch (error) { result.push([errorCode(error), error.diagnosticFileIndex]); }
+    }
+    return result;
+  });
+  expect(codes).toEqual([['WASM_TRAP', 1], ['BROWSER_MEMORY', 1], ['CANCELLED', 1]]);
+  await page.locator('#clips').setInputFiles(join(fixtures, 'large-av1.mp4'));
+  await page.locator('#submit').click();
+  await expect(page.locator('#message')).toContainText('H.264 MP4 with AAC audio');
+  await expect(page.getByRole('button', {name: 'Reselect large-av1.mp4', exact: true})).toBeVisible();
+});
+
+for (const outcome of ['unknown', 'rejected']) {
+  test(`refreshed delivery status preserves ${outcome} recovery instructions`, async ({page, request}) => {
+    const session = await (await request.post('/test/session?slow=1')).json();
+    await page.goto(session.path);
+    await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+    await page.locator('#submit').click();
+    await expect(page.locator('#page-heading')).toHaveText('Sending to Discord');
+    const message = outcome === 'unknown'
+      ? 'Delivery could not be confirmed. Check Discord before starting another session.'
+      : 'The bot needs Attach Files. Ask an admin to restore access.';
+    await page.route('**' + session.path + '/status', route => route.fulfill({status: 502,
+      json: {code: 'discord_delivery_failed', delivery_outcome: outcome, error: message}}));
+    await page.reload();
+    await expect(page.locator('#delivery-status')).toContainText(message);
+    await expect(page.locator('#clips')).toHaveCount(0);
+    // Drain this test's deliberately slow fake delivery before the next test.
+    await page.unroute('**' + session.path + '/status');
+    await page.reload();
+    await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord', {timeout: 15000});
+  });
+}
 async function open(page,request,metadata=null){
   await page.addInitScript(metadata=>{
     window.executions=[];
@@ -31,6 +168,71 @@ async function open(page,request,metadata=null){
   },metadata);
   const session=await(await request.post('/test/session')).json();
   await page.goto(session.path);return session;
+}
+for (const diagnostics of [true, false]) {
+  test(`activity warning survives backgrounding and clears on progress, diagnostics=${diagnostics}`, async ({page, request}) => {
+    if (!diagnostics) await page.route('**/brand/diagnostics.js', route => route.abort());
+    await page.addInitScript(() => {
+      window.activityTimeOffset = 0;
+      const now = performance.now.bind(performance);
+      performance.now = () => now() + window.activityTimeOffset;
+      const send = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function(message, ...rest) {
+        if (message?.type === 'EXEC') { window.heldEncoder = this; return; }
+        return send.call(this, message, ...rest);
+      };
+    });
+    await open(page, request);
+    await expect(page.locator('#stay-open')).toContainText('keep the screen unlocked');
+    await page.locator('#clips').setInputFiles(join(fixtures, 'large-small.mp4'));
+    await page.locator('#submit').click();
+    await expect.poll(() => page.evaluate(() => Boolean(window.heldEncoder))).toBe(true);
+    await expect(page.locator('#stall-warning')).toBeHidden();
+    await page.evaluate(() => {
+      window.testHidden = true;
+      Object.defineProperty(document, 'hidden', {configurable: true, get: () => window.testHidden});
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect(page.locator('#background-warning')).toBeVisible();
+    await page.evaluate(() => {
+      window.activityTimeOffset += 121000;
+      window.testHidden = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect(page.locator('#background-warning')).toContainText('was in the background');
+    await expect(page.locator('#stall-warning')).toBeVisible();
+    await expect(page.locator('#stall-warning')).toContainText('not a confirmed failure');
+    await page.evaluate(() => window.heldEncoder.onmessage({data: {type: 'PROGRESS', data: {progress: 0, time: 0}}}));
+    await expect(page.locator('#stall-warning')).toBeVisible();
+    await page.evaluate(() => window.heldEncoder.onmessage({data: {type: 'PROGRESS', data: {progress: 0.2, time: 200000}}}));
+    await expect(page.locator('#stall-warning')).toBeHidden();
+    await expect(page.locator('#background-warning')).toBeHidden();
+    await page.evaluate(() => { window.activityTimeOffset += 121000; });
+    await expect(page.locator('#stall-warning')).toBeVisible();
+    // Identical/invalid/regressing events cannot disguise inactivity.
+    await page.evaluate(() => {
+      for (const data of [{progress: 0.2, time: 200000}, {progress: 0.1, time: 100000}, {progress: NaN, time: NaN}])
+        window.heldEncoder.onmessage({data: {type: 'PROGRESS', data}});
+    });
+    await expect(page.locator('#stall-warning')).toBeVisible();
+    // Once the percentage reaches 100%, over-reported fractions cannot count
+    // as further progress unless processed media time actually advances.
+    await page.evaluate(() => window.heldEncoder.onmessage({data: {type: 'PROGRESS', data: {progress: 1, time: 200000}}}));
+    await expect(page.locator('#stall-warning')).toBeHidden();
+    await page.evaluate(() => { window.activityTimeOffset += 121000; });
+    await expect(page.locator('#stall-warning')).toBeVisible();
+    await page.evaluate(() => {
+      for (const progress of [1.1, 2, Infinity, -1, NaN])
+        window.heldEncoder.onmessage({data: {type: 'PROGRESS', data: {progress, time: 200000}}});
+    });
+    await expect(page.locator('#stall-warning')).toBeVisible();
+    await page.evaluate(() => window.heldEncoder.onmessage({data: {type: 'PROGRESS', data: {progress: 1.1, time: 300000}}}));
+    await expect(page.locator('#stall-warning')).toBeHidden();
+    await page.locator('#cancel').click();
+    await expect(page.locator('#stall-warning')).toBeHidden();
+    await expect(page.locator('#background-warning')).toBeHidden();
+    await expect(page.locator('#page-heading')).toHaveText('Compress videos for Discord');
+  });
 }
 for(const file of ['large-av1.mp4','av1.webm'])test(`AV1 ${file} stops without encoding and preserves other clips and caption`,async({page,request})=>{
   await open(page,request);

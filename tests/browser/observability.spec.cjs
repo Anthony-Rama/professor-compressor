@@ -106,7 +106,7 @@ for(const failAll of [false,true])test(`null engine startup rejection without di
   if(failAll){
     await expect(page.locator('#phase-title')).toHaveText('Action needed');
     await expect(page.locator('#submit')).toBeEnabled();
-    await expect(page.locator('#message')).toContainText('video engine stopped unexpectedly');
+    await expect(page.locator('#message')).toContainText('video engine failed to load');
   }else await expect(page.locator('#page-heading')).toHaveText('Delivered to Discord');
   expect(errors).toEqual([]);
 });

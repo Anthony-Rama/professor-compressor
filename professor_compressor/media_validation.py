@@ -13,6 +13,9 @@ MP4_BRANDS = {
     b"MSNV",
 }
 
+# ftyp describes brands, not media. Bound work independently of upload size.
+MAX_FTYP_BYTES = 4096
+
 
 def valid_mp4_signature(data: bytes) -> bool:
     """Return whether data has a complete, plausible ISO-BMFF MP4 structure."""
@@ -38,13 +41,23 @@ def valid_mp4_signature(data: bytes) -> bool:
         if size < header_size or position + size > len(data):
             return False
         if position == 0:
-            if kind != b"ftyp" or size < header_size + 8:
+            payload_size = size - header_size
+            if (
+                kind != b"ftyp"
+                or payload_size < 8
+                or size > MAX_FTYP_BYTES
+                or payload_size % 4
+            ):
                 return False
-            payload = data[position + header_size : position + size]
-            brands = {payload[index : index + 4] for index in range(0, len(payload), 4)}
-            recognized_brand = bool(brands & MP4_BRANDS)
+            start = position + header_size
+            # The second word is minor_version, not a compatible brand.
+            recognized_brand = data[start : start + 4] in MP4_BRANDS or any(
+                data[index : index + 4] in MP4_BRANDS
+                for index in range(start + 8, position + size, 4)
+            )
 
-        boxes.add(kind)
+        if kind in {b"ftyp", b"moov", b"mdat"}:
+            boxes.add(kind)
         position += size
         box_count += 1
         if position == len(data):
