@@ -64,6 +64,7 @@ __RECOVERY_NOTICE__
     </button>
   </div>
   <p id="selection" class="selection" aria-live="polite">No videos selected</p>
+  <p id="preparation-help" class="selection">Clips are copied to temporary storage on this device. Wait for Ready before exporting your next clip. Up to 1 GiB per clip and 4 GiB total, subject to available browser storage.</p>
   <label class="caption-label" for="caption">Add a message (optional)</label>
   <textarea id="caption" name="caption" maxlength="1000" rows="3"
     placeholder="Clips from yesterday"></textarea>
@@ -235,6 +236,67 @@ function reportMetrics(outcome, error = null) {
   } catch (_) { /* Optional reporting cannot interrupt delivery or cleanup. */ }
 }
 let selectedFiles = [];
+const inputCopies = new Map();
+const preservation = new Promise((resolve, reject) => {
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    reject(diagnosticError("Local file preparation could not start in time. Reload this page and reselect your clips. Check your connection if this repeats.", "INPUT_PREPARATION_TIMEOUT"));
+  }, 30000);
+  import("/brand/input-preservation.js").then(module => {
+    if (!expired) resolve(new module.InputPreserver());
+  }).catch(() => {
+    if (!expired) reject(diagnosticError("Local file preparation could not start. Reload this page and reselect your clips, or try an updated Chrome or Edge browser.", "INPUT_STORAGE_UNAVAILABLE"));
+  }).finally(() => clearTimeout(timer));
+});
+void preservation.catch(() => {});
+// Preparation has its own run ID, before Compress is pressed. Never mark a
+// compression session failed or started for a selection/preparation problem.
+let preparationRun = "", preparationSequence = 0, preparationTimer = null;
+const preparationQueue = [];
+function flushPreparationReports() {
+  try {
+    clearTimeout(preparationTimer);
+    preparationTimer = null;
+    if (!preparationQueue.length) return;
+    const events = preparationQueue.splice(0, 20);
+    void fetch(location.pathname + "/events", {
+      method: "POST", headers: {"Content-Type": "application/json", "X-Upload-Session": SESSION_SECRET},
+      body: JSON.stringify({run_id: preparationRun, events}),
+      keepalive: true, signal: AbortSignal.timeout(4000), cache: "no-store"
+    }).catch(() => {});
+    if (preparationQueue.length) preparationTimer = setTimeout(flushPreparationReports, 1000);
+  } catch (_) { preparationQueue.length = 0; }
+}
+function preparationReport(fileIndex, inputBytes) {
+  try {
+    if (!__DIAGNOSTIC_EVENTS_ENABLED__) return () => {};
+    if (!preparationRun) preparationRun = crypto.randomUUID().replaceAll("-", "");
+    const start = performance.now();
+    let finished = false;
+    const send = (event, data = {}) => {
+      try {
+        if (preparationQueue.length >= 100) return;
+        const {browser, browser_major, device} = diagnostic.context();
+        preparationQueue.push({event_id: crypto.randomUUID().replaceAll("-", ""),
+            event, file_index: fileIndex, data: {stage: "preparation", input_bytes: inputBytes, browser, browser_major, device,
+              client_sequence: ++preparationSequence, seconds: (performance.now() - start) / 1000, ...data}});
+        if (!preparationTimer) preparationTimer = setTimeout(flushPreparationReports, 1000);
+      } catch (_) { /* Best-effort, content-free telemetry must never block copying. */ }
+    };
+    send("stage_started");
+    return (outcome, error) => {
+      if (finished) return;
+      finished = true;
+      const allowed = ["FILE_READ_FAILED", "INPUT_STORAGE_FULL", "INPUT_STORAGE_UNAVAILABLE", "INPUT_TOO_LARGE", "INPUT_PREPARATION_TIMEOUT"];
+      send("stage_finished", outcome === "ready" ? {} : {outcome,
+        error_code: outcome === "cancelled" ? "CANCELLED" : allowed.includes(error?.diagnosticCode) ? error.diagnosticCode : "INPUT_STORAGE_UNAVAILABLE"});
+    };
+  } catch (_) { return () => {}; }
+}
+window.addEventListener("pagehide", event => {
+  if (!event.persisted) void preservation.then(store => store.close()).catch(() => {});
+});
 let currentState = null;
 let currentAttempt = 1;
 let lastFfmpegMessage = "";
@@ -276,6 +338,7 @@ function reportProgress(event, count) {
 }
 
 window.addEventListener("pagehide", () => {
+  flushPreparationReports();
   diagnostic.flush();
   pageIsLeaving = true;
   if (!deliveryComplete && !sessionExpired()) reportProgress("page_left");
@@ -508,7 +571,15 @@ function renderSelectedFiles(files) {
     name.textContent = file.name;
     const status = document.createElement("span");
     status.className = "file-status";
-    status.textContent = "Ready";
+    const identity = fileIdentity(file);
+    let copy = inputCopies.get(identity);
+    if (!copy) {
+      copy = {identity, source: file, file, phase: "preparing", fraction: 0, removed: false,
+        report: preparationReport(index + 1, file.size)};
+      inputCopies.set(identity, copy);
+      void prepareInputCopy(copy);
+    }
+    status.textContent = copy.phase === "ready" ? "Ready" : copy.phase === "failed" ? "Reselect file" : "Preparing local copy…";
     const actions = document.createElement("div");
     actions.className = "file-actions";
     const remove = document.createElement("button");
@@ -521,24 +592,122 @@ function renderSelectedFiles(files) {
     icon.setAttribute("height", "18");
     remove.append(icon);
     remove.addEventListener("click", () => removeSelectedFile(index));
-    actions.append(status, remove);
+    const reselect = document.createElement("button");
+    reselect.type = "button";
+    reselect.className = "secondary reselect-file";
+    reselect.textContent = "Reselect";
+    reselect.setAttribute("aria-label", "Reselect " + file.name);
+    reselect.hidden = copy.phase !== "failed";
+    reselect.addEventListener("click", () => reselectFile(index));
+    actions.append(status, reselect, remove);
     head.append(name, actions);
     const progress = document.createElement("progress");
     progress.max = 100;
-    progress.value = 0;
+    progress.value = copy.phase === "preparing" ? copy.fraction * 100 : 0;
     const meta = document.createElement("div");
     meta.className = "file-meta";
-    meta.textContent = readableSize(file.size) + " original";
+    meta.textContent = copy.error || readableSize(file.size) + " original";
     card.append(head, progress, meta);
     filesElement.append(card);
-    return { file, index: index + 1, card, status, progress, meta, finalSize: 0 };
+    return { file: copy.file, identity, index: index + 1, card, status, progress, meta, reselect, finalSize: 0 };
   });
   filesElement.hidden = files.length === 0;
+}
+
+function refreshPreparation() {
+  if (running || clips.disabled) return;
+  const ready = selectedFiles.length > 0 && selectedFiles.every(state => inputCopies.get(state.identity)?.phase === "ready");
+  const preparing = selectedFiles.some(state => inputCopies.get(state.identity)?.phase === "preparing");
+  submit.disabled = !ready || sessionExpired() || pendingSelections > 0;
+  submit.textContent = pendingSelections > 0 ? "Checking storage…" : preparing ? "Preparing videos…" : "Compress and send to Discord";
+}
+
+function discardInputCopy(copy) {
+  copy.removed = true;
+  copy.report("cancelled");
+  if (copy.task) void copy.task.dispose().catch(() => {});
+}
+
+async function prepareInputCopy(copy) {
+  try {
+    const store = await preservation;
+    if (copy.removed) return;
+    copy.task = store.create(copy.source, fraction => {
+      copy.fraction = fraction;
+      const state = selectedFiles.find(item => item.identity === copy.identity);
+      if (state && !copy.removed && !running) state.progress.value = fraction * 100;
+    });
+    const saved = await copy.task.promise;
+    if (copy.removed) { void copy.task.dispose().catch(() => {}); return; }
+    copy.file = saved;
+    copy.source = null;
+    copy.phase = "ready";
+    copy.report("ready");
+    const state = selectedFiles.find(item => item.identity === copy.identity);
+    if (state) {
+      state.file = saved;
+      updateFile(state, "Ready", 0);
+      setSelectedFiles(selectedFiles.map(item => item.file));
+    }
+  } catch (error) {
+    if (copy.removed) return;
+    copy.report("failed", error);
+    copy.phase = "failed";
+    copy.source = null;
+    copy.error = error?.diagnosticCode ? error.message : "Local file preparation could not start. Reload this page and reselect the clip, or try an updated Chrome or Edge browser.";
+    const state = selectedFiles.find(item => item.identity === copy.identity);
+    if (state) {
+      updateFile(state, "Reselect file", 0);
+      state.meta.textContent = copy.error;
+      state.reselect.hidden = false;
+      showSelectionError("Video " + state.index + ": " + copy.error);
+    }
+  } finally {
+    refreshPreparation();
+  }
+}
+
+function reselectFile(index) {
+  if (running || clips.disabled) return;
+  const old = selectedFiles[index];
+  if (!old || inputCopies.get(old.identity)?.phase !== "failed") return;
+  const picker = document.createElement("input");
+  picker.type = "file";
+  picker.accept = clips.accept;
+  picker.hidden = true;
+  document.body.append(picker);
+  picker.addEventListener("cancel", () => picker.remove(), {once: true});
+  picker.addEventListener("change", () => {
+    const file = picker.files[0];
+    picker.remove();
+    if (!file || running || clips.disabled || selectedFiles[index] !== old) return;
+    if (selectedFiles.some(state => state !== old && state.identity === fileIdentity(file))) {
+      showSelectionError("That video is already selected.");
+      return;
+    }
+    const replacementBytes = selectedFiles.reduce((sum, state) => sum + (state === old ? file.size : state.file.size), 0);
+    if (file.size > 1024 ** 3 || replacementBytes > 4 * 1024 ** 3) {
+      preparationReport(0, replacementBytes)("failed", {diagnosticCode: "INPUT_TOO_LARGE"});
+      showSelectionError("That replacement exceeds the 1 GiB per-video or 4 GiB batch limit. Your existing selection was kept.");
+      return;
+    }
+    selectionGeneration += 1;
+    discardInputCopy(inputCopies.get(old.identity));
+    inputCopies.delete(old.identity);
+    setSelectedFiles(selectedFiles.map(state => state === old ? file : state.file));
+    hideMessage();
+    renderSelection();
+  }, {once: true});
+  picker.click();
 }
 
 function renderSelection() {
   clearPreparedFiles();
   const files = Array.from(clips.files);
+  const identities = new Set(files.map(fileIdentity));
+  for (const [identity, copy] of inputCopies) {
+    if (!identities.has(identity)) { discardInputCopy(copy); inputCopies.delete(identity); }
+  }
   clearSelectionButton.disabled = files.length === 0 || running || clips.disabled;
   const validCount = files.length >= 1 && files.length <= MAX_CLIPS;
   submit.disabled = !validCount || running || sessionExpired();
@@ -551,9 +720,10 @@ function renderSelection() {
   } else {
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     selection.textContent = files.length + (files.length === 1 ? " video" : " videos") +
-      " selected · " + readableSize(totalBytes);
+      " selected · " + (totalBytes / 1024 ** 3).toFixed(2) + " / 4 GiB";
   }
   renderSelectedFiles(files);
+  refreshPreparation();
   if (validCount) reportProgress("selected", files.length);
 }
 
@@ -567,8 +737,26 @@ function fileIdentity(file) {
   return [file.name, file.size, file.lastModified, file.type].join("\u0000");
 }
 
+let selectionQueue = Promise.resolve();
+let pendingSelections = 0;
+let selectionGeneration = 0;
 function addSelectedFiles(incoming) {
+  const generation = selectionGeneration;
+  pendingSelections += 1;
+  refreshPreparation();
+  selectionQueue = selectionQueue.then(() => {
+    if (generation === selectionGeneration) return acceptSelectedFiles(incoming);
+  }).catch(() => {
+    showSelectionError("Could not check this selection. Please select the videos again.");
+  }).finally(() => {
+    pendingSelections -= 1;
+    refreshPreparation();
+  });
+}
+
+async function acceptSelectedFiles(incoming) {
   if (running || clips.disabled) return;
+  if (sessionExpired()) { showSelectionError("This session expired. Run /compress for a new link before selecting videos."); return; }
   const current = selectedFiles.map((state) => state.file);
   if (!incoming.length) {
     setSelectedFiles(current);
@@ -591,6 +779,39 @@ function addSelectedFiles(incoming) {
     showSelectionError("Those videos are already selected.");
     return;
   }
+  if (additions.some(file => file.size > 1024 ** 3)) {
+    preparationReport(0, additions.reduce((sum, file) => sum + file.size, 0))("failed", {diagnosticCode: "INPUT_TOO_LARGE"});
+    setSelectedFiles(current);
+    showSelectionError("Each video must be 1 GiB or smaller. Existing clips were kept.");
+    return;
+  }
+  const totalBytes = [...current, ...additions].reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes > 4 * 1024 ** 3) {
+    preparationReport(0, totalBytes)("failed", {diagnosticCode: "INPUT_TOO_LARGE"});
+    setSelectedFiles(current);
+    showSelectionError("This selection would total " + (totalBytes / 1024 ** 3).toFixed(2) +
+      " GiB, above the 4 GiB batch limit. Existing clips were kept. Add fewer videos or remove some first.");
+    return;
+  }
+  // Serialize admissions so rapid drops cannot race the same quota estimate.
+  // Removal/clear during an estimate must not resurrect the prior selection.
+  const snapshot = selectedFiles;
+  const report = preparationReport(0, additions.reduce((sum, file) => sum + file.size, 0));
+  let store;
+  try {
+    store = await preservation;
+    await store.checkAvailable(additions.reduce((sum, file) => sum + file.size, 0));
+  }
+  catch (error) {
+    if (selectedFiles === snapshot && !running && !clips.disabled) {
+      report("failed", error);
+      setSelectedFiles(current);
+      showSelectionError(error.message);
+    } else report("cancelled");
+    return;
+  }
+  if (selectedFiles !== snapshot || running || clips.disabled || sessionExpired()) { report("cancelled"); return; }
+  report("ready");
   setSelectedFiles([...current, ...additions]);
   hideMessage();
   renderSelection();
@@ -598,6 +819,7 @@ function addSelectedFiles(incoming) {
 
 function removeSelectedFile(index) {
   if (running || clips.disabled) return;
+  selectionGeneration += 1;
   setSelectedFiles(selectedFiles.filter((_, position) => position !== index).map((state) => state.file));
   hideMessage();
   renderSelection();
@@ -609,6 +831,7 @@ function removeSelectedFile(index) {
 clips.addEventListener("change", () => addSelectedFiles(Array.from(clips.files)));
 clearSelectionButton.addEventListener("click", () => {
   if (running || clips.disabled) return;
+  selectionGeneration += 1;
   clips.value = "";
   hideMessage();
   renderSelection();
@@ -767,8 +990,14 @@ async function resetEncoder() {
   encoderMode = await loadEncoder();
 }
 
-async function videoSignature(file) {
-  const bytes = new Uint8Array(await file.slice(0, 512).arrayBuffer());
+async function videoSignature(file, index) {
+  let bytes;
+  try { bytes = new Uint8Array(await file.slice(0, 512).arrayBuffer()); }
+  catch (_) {
+    const error = diagnosticError("This clip could not be read. Reselect it from a saved folder and try again.", "FILE_READ_FAILED");
+    error.diagnosticFileIndex = index;
+    throw error;
+  }
   const ascii = (start, length) => String.fromCharCode(...bytes.slice(start, start + length));
   if (bytes.length >= 16 && ascii(4, 4) === "ftyp") {
     const majorBrand = ascii(8, 4);
@@ -827,7 +1056,7 @@ async function timedEncode(state, args, sizeAdjustment = false) {
 async function compressOne(state) {
   batchMetrics.stage = "metadata";
   const file = state.file;
-  const format = await diagnostic.step("validation", state.index, () => videoSignature(file), "INVALID_SIGNATURE");
+  const format = await diagnostic.step("validation", state.index, () => videoSignature(file, state.index), "INVALID_SIGNATURE");
   state.inputFormat = format;
   diagnostic.emit("stage_finished", state.index, {stage: "validation", input_bytes: file.size,
     input_format: format, target_bytes: outputTargetBytes(), discord_limit: DISCORD_LIMIT_BYTES});
@@ -882,7 +1111,29 @@ async function compressOne(state) {
     diagnostic.emit("stage_finished", state.index, {stage: "metadata", ...state.inputMedia,
       input_format: format, input_bytes: file.size, duration_seconds: duration,
       video_codec: videoStream.codec_name, audio_codec: audioStream?.codec_name || "none"});
-    const audioKbps = 96;
+    // These pinned cores expose the native AV1 decoder but no usable software
+    // AV1 implementation. Revisit this guard when upgrading the core build.
+    // Fitting MP4 passthrough above deliberately does not require decoding.
+    if (videoStream.codec_name === "av1") {
+      diagnostic.mark("validation");
+      throw diagnosticError(
+      "This video uses AV1, which this version of the compressor cannot convert. " +
+      "Export it as H.264 MP4 with AAC audio, then replace this file. Your other selected clips are still available.",
+      "UNSUPPORTED_CODEC");
+    }
+    const audioKbps = audioStream ? 96 : 0;
+    state.audioKbps = audioKbps;
+    const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
+    const budgetVideoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
+    function requireEncodingBudget() {
+      if (budgetVideoKbps < 100) {
+        diagnostic.mark("validation");
+        throw diagnosticError(
+        "This video is too long to fit the available upload limit with the current video and audio settings. " +
+        "Choose a shorter video or a destination with a larger upload allowance. Your other selected clips are still available.",
+        "TARGET_NOT_FEASIBLE");
+      }
+    }
     const scale = "fps=fps='min(source_fps,30)'," +
       "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease," +
       "scale=trunc(iw/2)*2:trunc(ih/2)*2";
@@ -918,6 +1169,7 @@ async function compressOne(state) {
         await removeVirtualFile(outputName);
       }
       if (!remuxTooLarge) {
+        requireEncodingBudget();
         currentAttempt = 1;
         lastFfmpegMessage = "";
         updateFile(state, "Converting to MP4", 0);
@@ -943,12 +1195,8 @@ async function compressOne(state) {
       }
       updateFile(state, "Converted MP4 is too large; adjusting size", 0);
     }
-    const usableBits = effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO;
-    let videoKbps = Math.floor(usableBits / duration / 1000 - audioKbps);
-    if (videoKbps < 100) {
-      throw diagnosticError(file.name + " is too long to fit at a usable quality. " +
-        "Trim the video into shorter clips and try again.", "OUTPUT_TOO_LARGE");
-    }
+    requireEncodingBudget();
+    let videoKbps = budgetVideoKbps;
     async function encode(bitrate) {
       lastFfmpegMessage = "";
       return timedEncode(state, [
@@ -1027,7 +1275,7 @@ async function compressWithRetry(state) {
           output_height: state.inputMedia.input_height, output_fps: state.inputMedia.input_fps});
       }
       diagnostic.emit("file_ready", state.index, {...result.diagnostic, ...result.diagnostic.telemetry,
-        output_bytes: result.blob.size, audio_kbps: state.encodingAttempts ? 96 : undefined});
+        output_bytes: result.blob.size, audio_kbps: state.encodingAttempts ? state.audioKbps : undefined});
       return result;
     } catch (value) {
       // Optional diagnostics may not be loaded. Handle worker string/null
@@ -1037,7 +1285,9 @@ async function compressWithRetry(state) {
       if (cancelled || error.name === "AbortError") throw error;
       console.error("Compression attempt failed", error, lastFfmpegMessage);
       batchMetrics.processing_failures = (batchMetrics.processing_failures || 0) + 1;
-      if (attempt === 2 || /too long|recognized video signature|Could not determine|No video stream/.test(error.message)) {
+      const nonRetryable = new Set(["UNSUPPORTED_CODEC", "TARGET_NOT_FEASIBLE", "INVALID_SIGNATURE",
+        "NO_VIDEO_STREAM", "DURATION_UNKNOWN", "INVALID_MEDIA"]);
+      if (attempt === 2 || nonRetryable.has(diagnostic.code(error)) || /too long|recognized video signature|Could not determine|No video stream/.test(error.message)) {
         updateFile(state, "Needs attention", 0);
         throw error;
       }
@@ -1097,7 +1347,7 @@ function xhrUpload(results) {
       batchMetrics.stage = "delivery";
       diagnostic.mark("delivery");
       overallProgress.value = 98;
-      phaseCopy.textContent = "Finished files reached the relay. Waiting for Discord to accept them.";
+      phaseCopy.textContent = "Upload sent. Waiting for the relay to confirm receipt and Discord delivery.";
       setRunDetail("Waiting for Discord");
       for (const result of results) updateFile(result.state, "Waiting for Discord", 100);
     });
@@ -1145,11 +1395,13 @@ async function uploadWithRetry(results) {
         error.status === 500 || error.status === 503 || error.status === 504 ||
         (error.status === 502 && error.code !== "discord_delivery_failed");
       if (!retryable || attempt === 3) throw error;
-      const waitSeconds = Number(error.retryAfter) || Math.pow(2, attempt);
+      const requestedWait = Number(error.retryAfter);
+      const waitSeconds = Number.isFinite(requestedWait) && requestedWait > 0
+        ? Math.min(60, Math.ceil(requestedWait)) : Math.pow(2, attempt) + Math.floor(Math.random() * 3);
       for (let remaining = waitSeconds; remaining > 0; remaining -= 1) {
         if (cancelled) throw new DOMException("Cancelled", "AbortError");
-        phaseCopy.textContent = "Upload interrupted. Retrying automatically in " +
-          remaining + " second" + (remaining === 1 ? "" : "s") + ".";
+        phaseCopy.textContent = "The connection was interrupted. Your compressed files are still available on this page. " +
+          "Checking delivery again in " + remaining + " second" + (remaining === 1 ? "" : "s") + " (attempt " + (attempt + 1) + " of 3).";
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
@@ -1188,6 +1440,7 @@ async function reportBrowserFailure(stage, error) {
 }
 
 function friendlyError(error) {
+  if (error.code === "upload_connection_reset") return "Your video finished compressing, but the upload connection was interrupted before the relay confirmed receipt. Keep this page open and use Check delivery / retry, or save your prepared files below. They do not need to be compressed again.";
   if (error.code === "session_expired" || error.code === "session_used") {
     return "This session expired or the service restarted. Check Discord before creating a new session. You can save any prepared files below.";
   }
@@ -1202,9 +1455,14 @@ function friendlyError(error) {
     return "Compression failed because the video engine hit a runtime error. Its underlying cause could not be confirmed. Try the clip by itself or use another desktop browser.";
   }
   const code = diagnostic.code(error);
+  if (code === "FILE_READ_FAILED") return "This clip could not be read. Reselect it from a saved folder and try again.";
   if (code === "WORKER_CRASH") return "Compression stopped because the video engine's background worker crashed. The underlying cause was not reported. Try again, or use another desktop browser. Contact support with the error reference if it repeats.";
   if (code === "WORKER_MESSAGE_ERROR") return "Compression stopped because the browser could not communicate with the video engine. Reload the page and try again. Contact support with the error reference if it repeats.";
-  if (code === "UNSUPPORTED_CODEC") return "Compression failed because this video's codec is not supported by the browser video engine. Re-export the video as H.264 MP4 with AAC audio and try again.";
+  if (code === "UNSUPPORTED_CODEC") return (currentState?.inputMedia?.video_codec === "av1"
+    ? "This video uses AV1, which this version of the compressor cannot convert. "
+    : "This video's codec is not supported for conversion by this version of the compressor. ") +
+    "Export it as H.264 MP4 with AAC audio, then replace this file. Your other selected clips are still available.";
+  if (code === "TARGET_NOT_FEASIBLE") return error.message;
   if (code === "INVALID_MEDIA") return "Compression failed because the video engine reported invalid media data. Try playing the original video, then re-export it and try again.";
   if (["ENGINE_LOAD_TIMEOUT", "ENGINE_LOAD_FAILED"].includes(code)) return "Compression could not start because the video engine failed to load" + (code === "ENGINE_LOAD_TIMEOUT" ? " in time" : "") + ". Check your connection, reload the page and try again.";
   if (code === "ENCODE_FAILED") return "Compression failed while encoding this video. The engine did not report a specific cause. Try the clip by itself or another desktop browser. If it fails again, contact support with the error reference.";
@@ -1225,6 +1483,7 @@ function stopClock() {
 }
 
 function setProcessingView(active) {
+  document.getElementById("preparation-help").hidden = active;
   form.classList.toggle("processing", active);
   document.querySelector("main").classList.toggle("processing-view", active);
   document.getElementById("picker-row").hidden = active;
@@ -1261,6 +1520,7 @@ function finishRun() {
   // Restore selection only when local processing can safely start again.
   // A prepared batch may already be queued: retain the focused delivery view.
   setProcessingView(preparedResults !== null);
+  if (!preparedResults) refreshPreparation();
   submit.hidden = false;
   if (preparedResults) pageHeading.textContent = "Delivery needs attention";
   showPreparedFiles();
@@ -1287,7 +1547,7 @@ cancelButton.addEventListener("click", () => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (running) return;
+  if (running || pendingSelections > 0) return;
   if (sessionExpired() && !preparedResults) {
     updateExpiry();
     showMessage("This session expired. Run /compress for a new link before processing videos.");
@@ -1297,7 +1557,12 @@ form.addEventListener("submit", async (event) => {
     showSelectionError("Choose between 1 and " + MAX_CLIPS + " videos.");
     return;
   }
+  if (!preparedResults && selectedFiles.some(state => inputCopies.get(state.identity)?.phase !== "ready")) {
+    showSelectionError("Wait until every clip is Ready. Reselect or remove any clip that could not be prepared.");
+    return;
+  }
   diagnostic.begin();
+  flushPreparationReports();
   reportProgress("started");
   cancelled = false;
   running = true;
@@ -1359,7 +1624,7 @@ form.addEventListener("submit", async (event) => {
       const formats = await Promise.all(selectedFiles.map(async state => {
         // Size is available even if container or metadata reading fails.
         diagnostic.emit("stage_started", state.index, {stage: "validation", input_bytes: state.file.size});
-        const format = await diagnostic.step("validation", state.index, () => videoSignature(state.file), "INVALID_SIGNATURE");
+        const format = await diagnostic.step("validation", state.index, () => videoSignature(state.file, state.index), "INVALID_SIGNATURE");
         diagnostic.emit("stage_finished", state.index, {stage: "validation", input_format: format, input_bytes: state.file.size});
         return format;
       }));
@@ -1415,6 +1680,7 @@ form.addEventListener("submit", async (event) => {
     caption.hidden = true;
     document.querySelector(".caption-help").hidden = true;
     sessionNote.hidden = true;
+    document.getElementById("preparation-help").hidden = true;
     stayOpen.hidden = true;
     performanceHelp.hidden = true;
     formatHelp.hidden = true;
@@ -1423,6 +1689,9 @@ form.addEventListener("submit", async (event) => {
     cancelButton.hidden = true;
     running = false;
     clearPreparedFiles();
+    for (const copy of inputCopies.values()) discardInputCopy(copy);
+    inputCopies.clear();
+    void preservation.then(store => store.close()).catch(() => {});
     backgroundWarning.hidden = true;
     void releaseWakeLock();
     renderDocumentTitle();
@@ -1441,7 +1710,28 @@ form.addEventListener("submit", async (event) => {
     showMessage((error.diagnosticFileIndex ? "Video " + error.diagnosticFileIndex + ": " : "") + friendlyError(error));
     showFeedback("failure");
     finishRun();
-    pageHeading.textContent = preparedResults ? "Delivery needs attention" : "Compression failed";
+    if (!preparedResults) {
+      for (const state of selectedFiles) {
+        if (state.index !== error.diagnosticFileIndex && !state.finalSize &&
+            inputCopies.get(state.identity)?.phase === "ready") updateFile(state, "Ready", 0);
+      }
+    }
+    if (["FILE_READ_FAILED", "UNSUPPORTED_CODEC", "TARGET_NOT_FEASIBLE", "INVALID_MEDIA"].includes(diagnostic.code(error)) && !preparedResults) {
+      const state = selectedFiles.find(item => item.index === error.diagnosticFileIndex);
+      const copy = state && inputCopies.get(state.identity);
+      if (copy) {
+        copy.phase = "failed";
+        copy.error = friendlyError(error);
+        if (copy.task) void copy.task.dispose().catch(() => {});
+        updateFile(state, "Reselect file", 0);
+        state.meta.textContent = copy.error;
+        state.reselect.hidden = false;
+        refreshPreparation();
+      }
+    }
+    const replaceableInput = ["FILE_READ_FAILED", "UNSUPPORTED_CODEC", "TARGET_NOT_FEASIBLE", "INVALID_MEDIA"].includes(diagnostic.code(error));
+    pageHeading.textContent = preparedResults ? "Delivery needs attention" : replaceableInput ? "Video needs attention" : "Compression failed";
+    if (replaceableInput && !preparedResults) phaseCopy.textContent = "Replace or remove the affected video, then continue. Your other selected clips and caption are still available. No videos from this batch were sent.";
     message.focus();
     if ([403, 409, 410].includes(error.status) || error.code === "discord_delivery_failed") {
       submit.hidden = true;
@@ -1462,6 +1752,17 @@ function updateExpiry() {
     if (!running) {
       // Prepared files may already be queued; checking their receipt is safe.
       submit.disabled = !preparedResults;
+      if (!preparedResults && !clips.disabled) {
+        clips.disabled = true;
+        clearSelectionButton.disabled = true;
+        for (const copy of inputCopies.values()) discardInputCopy(copy);
+        inputCopies.clear();
+        void preservation.then(store => store.close()).catch(() => {});
+        for (const state of selectedFiles) {
+          updateFile(state, "Session expired", 0);
+          state.reselect.disabled = true;
+        }
+      }
     } else if (runStage === "Browser compression") {
       cancelled = true;
       if (ffmpeg) { ffmpeg.terminate(); ffmpeg = null; }

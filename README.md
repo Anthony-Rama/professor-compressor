@@ -33,7 +33,7 @@ flowchart LR
 ```
 
 1. The bot creates a short-lived session for the requesting user and channel. Opening the link claims it for that browser. A refresh in the same browser can reopen the page, but local file selections must be made again.
-2. The page checks file signatures and uses FFmpeg WebAssembly to probe and, when necessary, convert videos locally. Fitting MP4 files can skip re-encoding.
+2. The page prepares temporary browser-local copies as clips are added (up to 1 GiB per clip and 4 GiB per batch, subject to browser storage). Wait for **Ready** before changing an exported source. It then checks file signatures and uses FFmpeg WebAssembly to probe and, when necessary, convert videos locally. Fitting MP4 files can skip re-encoding. Local copies are cleaned up after removal/delivery, idle session expiry, and best-effort on page exit; abandoned copies are removed on a subsequent visit without affecting other active tabs.
 3. The browser uploads the resulting MP4 batch over HTTPS. The Python relay validates each file and delivers the batch as Discord attachments.
 4. The relay releases the files from memory after delivery or failure. It does not intentionally write video files to disk.
 

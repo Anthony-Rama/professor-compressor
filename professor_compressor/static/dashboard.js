@@ -17,6 +17,7 @@ const when = value => typeof value === 'number' ? new Date(value*1000).toLocaleS
 const age = value => typeof value !== 'number' ? '—' : value >= 86400 ? (value/86400).toFixed(1)+' days' : value >= 3600 ? (value/3600).toFixed(1)+' hours' : Math.floor(value/60)+' min';
 const revision = value => value==='development'?'Development':value?.slice(0,8)||'—';
 const labels = {
+  preparation:'Local file preparation',
   created:'Created', opened:'Link opened', selected:'Files selected', processing:'Processing', uploading:'Uploading', queued:'Queued', delivering:'Sending to Discord', delivered:'Delivered',
   upload_failed:'Upload failed', delivery_failed:'Delivery failed', cancelled:'Cancelled', expired:'Expired before start', replaced:'Replaced', unknown:'Unknown outcome',
   engine_seconds:'Engine loading · per run', encoding_seconds:'Video encoding · per file', relay_receive_seconds:'Relay upload · per batch', queue_seconds:'Delivery queue · per batch', discord_delivery_seconds:'Discord delivery · per batch', total_seconds:'End to end · per run',
@@ -32,6 +33,12 @@ Object.assign(labels, {attempt_started:'File attempt started',processing_progres
   engine_log:'Engine message signature',exception:'Thrown exception signature',same_settings:'Same settings',size_adjustment:'Size adjustment'});
 const label = value => labels[value] || value || 'Not reported';
 const failureReasons = {
+  UPLOAD_CONNECTION_RESET:'The upload connection closed before complete receipt; the disconnecting party is unknown',
+  TARGET_NOT_FEASIBLE:'The duration leaves too little bitrate at the available upload limit',
+  INPUT_STORAGE_FULL:'Browser storage could not accommodate the local copy',
+  INPUT_STORAGE_UNAVAILABLE:'Browser-local storage was unavailable or blocked',
+  INPUT_TOO_LARGE:'The selection exceeded a local input limit',
+  INPUT_PREPARATION_TIMEOUT:'Loading or preparing the local copy timed out',
   WORKER_CRASH:'The video engine worker crashed; the underlying cause was not reported',
   WORKER_MESSAGE_ERROR:'Communication with the video engine worker failed',
   BROWSER_MEMORY:'The video engine could not allocate enough memory',
@@ -48,7 +55,22 @@ const failureReasons = {
   DISCORD_REJECTED:'Discord rejected delivery', DELIVERY_TIMEOUT:'Discord delivery timed out',
   ENCODE_TIMEOUT:'Video encoding timed out', UNKNOWN:'The cause was not captured by this client'
 };
-function failureReason(data={}) {return failureReasons[data.error_code]||'No specific failure cause was reported';}
+function failureReason(data={}) {
+  const reason=failureReasons[data.error_code]||'No specific failure cause was reported';
+  if(data.stage!=='upload')return reason;
+  const details=[];
+  if(typeof data.upload_attempts==='number')details.push('attempt '+number(data.upload_attempts));
+  if(typeof data.received_bytes==='number')details.push(bytes(data.received_bytes)+' received');
+  if(typeof data.receive_idle_seconds==='number')details.push(seconds(data.receive_idle_seconds)+' since last chunk');
+  return reason+(details.length?' · '+details.join(' · '):'');
+}
+function recovery(row) {
+  if(row.status==='delivered')return row.failures?'Recovered and delivered':'Delivered';
+  const code=row.failure_data?.error_code;
+  if(['UNSUPPORTED_CODEC','TARGET_NOT_FEASIBLE','INVALID_SIGNATURE','FILE_READ_FAILED','INVALID_MEDIA'].includes(code))return 'Replace or re-export the affected file';
+  if(['UPLOAD_CONNECTION_RESET','UPLOAD_TIMEOUT','NETWORK','RELAY_ERROR'].includes(code))return 'Check receipt, then retry prepared files';
+  return ['client_failed','upload_failed','delivery_failed'].includes(row.status)?'Needs investigation':'—';
+}
 function eventLabel(event) {
   if(event.event==='client_failed')return (event.data.stage?label(event.data.stage)+' failed':'Processing failed')+' — '+failureReason(event.data);
   if(event.event==='stage_finished')return (event.data.stage?label(event.data.stage):'Processing')+
@@ -159,7 +181,10 @@ function render(d) {
   table(el('activity'),[['UTC day','day'],['Event','event',label],['Count','count',number]],d.activity||[],'No activity recorded yet','History begins when tracking was enabled; older Discord logs are not imported.');
   table(el('sessions'),[
     ['Reference','reference',(value)=>{const button=document.createElement('button');button.className='reference-button';button.textContent=value;button.type='button';button.addEventListener('click',()=>{el('reference').value=value;showPanel('sessions');void load();});return button;}],
-    ['Created','created',when],['Outcome','status',badge],['Failure detail','failure_data',(value,row)=>row.status==='unknown'?'Outcome unknown: no confirmed final result. This does not prove compression failed.':['client_failed','upload_failed','delivery_failed'].includes(row.status)?failureReason(value):'—'],['Files','files',number],['Failure reports','failures',number],['Release','revision',revision],['Test','is_test',value=>value?'Yes':'No']
+    ['Created','created',when],['Outcome','status',badge],['Failure detail','failure_data',(value,row)=>row.status==='unknown'?'Outcome unknown: no confirmed final result. This does not prove compression failed.':['client_failed','upload_failed','delivery_failed'].includes(row.status)?failureReason(value):'—'],
+    ['Stage','failure_data',value=>value?.stage?label(value.stage):'—'],
+    ['Evidence','status',value=>value==='client_failed'?'Browser-reported':value==='upload_failed'||value==='delivery_failed'?'Server-confirmed event; root cause may be unknown':'—'],
+    ['Recovery','status',(_,row)=>recovery(row)],['Files','files',number],['Failure reports','failures',number],['Release','revision',revision],['Test','is_test',value=>value?'Yes':'No']
   ],d.sessions||[],'No matching sessions','Change the window or filters. Enable Include tests to see development-server activity.');
   el('events').replaceChildren();const history=d.events||[];
   const files=new Map();
@@ -183,7 +208,7 @@ function render(d) {
       return {run:e.run_id?.slice(0,8)||'—',file:'File '+e.file_index,last_event:e.last_event,format:(e.data.input_format||'unknown').toUpperCase(),path:e.data.path,input:e.data.input_bytes,output:e.data.output_bytes,duration:e.data.duration_seconds,encode:e.data.encoding_seconds,input_video:dimensions(e.data.input_width,e.data.input_height,e.data.input_fps),output_video:dimensions(e.data.output_width,e.data.output_height,e.data.output_fps),codecs:(e.data.video_codec||'Not reported')+' / '+(e.data.audio_codec||'Not reported'),profile:[e.data.video_profile,e.data.bit_depth?e.data.bit_depth+' bit':null,e.data.pixel_format].filter(Boolean).join(' · ')||'Not reported'};
     }),
     'No file diagnostics','Select a session with browser file reports or a relay receipt.');
-  const evidence=history.filter(event=>event.event==='attempt_started'||event.event==='retry'||event.event==='client_failed'||event.event==='processing_progress'||(event.event==='stage_finished'&&(event.data.error_code||event.data.exit_code!==undefined)));
+  const evidence=history.filter(event=>event.event==='attempt_started'||event.event==='retry'||event.event==='client_failed'||event.event==='upload_failed'||event.event==='delivery_failed'||event.event==='processing_progress'||(event.event==='stage_finished'&&(event.data.error_code||event.data.exit_code!==undefined)));
   // A retry carries the previous failure's evidence, not a new failure of the
   // next attempt. Make the transition explicit rather than mislabelling it.
   const attemptLabel=(value,row)=>row.event==='retry'&&row.failed_attempt?row.failed_attempt+' → '+value:number(value);

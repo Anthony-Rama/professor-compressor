@@ -17,6 +17,8 @@ class LegalPageTests(unittest.TestCase):
         self.assertIn("Optional message", document)
         self.assertIn("sent with the\n        finished files", document)
         self.assertIn("does not intentionally write video files to disk", document)
+        self.assertIn("temporary, site-private", document)
+        self.assertIn("remove abandoned copies", document)
         self.assertIn("IP address", document)
         self.assertIn("does not sell personal information", document)
         self.assertIn("command user's Discord username and user ID", document)

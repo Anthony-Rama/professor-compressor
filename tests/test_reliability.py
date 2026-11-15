@@ -90,7 +90,10 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 )
                 # Start at t=0; metadata begins just before the total deadline.
                 # Replace the app's time reference, not asyncio's real clock.
-                clock = Mock(monotonic=Mock(side_effect=[0, 0, 0, 299.99]))
+                ticks = iter([0, 0, 0, 299.99])
+                clock = Mock(
+                    monotonic=Mock(side_effect=lambda ticks=ticks: next(ticks, 300))
+                )
                 with (
                     patch.object(app, "session_access", return_value=(job, None)),
                     patch.object(app, "rate_limit_retry_after", return_value=None),
@@ -150,6 +153,45 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('id="submit"', await response.text())
             self.assertIs(job.state, JobState.CLAIMED)
             self.assertIn("link opened", alert.call_args.args[0])
+
+    async def test_connection_reset_records_partial_receipt_and_releases_resources(
+        self,
+    ):
+        job = self.job()
+        field = Mock(name="field")
+        field.name = "clips"
+        field.filename = "private-name.mp4"
+        field.read_chunk = AsyncMock(
+            side_effect=[b"partial", ConnectionResetError("private transport detail")]
+        )
+        reader = Mock(next=AsyncMock(return_value=field))
+        request = Mock(
+            content_type="multipart/form-data", multipart=AsyncMock(return_value=reader)
+        )
+        request.headers = {}
+        with (
+            patch.object(app, "session_access", return_value=(job, None)),
+            patch.object(app, "rate_limit_retry_after", return_value=None),
+            patch.object(app, "schedule_owner_alert"),
+            patch.object(app, "track") as tracked,
+        ):
+            response = await app.receive_results(request)
+        self.assertEqual(response.status, 503)
+        self.assertIn("upload_connection_reset", response.text)
+        self.assertNotIn("private", response.text)
+        facts = next(
+            call.kwargs["data"]
+            for call in tracked.call_args_list
+            if call.args[1] == "upload_failed"
+        )
+        self.assertEqual(facts["error_code"], "UPLOAD_CONNECTION_RESET")
+        self.assertEqual(facts["received_bytes"], 7)
+        self.assertEqual(facts["upload_attempts"], 1)
+        self.assertGreaterEqual(facts["receive_idle_seconds"], 0)
+        self.assertEqual(app.active_relay_uploads, 0)
+        self.assertEqual(app.delivery_bytes_held, 0)
+        self.assertTrue(app.delivery_queue.empty())
+        self.assertIs(job.state, JobState.CLAIMED)
 
     async def test_progress_reports_are_authenticated_bounded_and_deduplicated(self):
         job = self.job()

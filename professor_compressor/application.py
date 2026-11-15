@@ -498,6 +498,7 @@ def page(title: str, body: str) -> web.Response:
                               outline-offset: 2px; }}
     #caption::placeholder {{ color: #8290a4; }}
     .caption-help {{ margin: 6px 2px 0; color: #93a0b2; font-size: 12px; }}
+    .reselect-file {{ padding: 5px 8px; min-height: 32px; font-size: 12px; }}
     button {{ margin-top: 16px; width: 100%; padding: 14px 18px; border: 0;
               border-radius: 12px; background: linear-gradient(135deg, #6873ff, #5865f2);
               color: white; font-size: 15px; font-weight: 750; cursor: pointer;
@@ -1264,6 +1265,21 @@ async def receive_results(request: web.Request) -> web.Response:
     diagnostics: list[CompressionDiagnostic] = []
     diagnostics_received = False
     total_size = 0
+    last_chunk_at = receive_started
+    received_bytes = 0
+    job.relay_upload_attempts += 1
+
+    def upload_failure_facts(code: str) -> dict:
+        now = time.monotonic()
+        return {
+            "error_code": code,
+            "stage": "upload",
+            "upload_attempts": job.relay_upload_attempts,
+            "received_bytes": received_bytes,
+            "relay_receive_seconds": max(0, now - receive_started),
+            "receive_idle_seconds": max(0, now - last_chunk_at),
+        }
+
     upload_slot_held = True
     job.state = JobState.UPLOADING
     upload_run = valid_id(request.headers.get("X-Diagnostic-Run")) or job.active_run_id
@@ -1300,6 +1316,8 @@ async def receive_results(request: web.Request) -> web.Response:
                     timeout=max(0, min(30, upload_deadline - time.monotonic())),
                 ):
                     caption_data.extend(chunk)
+                    received_bytes += len(chunk)
+                    last_chunk_at = time.monotonic()
                     if len(caption_data) > 4000:
                         break
                 if len(caption_data) > 4000:
@@ -1323,6 +1341,8 @@ async def receive_results(request: web.Request) -> web.Response:
                     timeout=max(0, min(30, upload_deadline - time.monotonic())),
                 ):
                     raw_diagnostics.extend(chunk)
+                    received_bytes += len(chunk)
+                    last_chunk_at = time.monotonic()
                     if len(raw_diagnostics) > 16384:
                         raise ValueError("The diagnostics field is too long.")
                 diagnostics = parse_compression_diagnostics(bytes(raw_diagnostics))
@@ -1347,6 +1367,8 @@ async def receive_results(request: web.Request) -> web.Response:
                         retry_after=5,
                     )
                 delivery_bytes_held += len(chunk)
+                received_bytes += len(chunk)
+                last_chunk_at = time.monotonic()
                 total_size += len(chunk)
                 file_data.extend(chunk)
                 if len(file_data) > job.discord_limit:
@@ -1465,10 +1487,27 @@ async def receive_results(request: web.Request) -> web.Response:
             job,
             "upload_failed",
             run_id=upload_run,
-            data={"error_code": "UPLOAD_TIMEOUT", "stage": "upload"},
+            data=upload_failure_facts("UPLOAD_TIMEOUT"),
         )
         return json_error(
             "The upload stalled. Please try again.", 408, "upload_timeout"
+        )
+    except ConnectionResetError:
+        job.state = JobState.CLAIMED
+        track(
+            job,
+            "upload_failed",
+            run_id=upload_run,
+            data=upload_failure_facts("UPLOAD_CONNECTION_RESET"),
+        )
+        logger.warning(
+            "Upload connection reset (reference=%s)", job.diagnostic_reference
+        )
+        return json_error(
+            "The upload connection was interrupted. Keep this page open and retry sending; your prepared files do not need recompression.",
+            503,
+            "upload_connection_reset",
+            retry_after=3,
         )
     except (ValueError, web.HTTPException) as error:
         track(
@@ -1485,7 +1524,7 @@ async def receive_results(request: web.Request) -> web.Response:
             job,
             "upload_failed",
             run_id=upload_run,
-            data={"error_code": "RELAY_ERROR", "stage": "upload"},
+            data=upload_failure_facts("RELAY_ERROR"),
         )
         logger.warning("Upload relay failed (%s)", type(error).__name__)
         return json_error(

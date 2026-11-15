@@ -40,6 +40,7 @@ class UploadJob:
     selected_count: int = 0
     compression_started: bool = False
     relay_upload_started: bool = False
+    relay_upload_attempts: int = 0
     browser_cancelled: bool = False
     browser_cancel_reported: bool = False
     page_left: bool = False

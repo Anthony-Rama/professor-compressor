@@ -30,7 +30,7 @@ export function engineSignal(value) {
   if (/cannot allocate memory|allocation failed|failed to allocate/i.test(line)) return "allocation_failed";
   if (/memory access out of bounds/i.test(line)) return "wasm_bounds";
   if (/RuntimeError:.*(?:unreachable|indirect call.*mismatch)/i.test(line)) return "wasm_trap";
-  if (/unknown decoder|no decoder found|decoder .* not found|unsupported codec/i.test(line)) return "unsupported_codec";
+  if (/unknown decoder|no decoder found|decoder .* not found|unsupported codec|platform doesn't supp?port hardware accelerated AV1 decoding/i.test(line)) return "unsupported_codec";
   if (/invalid data found when processing input/i.test(line)) return "invalid_media";
   return "";
 }
@@ -153,6 +153,8 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
     try {
       error = normalizeError(error);
       if (error.name === "AbortError") return "CANCELLED";
+      // Deterministic preflight findings outrank incidental probe log lines.
+      if (["UNSUPPORTED_CODEC", "TARGET_NOT_FEASIBLE"].includes(error.diagnosticCode)) return error.diagnosticCode;
       const recorded = failureFacts(error).engine_signal;
       const thrown = engineSignal(error.message);
       const evidence = signalPriority(thrown) > signalPriority(recorded) ? thrown : recorded;
@@ -163,6 +165,7 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
       if (error.diagnosticCode) return error.diagnosticCode;
       if (error.status === 0) return "NETWORK";
       if (error.code === "session_expired") return "SESSION_EXPIRED";
+      if (error.code === "upload_connection_reset") return "UPLOAD_CONNECTION_RESET";
       if (error.status) return "HTTP";
       return "UNKNOWN";
     } catch (_) { return "UNKNOWN"; }

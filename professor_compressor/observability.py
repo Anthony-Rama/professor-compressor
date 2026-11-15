@@ -67,6 +67,7 @@ CLIENT_EVENTS = frozenset(
 )
 ENUMS = {
     "stage": {
+        "preparation",
         "validation",
         "session",
         "engine",
@@ -81,6 +82,10 @@ ENUMS = {
         "output_metadata",
     },
     "error_code": {
+        "INPUT_STORAGE_FULL",
+        "INPUT_STORAGE_UNAVAILABLE",
+        "INPUT_TOO_LARGE",
+        "INPUT_PREPARATION_TIMEOUT",
         "UNKNOWN",
         "WORKER_CRASH",
         "WORKER_MESSAGE_ERROR",
@@ -97,6 +102,7 @@ ENUMS = {
         "ENGINE_LOAD_TIMEOUT",
         "ENCODE_FAILED",
         "OUTPUT_TOO_LARGE",
+        "TARGET_NOT_FEASIBLE",
         "BROWSER_MEMORY",
         "WASM_TRAP",
         "NETWORK",
@@ -104,6 +110,7 @@ ENUMS = {
         "SESSION_EXPIRED",
         "CANCELLED",
         "UPLOAD_TIMEOUT",
+        "UPLOAD_CONNECTION_RESET",
         "INVALID_UPLOAD",
         "RELAY_ERROR",
         "DISCORD_REJECTED",
@@ -250,6 +257,7 @@ NUMBERS = {
             "hidden_seconds",
             "upload_seconds",
             "relay_receive_seconds",
+            "receive_idle_seconds",
             "queue_seconds",
             "discord_delivery_seconds",
             "last_media_seconds",
@@ -259,7 +267,14 @@ NUMBERS = {
         86400,
     ),
     **dict.fromkeys(
-        ("input_bytes", "output_bytes", "target_bytes", "discord_limit"), 2**40
+        (
+            "input_bytes",
+            "output_bytes",
+            "target_bytes",
+            "discord_limit",
+            "received_bytes",
+        ),
+        2**40,
     ),
     **dict.fromkeys(
         ("input_width", "input_height", "output_width", "output_height"), 32768

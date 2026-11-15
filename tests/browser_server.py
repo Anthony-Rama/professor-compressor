@@ -52,6 +52,12 @@ app.dashboard_runtime = test_runtime_snapshot
 
 
 async def test_session(request: web.Request) -> web.Response:
+    # Independent browser tests share one loopback IP. Do not let an earlier
+    # test consume a later test's diagnostic request budget. HTTP rate-limit
+    # enforcement is tested separately against the unmodified production route.
+    for key in tuple(app.request_times):
+        if key[0] == "diagnostic_events":
+            app.request_times.pop(key, None)
     token = secrets.token_urlsafe(16)
     app.jobs[token] = UploadJob(
         token=token,

@@ -50,6 +50,100 @@ Security reports must be sent privately, not in public issues. See
 
 ## Private development configuration
 
+### Isolated dev-bot launcher
+
+Use a separate Discord application named Professor Compressor Dev. Create
+`dev.env` from `dev.env.example` and set owner-only permissions (`chmod 600
+dev.env` on macOS/Linux). Never copy production's token or dashboard key. The
+dev file is excluded from both Git and Docker builds. `DEV_APPLICATION_ID` is
+the dev application's ID, not the test server ID; `ALLOWED_GUILD_IDS` contains
+the test server ID(s).
+
+```bash
+.venv/bin/python dev_bot.py --check
+.venv/bin/python dev_bot.py
+```
+
+The check performs a read-only Discord identity request and refuses mismatched
+or production identities before starting a gateway connection or HTTP server.
+The launcher never loads `.env` and does not inherit application settings,
+Python import overrides, or proxy settings from the parent shell. It binds only
+to loopback, restricts commands to the configured servers, disables Top.gg/DSC
+publishing and alert webhooks, and records diagnostics separately at
+`observability-data/dev/events.sqlite3`. An optional, separate
+`OBSERVABILITY_ADMIN_KEY` enables the dev `/ops` dashboard. Without that key,
+the dashboard is disabled; do not reuse the production key.
+
+For a Windows browser testing a Mac-hosted dev bot, expose the local server
+through a temporary HTTPS tunnel, for example:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8080
+```
+
+Set `PUBLIC_BASE_URL` to the generated HTTPS origin before starting the dev bot.
+Keep the Mac awake and both processes running. A new Quick Tunnel gets a new
+URL: update the dev file and restart the bot before creating new sessions.
+Treat the tunnel as public, not authenticated by the obscurity of its address;
+keep session URLs private and any dev dashboard password-protected.
+
+Cloudflare upload limits can reject large batches before they reach the relay.
+Start with single clips or small batches. For full-size batch acceptance testing,
+verify the tunnel's request-body limit or use a connection without that limit;
+do not mistake a tunnel rejection for a compressor regression. See
+[Cloudflare's 413 documentation](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-413/).
+The finished batch is sent in one HTTP request, not one request per video.
+
+Stop the dev process before switching branches. Restart it after Python changes
+and create a fresh `/compress` session after restarting. Keep production on
+`main`; test feature branches with the dev identity. No production deployment
+is required for this workflow.
+
+### Browser-local input preservation acceptance
+
+Selected sources are copied into OPFS in 1 MiB reads, with a 1 GiB per-file and
+4 GiB per-page batch cap (10 files maximum). This adds local disk I/O, not server
+storage. The copy must finish before the file is marked Ready or compression
+can start. Chrome/Edge with OPFS and Web Locks support are required for this
+workflow; missing/blocked storage fails explicitly rather than retaining an
+unsafe source reference or falling back to unbounded RAM copies.
+
+Selection admission checks browser storage estimates with headroom of at least
+256 MiB or 10% of remaining quota, whichever is larger. Pending local-copy
+reservations are counted conservatively because in-flight writes may not yet
+appear in usage; completed copies are not counted twice. Estimates are not free-disk guarantees: unavailable, invalid,
+or timed-out estimates fall back to the hard caps and handled write failures.
+Over-limit additions are rejected before copying without disturbing prior clips.
+
+Preparation records batched, allowlisted stage events with a separate run ID, sizes,
+durations and error codes, never filenames, paths, captions, or file content.
+They appear under the preparation stage/error filters and session timeline but
+do not mark compression as started or failed. Reporting is best-effort and
+cannot block selection or copying. Module loading and storage initialization
+have bounded waits; late storage handles/writers are cleaned up after timeout.
+
+Anonymous per-page directories and browser locks prevent one tab's cleanup
+from deleting another tab's active input. Removing a selection aborts its copy;
+successful delivery and idle session expiry close the local store. Input copies
+are retained across compression cancellation and delivery retries because a
+prepared unchanged MP4 may still depend on that local file. Page-exit cleanup
+is best-effort; a later visit removes unlocked abandoned directories in the
+application's own namespace. A refresh always requires reselecting clips.
+Abandoned-copy cleanup requires revisiting the same origin. When a temporary
+tunnel URL changes, clear the old origin's browser site data if its page-exit
+cleanup was interrupted; the new origin cannot access the old origin's storage.
+
+On Windows, export/drop a GG clip, wait for Ready, export/drop another, then
+compress. Compare with saved-folder selections and test removing/reselecting
+one failed item without losing the caption or other prepared clips. Automated
+tests replace a real disk source after Ready and verify the uploaded bytes,
+exercise source read errors, quota denial, bounded reads and preparation
+timeouts, cancellation, storage/module unavailability, and cross-tab cleanup.
+These tests do not establish SteelSeries GG behavior or performance on Windows;
+complete that manual acceptance before release.
+
+### Direct application entry point (manual configuration)
+
 Create `.env` locally; it is ignored by Git and Docker's build context. Set
 `DISCORD_TOKEN` to the separate development bot's token and `PUBLIC_BASE_URL`
 to the address that your test browser can reach (for a local desktop test,

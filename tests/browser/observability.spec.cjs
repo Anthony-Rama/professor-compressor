@@ -41,6 +41,9 @@ test('session history correlates browser and server delivery without content', a
   await expect(page.locator('#page-heading')).toHaveText('Delivered to Discord');
   await expect.poll(async () => (await data(request,session.reference)).sessions[0]?.status).toBe('delivered');
   await expect.poll(async () => (await data(request,session.reference)).events.some(e => e.event==='client_complete')).toBe(true);
+  // Browser event batches and completion telemetry travel independently.
+  // Completion arriving first does not mean the file-ready batch is missing.
+  await expect.poll(async () => (await data(request,session.reference)).events.some(e => e.event==='file_ready'&&e.source==='browser')).toBe(true);
   const result=await data(request,session.reference);
   expect(result.groups.error_code).toEqual([]);
   expect(result.timings.relay_receive_seconds.samples).toBe(1);

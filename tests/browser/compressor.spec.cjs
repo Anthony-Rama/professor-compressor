@@ -502,7 +502,7 @@ test('unsupported AV1 fails without uploading and allows a supported replacement
   await page.locator('#submit').click();
   // The pinned core may reject AV1 during metadata probing before it can
   // identify the codec. Explain only the evidence actually reported.
-  await expect(page.locator('#message')).toContainText(/codec is not supported|reported invalid media data/, {timeout:30000});
+  await expect(page.locator('#message')).toContainText(/AV1.*cannot convert|codec is not supported|reported invalid media data/, {timeout:30000});
   await expect(page.locator('#feedback-actions')).toBeVisible();
   await expect(page.locator('#format-help')).toBeVisible();
   await expect(page.getByRole('link', {name: 'Contact Us'})).toBeVisible();

@@ -36,3 +36,36 @@ bounded diagnostics and never control upload limits or delivery decisions.
 Use encoding speed together with resolution/FPS and engine mode when comparing
 devices. Use successful server deliveries divided by attempts, failure categories,
 and recovered retries to judge reliability; do not count cancellations as errors.
+# Recovery behavior on the development branch
+
+The pinned browser cores recognize AV1 metadata but do not provide a usable
+software AV1 decoding path. When re-encoding is required, AV1 is rejected after
+metadata inspection with `UNSUPPORTED_CODEC`, without retrying identical
+settings. Fitting MP4 passthrough remains unchanged. Revisit this capability
+guard when changing the pinned core; a decoder name in `-decoders` alone is not
+proof that decoding works in WebAssembly.
+
+Before expensive conversion, the browser checks the same minimum 100 kbps
+video budget used for size-targeted encoding. It reserves 96 kbps for audio
+only when an audio stream exists. An impossible target produces
+`TARGET_NOT_FEASIBLE`; already-fitting MP4s and fitting compatible remuxes are
+not rejected by duration alone. This is a feasibility guard, not a perceptual
+quality guarantee. No audio is silently removed and no video is trimmed.
+
+Known unsupported codecs, invalid media/signatures and
+impossible targets are not automatically re-encoded with identical settings.
+Affected unreadable/unsupported files can be reselected or removed without
+clearing other selected inputs or the caption.
+
+The relay distinguishes `UPLOAD_CONNECTION_RESET` from generic relay errors.
+It records allowlisted received payload-byte count (including caption and
+diagnostic field bytes, excluding multipart framing), receive duration,
+time since the last payload chunk, and server-counted upload attempts.
+It does not store those field contents, raw exceptions or filenames in these
+diagnostics. A reset proves interruption, not which peer caused it.
+
+Upload retries are bounded, reconcile receipt before resending, and reuse
+prepared output without recompression. Backoff includes jitter unless a bounded
+server retry interval is provided. After exhaustion, the user can check/retry
+delivery or download prepared files while the page remains open. Browser upload
+progress alone does not confirm relay receipt or Discord delivery.

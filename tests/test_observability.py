@@ -64,6 +64,52 @@ class StoreTests(unittest.TestCase):
             {"video_codec": "h264", "browser": "Chrome", "duration_seconds": 12.5},
         )
 
+    def test_upload_reset_facts_are_allowlisted_without_raw_connection_details(self):
+        facts = {
+            "stage": "upload",
+            "error_code": "UPLOAD_CONNECTION_RESET",
+            "received_bytes": 1024,
+            "receive_idle_seconds": 12.5,
+            "upload_attempts": 2,
+        }
+        self.assertEqual(
+            sanitize({**facts, "raw_error": "secret", "filename": "private.mp4"}), facts
+        )
+        self.assertEqual(
+            sanitize({"error_code": "TARGET_NOT_FEASIBLE"}),
+            {"error_code": "TARGET_NOT_FEASIBLE"},
+        )
+
+    def test_preparation_errors_are_searchable_without_counting_compression_failures(
+        self,
+    ):
+        self.emit("created", source="server")
+        self.emit("selected", source="server")
+        self.emit(
+            "stage_finished",
+            source="browser",
+            file_index=1,
+            data={
+                "stage": "preparation",
+                "outcome": "failed",
+                "error_code": "INPUT_STORAGE_FULL",
+                "input_bytes": 123,
+                "filename": "PRIVATE_FILENAME",
+                "raw_error": "PRIVATE_PATH",
+            },
+        )
+        result = self.view()
+        self.assertEqual(result["totals"]["started"], 0)
+        self.assertEqual(result["sessions"][0]["failures"], 0)
+        self.assertEqual(result["sessions"][0]["status"], "selected")
+        self.assertEqual(
+            result["groups"]["error_code"][0]["value"], "INPUT_STORAGE_FULL"
+        )
+        self.assertNotIn("PRIVATE_", json.dumps(result))
+        self.emit("started", source="server")
+        self.emit("delivered", source="server", data={"files": 1})
+        self.assertEqual(self.view()["sessions"][0]["status"], "delivered")
+
     def test_pseudonyms_are_keyed_and_distinct_by_type(self):
         self.assertEqual(
             self.store.pseudonym("user", 123), self.store.pseudonym("user", 123)
@@ -671,6 +717,17 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
             self.url, json=self.payload(), headers=self.headers
         )
         self.assertEqual(response.status, 429)
+
+    async def test_diagnostic_request_rate_limit_remains_enforced(self):
+        payload = {"run_id": uuid.uuid4().hex, "events": []}
+        for _ in range(120):
+            response = await self.client.post(
+                self.url, json=payload, headers=self.headers
+            )
+            self.assertEqual(response.status, 200)
+        response = await self.client.post(self.url, json=payload, headers=self.headers)
+        self.assertEqual(response.status, 429)
+        self.assertEqual((await response.json())["code"], "rate_limited")
 
     async def test_receipt_auth_allows_late_reporting_but_not_forged_delivery(self):
         self.job.browser_secret = "browser-secret"

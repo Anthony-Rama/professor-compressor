@@ -2,7 +2,7 @@
 
 from html import escape
 
-EFFECTIVE_DATE = "October 23, 2026"
+EFFECTIVE_DATE = "October 31, 2026"
 PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
@@ -65,7 +65,8 @@ def privacy_policy_html() -> str:
     <p class="notice"><strong>Summary:</strong> Professor Compressor processes
       videos locally in your browser. Finished files, including fitting MP4s
       sent without recompression, pass through the relay to Discord. The relay does
-      not write those files to disk.</p>
+      not write those files to server disk. Your browser keeps temporary local
+      copies of selected clips while preparing and processing them.</p>
 
     <h2>1. Scope</h2>
     <p>This policy describes how the hosted Professor Compressor Discord bot and
@@ -136,7 +137,18 @@ def privacy_policy_html() -> str:
       Uploaded files are
       held only in volatile memory while awaiting delivery and are released
       after delivery, failure, cancellation, expiration, or a service restart.
-      Professor Compressor does not intentionally write video files to disk.</p>
+      The relay does not intentionally write video files to disk.</p>
+    <p>When you select a clip, the browser copies it into temporary, site-private
+      storage on your own device so later changes to the exported source do not
+      interrupt processing. Copying sends no video bytes to the relay; only
+      finished output is uploaded during delivery, including fitting MP4s sent
+      unchanged. The page attempts to delete local copies when you remove
+      clips, after successful delivery, on idle session expiration, or when you
+      leave the page. Closing or crashing the browser can interrupt cleanup;
+      a subsequent visit attempts to
+      remove abandoned copies without deleting copies owned by another open tab.
+      You can also remove local copies by clearing this site's browser data.
+      A refresh does not restore your selected clips; reselect them to continue.</p>
     <p>After delivery, Discord stores the resulting message and attachments under
       Discord’s own policies and the settings of the destination server.</p>
 
