@@ -84,6 +84,7 @@ ENUMS = {
     "error_code": {
         "INPUT_STORAGE_FULL",
         "INPUT_STORAGE_UNAVAILABLE",
+        "INPUT_WRITE_UNSUPPORTED",
         "INPUT_TOO_LARGE",
         "INPUT_PREPARATION_TIMEOUT",
         "UNKNOWN",
@@ -746,6 +747,9 @@ class EventStore:
                 connection.execute(
                     "SELECT COUNT(*) sessions, COALESCE(SUM(opened),0) opened, COALESCE(SUM(selected),0) selected, "
                     "COALESCE(SUM(started),0) started, COALESCE(SUM(delivered),0) delivered, "
+                    "COUNT(CASE WHEN s.started=0 AND EXISTS(SELECT 1 FROM events p WHERE p.session_id=s.id "
+                    "AND p.source='browser' AND p.event='stage_finished' AND json_extract(p.data,'$.stage')='preparation' "
+                    "AND json_extract(p.data,'$.outcome')='failed') THEN 1 END) blocked_before_compression, "
                     "COUNT(DISTINCT NULLIF(user_key,'')) users, COUNT(DISTINCT NULLIF(guild_key,'')) servers, "
                     "COALESCE(SUM(CASE WHEN delivered=1 THEN files ELSE 0 END),0) files, "
                     "COALESCE(SUM(CASE WHEN delivered=1 AND EXISTS(SELECT 1 FROM events f WHERE f.session_id=s.id "

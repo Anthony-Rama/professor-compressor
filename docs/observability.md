@@ -26,6 +26,12 @@ in delivered sessions with both input/output measurements; browser file-ready
 reports are not added again. Input sizes remain browser-reported. Measurement
 coverage can be smaller than the number of delivered files.
 
+Blocked before compression counts distinct sessions with a browser-reported
+preparation failure and no recorded compression start. Repeated failures count
+once; starting later on the same link removes that session from this count.
+Filter by error code `INPUT_WRITE_UNSUPPORTED` for browsers that lack the
+temporary-file write capability. Older generic storage errors are not reclassified.
+
 Needs attention counts latest reported failure states. Cancelled, in-progress,
 and unknown outcomes remain separate. Delivered / started includes pending starts
 and is not a final success-rate estimate. Recovery requires a failure recorded

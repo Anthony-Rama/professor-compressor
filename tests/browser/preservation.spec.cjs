@@ -518,6 +518,22 @@ test('preparation failures are searchable but do not mark compression started or
   await expect(page.locator('.file-card')).toHaveCount(0);
 });
 
+test('missing writable file support explains recovery and records a preparation blocker', async ({page,request})=>{
+  await page.addInitScript(()=>Object.defineProperty(FileSystemFileHandle.prototype,'createWritable',{value:undefined}));
+  const session=await open(page,request);
+  await page.locator('#clips').setInputFiles(join(fixtures,'clip.mp4'));
+  await expect(page.locator('#message')).toContainText('run /compress again');
+  await expect(page.locator('#submit')).toBeDisabled();
+  await expect(page.locator('.file-card')).toHaveCount(0);
+  const headers={Authorization:'Basic '+Buffer.from('admin:browser-test-only-operator-password').toString('base64')};
+  const data=async()=> (await request.get('/ops/data?tests=1&reference='+session.reference,{headers})).json();
+  await expect.poll(async()=> (await data()).totals.blocked_before_compression).toBe(1);
+  const result=await data();
+  expect(result.events.some(e=>e.data.error_code==='INPUT_WRITE_UNSUPPORTED')).toBe(true);
+  expect(result.totals.started).toBe(0);
+  expect(result.totals.needs_attention).toBe(0);
+});
+
 for (const missing of ['storage', 'locks']) {
   test('missing '+missing+' support fails explicitly without uploading', async ({page,request})=>{
     await page.addInitScript(kind=>{

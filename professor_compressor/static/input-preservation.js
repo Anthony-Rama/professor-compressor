@@ -126,6 +126,11 @@ export class InputPreserver {
   }
 
   async checkAvailable(additionalBytes) {
+    if (typeof globalThis.FileSystemFileHandle?.prototype?.createWritable !== "function") {
+      throw failure(
+        "This browser cannot make the temporary copy needed to prepare your videos. Nothing was uploaded. Update your browser or use a current desktop browser, then run /compress again in Discord for a new link.",
+        "INPUT_WRITE_UNSUPPORTED");
+    }
     // Estimates are advisory, not a disk-space guarantee. Missing, invalid or
     // stalled estimates fall back to the hard caps and actual write handling.
     if (!navigator.storage?.estimate) return;

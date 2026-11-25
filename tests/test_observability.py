@@ -99,6 +99,7 @@ class StoreTests(unittest.TestCase):
             },
         )
         result = self.view()
+        self.assertEqual(result["totals"]["blocked_before_compression"], 1)
         self.assertEqual(result["totals"]["started"], 0)
         self.assertEqual(result["sessions"][0]["failures"], 0)
         self.assertEqual(result["sessions"][0]["status"], "selected")
@@ -107,6 +108,7 @@ class StoreTests(unittest.TestCase):
         )
         self.assertNotIn("PRIVATE_", json.dumps(result))
         self.emit("started", source="server")
+        self.assertEqual(self.view()["totals"]["blocked_before_compression"], 0)
         self.emit("delivered", source="server", data={"files": 1})
         self.assertEqual(self.view()["sessions"][0]["status"], "delivered")
 

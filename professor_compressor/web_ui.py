@@ -375,7 +375,7 @@ function preparationReport(fileIndex, inputBytes) {
     return (outcome, error) => {
       if (finished) return;
       finished = true;
-      const allowed = ["FILE_READ_FAILED", "INPUT_STORAGE_FULL", "INPUT_STORAGE_UNAVAILABLE", "INPUT_TOO_LARGE", "INPUT_PREPARATION_TIMEOUT"];
+      const allowed = ["FILE_READ_FAILED", "INPUT_STORAGE_FULL", "INPUT_STORAGE_UNAVAILABLE", "INPUT_WRITE_UNSUPPORTED", "INPUT_TOO_LARGE", "INPUT_PREPARATION_TIMEOUT"];
       send("stage_finished", outcome === "ready" ? {} : {outcome,
         error_code: outcome === "cancelled" ? "CANCELLED" : allowed.includes(error?.diagnosticCode) ? error.diagnosticCode : "INPUT_STORAGE_UNAVAILABLE"});
     };

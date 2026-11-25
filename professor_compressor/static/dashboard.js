@@ -37,6 +37,7 @@ const failureReasons = {
   TARGET_NOT_FEASIBLE:'The duration leaves too little bitrate at the available upload limit',
   INPUT_STORAGE_FULL:'Browser storage could not accommodate the local copy',
   INPUT_STORAGE_UNAVAILABLE:'Browser-local storage was unavailable or blocked',
+  INPUT_WRITE_UNSUPPORTED:'Browser lacks support for writing temporary video copies',
   INPUT_TOO_LARGE:'The selection exceeded a local input limit',
   INPUT_PREPARATION_TIMEOUT:'Loading or preparing the local copy timed out',
   WORKER_CRASH:'The video engine worker crashed; the underlying cause was not reported',
@@ -156,6 +157,7 @@ function render(d) {
     ['Users with sessions',number(t.users),'Distinct pseudonymous users'],
     ['Servers with sessions',number(t.servers),'Usage in this view, not total installations'],
     ['Needs attention',number(t.needs_attention),'Latest state reports a processing or delivery failure',t.needs_attention?'danger':''],
+    ['Blocked before compression',number(t.blocked_before_compression),'Sessions with a reported preparation failure and no compression start',t.blocked_before_compression?'warning':''],
     ['Recovered sessions',number(t.recovered),'A reported failure followed by successful delivery']
   ]);
   outcomes(el('outcomes'),[
