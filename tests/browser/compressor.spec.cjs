@@ -273,11 +273,16 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
   await expect(page.locator("#format-help")).toBeHidden();
   await expect(page.locator("#message")).toHaveCSS("text-align", "center");
   const footer = page.getByRole("navigation", { name: "Support and legal" });
+  await expect(footer.getByRole("link", { name: "Website" })).toHaveAttribute(
+    "href",
+    "https://professor-compressor.duckdns.org/",
+  );
+  await expect(footer.locator('a > svg[aria-hidden="true"]')).toHaveCount(5);
   await expect(footer.getByRole("link", { name: "Contact Support" })).toHaveAttribute(
     "href",
     /^mailto:professorcompressor\.support@gmail\.com\?/,
   );
-  await expect(footer.getByRole("link", { name: "Join Discord" })).toHaveAttribute(
+  await expect(footer.getByRole("link", { name: "Support Discord" })).toHaveAttribute(
     "href",
     "https://discord.com/invite/32RWwNWyEH",
   );

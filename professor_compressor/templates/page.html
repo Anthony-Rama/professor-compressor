@@ -36,7 +36,10 @@ __THEME_CSS__
     main.compressor + .session-footer { margin-top: auto; }
     .session-footer nav { display: flex; flex-wrap: wrap; align-items: center;
                           justify-content: center; gap: 4px 22px; }
-    .session-footer a { color: var(--muted); padding: 5px 0; text-underline-offset: 3px; }
+    .session-footer a { display: inline-flex; align-items: center; gap: 6px;
+                        color: var(--muted); padding: 5px 0; text-decoration: none; }
+    .session-footer a span { text-decoration: underline; text-underline-offset: 3px; }
+    .session-footer a svg { flex: none; width: 14px; height: 14px; }
     .session-footer a:hover, .session-footer a:focus-visible { color: var(--text); }
     .message { padding: 13px 14px; border: 1px solid var(--border); border-radius: 14px;
                background: var(--surface); color: var(--text); font-size: 14px;

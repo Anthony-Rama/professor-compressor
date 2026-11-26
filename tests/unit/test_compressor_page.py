@@ -231,8 +231,11 @@ class ThemeChoiceMarkupTests(unittest.TestCase):
                 body = documents[name].split("<body>", 1)[1]
                 footer = body.split('<footer class="page-footer session-footer">', 1)[1]
                 container = footer.split("</footer>", 1)[0]
-                self.assertEqual(container.count("<a href="), 4)
+                self.assertEqual(container.count("<a href="), 5)
+                self.assertEqual(container.count('aria-hidden="true"'), 5)
+                self.assertEqual(container.count('rel="noopener noreferrer"'), 4)
                 for target in (
+                    "https://professor-compressor.duckdns.org/",
                     "/privacy",
                     "/terms",
                     "mailto:professorcompressor.support@gmail.com?",
