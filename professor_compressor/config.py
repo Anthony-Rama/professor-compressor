@@ -86,6 +86,8 @@ class Settings:
     observability_retention_days: int = 90
     observability_max_events: int = 300000
     diagnostic_test_guild_ids: frozenset[int] = frozenset()
+    # Deployment label from the image build; recorded with diagnostics.
+    app_revision: str = "development"
 
     @classmethod
     def from_environment(cls, *, require_token: bool = True) -> Settings:
@@ -167,4 +169,5 @@ class Settings:
                 "OBSERVABILITY_MAX_EVENTS", 300000, minimum=1000
             ),
             diagnostic_test_guild_ids=_guild_ids("DIAGNOSTIC_TEST_GUILD_IDS"),
+            app_revision=os.getenv("APP_REVISION", "development"),
         )

@@ -150,7 +150,7 @@ class Runtime:
                 file_index=file_index,
                 source=source,
                 data=data,
-                revision=os.getenv("APP_REVISION", "development"),
+                revision=self.settings.app_revision,
                 user_key=self.event_store.pseudonym("user", job.user_id),
                 guild_key=self.event_store.pseudonym("guild", job.guild_id),
                 is_test=job.guild_id in self.settings.diagnostic_test_guild_ids,
@@ -277,7 +277,7 @@ class Runtime:
         return web.json_response(
             {
                 "status": "ok",
-                "revision": os.getenv("APP_REVISION", "development")[:64],
+                "revision": self.settings.app_revision[:64],
                 "discord_ready": self.client.is_ready(),
                 "active_upload_links": len(self.jobs),
                 "active_relay_uploads": self.relay.active_uploads,
@@ -502,7 +502,7 @@ class Runtime:
             "gateway_latency_ms": round(latency * 1000)
             if math.isfinite(latency)
             else None,
-            "revision": os.getenv("APP_REVISION", "development")[:64],
+            "revision": self.settings.app_revision[:64],
             "active_sessions": len(self.jobs),
             "active_uploads": self.relay.active_uploads,
             "queue_depth": self.relay.queue.qsize() if self.relay.queue else 0,
