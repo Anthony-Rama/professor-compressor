@@ -6,17 +6,21 @@ from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
-from professor_compressor.application import (
+from professor_compressor.application import Runtime
+from professor_compressor.browser_reports import receive_browser_failure
+from professor_compressor.config import Settings
+from professor_compressor.domain import (
+    BrowserResult,
+    CompressionDiagnostic,
     JobState,
-    Runtime,
     UploadJob,
+)
+from professor_compressor.notifications import (
     botstats_report,
     compression_outcome_alert,
     guild_alert_message,
     safe_alert_text,
 )
-from professor_compressor.config import Settings
-from professor_compressor.domain import BrowserResult, CompressionDiagnostic
 from professor_compressor.relay_diagnostics import (
     parse_compression_diagnostics,
     sanitize_telemetry,
@@ -482,7 +486,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         request.clone.return_value = request
         try:
             with patch.object(self.runtime, "schedule_owner_alert") as schedule_alert:
-                response = await self.runtime.receive_browser_failure(request)
+                response = await receive_browser_failure(self.runtime, request)
 
             self.assertEqual(response.status, 200)
             self.assertIs(job.state, JobState.CLAIMED)
@@ -517,7 +521,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         request.clone.return_value = request
         try:
             with patch.object(self.runtime, "schedule_owner_alert") as schedule_alert:
-                response = await self.runtime.receive_browser_failure(request)
+                response = await receive_browser_failure(self.runtime, request)
         finally:
             self.runtime.jobs.pop(job.token, None)
 
