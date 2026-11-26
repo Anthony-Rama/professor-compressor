@@ -1,3 +1,5 @@
+// Page-scope values that page.evaluate callbacks store on window and read back.
+/* global reporter, stallChanges, stalls, encodingDone, finishEncoding, operation, done */
 const { test, expect } = require('@playwright/test');
 const { execFileSync } = require('node:child_process');
 const { mkdtempSync, rmSync, readFileSync, writeFileSync } = require('node:fs');

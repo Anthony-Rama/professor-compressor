@@ -4,7 +4,10 @@
   "version": "1.0.0",
   "description": "Pinned browser-side FFmpeg assets for Professor Compressor",
   "scripts": {
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "lint": "eslint .",
+    "format": "prettier --write \"professor_compressor/static/*.js\" \"tests/browser/*.cjs\" eslint.config.mjs",
+    "format:check": "prettier --check \"professor_compressor/static/*.js\" \"tests/browser/*.cjs\" eslint.config.mjs"
   },
   "dependencies": {
     "@ffmpeg/core": "0.12.10",
@@ -13,6 +16,10 @@
     "@ffmpeg/util": "0.12.2"
   },
   "devDependencies": {
-    "@playwright/test": "1.65.1"
+    "@eslint/js": "9.39.5",
+    "@playwright/test": "1.65.1",
+    "eslint": "9.39.5",
+    "globals": "17.14.0",
+    "prettier": "3.10.1"
   }
 }
