@@ -119,6 +119,61 @@ export function mediaDetails(video, audio) {
     facts.rotation_quarter_turns = (((rotation / 90) % 4) + 4) % 4;
   return facts;
 }
+
+function eventId() {
+  try {
+    return randomHex();
+  } catch (_) {
+    return "";
+  }
+}
+
+function browserEnvironment() {
+  const agent = navigator.userAgent;
+  const patterns = [
+    ["Edge", /Edg\/(\d+)/],
+    ["Opera", /OPR\/(\d+)/],
+    ["Firefox", /Firefox\/(\d+)/],
+    ["Chrome", /Chrome\/(\d+)/],
+    ["Safari", /Version\/(\d+).*Safari/],
+  ];
+  for (const [browser, pattern] of patterns) {
+    const match = agent.match(pattern);
+    if (match)
+      return {
+        browser,
+        browser_major: Number(match[1]),
+        device: /Mobile|Android|iPhone|iPad/.test(agent) ? "mobile" : "desktop",
+      };
+  }
+  return { browser: "Other", device: "unknown" };
+}
+
+// Remove up to 20 queued events of the oldest run, within a 12 kB request body.
+// A single event over the limit is dropped rather than blocking the queue.
+function takeEventBatch(queue) {
+  const batchRun = queue[0].run;
+  const events = [];
+  let bytes = 0;
+  while (queue.length && events.length < 20 && queue[0].run === batchRun) {
+    const size = new TextEncoder().encode(JSON.stringify(queue[0].item)).length;
+    if (size > 12000) {
+      queue.shift();
+      continue;
+    }
+    if (bytes + size > 12000) break;
+    bytes += size;
+    events.push(queue.shift().item);
+  }
+  return { batchRun, events };
+}
+
+function exceptionKind(name) {
+  return ["Error", "TypeError", "RangeError", "RuntimeError", "AbortError"].includes(name)
+    ? name
+    : "other";
+}
+
 export function createDiagnostics(secret, reference, collect = true, onStall = () => {}) {
   let runId = "";
   let queue = [];
@@ -153,57 +208,26 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
       ? { http_status: error.status }
       : {}),
   });
+  // Signal and progress evidence belongs to one operation, never a previous file/retry.
+  function resetEvidence() {
+    signal = "";
+    signalSource = "";
+    lastProgress = null;
+    lastMedia = null;
+    lastPercent = null;
+  }
   function observeSignal(next, source) {
     if (next && signalPriority(next) > signalPriority(signal)) {
       signal = next;
       signalSource = source;
     }
   }
-  const id = () => {
-    try {
-      return randomHex();
-    } catch (_) {
-      return "";
-    }
-  };
-  const environment = () => {
-    const agent = navigator.userAgent;
-    const patterns = [
-      ["Edge", /Edg\/(\d+)/],
-      ["Opera", /OPR\/(\d+)/],
-      ["Firefox", /Firefox\/(\d+)/],
-      ["Chrome", /Chrome\/(\d+)/],
-      ["Safari", /Version\/(\d+).*Safari/],
-    ];
-    for (const [browser, pattern] of patterns) {
-      const match = agent.match(pattern);
-      if (match)
-        return {
-          browser,
-          browser_major: Number(match[1]),
-          device: /Mobile|Android|iPhone|iPad/.test(agent) ? "mobile" : "desktop",
-        };
-    }
-    return { browser: "Other", device: "unknown" };
-  };
   function flush() {
     try {
       clearTimeout(timer);
       timer = null;
       if (!runId || !queue.length) return;
-      const batchRun = queue[0].run;
-      const events = [];
-      let bytes = 0;
-      while (queue.length && events.length < 20 && queue[0].run === batchRun) {
-        const size = new TextEncoder().encode(JSON.stringify(queue[0].item)).length;
-        if (size > 12000) {
-          queue.shift();
-          continue;
-        }
-        if (bytes + size > 12000) break;
-        bytes += size;
-        events.push(queue.shift().item);
-      }
+      const { batchRun, events } = takeEventBatch(queue);
       if (!events.length) {
         if (queue.length) timer = setTimeout(flush, 1000);
         return;
@@ -227,7 +251,7 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
       queue.push({
         run: runId,
         item: {
-          event_id: event === "client_failed" ? runId : id(),
+          event_id: event === "client_failed" ? runId : eventId(),
           event,
           file_index: fileIndex,
           data: {
@@ -245,18 +269,9 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
   function code(error) {
     return errorCode(error, signal);
   }
-  async function step(operation, fileIndex, action, failureCode) {
-    stage = operation;
-    const execution = ["encoding", "remux"].includes(operation);
-    // Signal evidence belongs to one operation, never a previous file/retry.
-    signal = "";
-    signalSource = "";
-    lastProgress = null;
-    lastMedia = null;
-    lastPercent = null;
-    lastProgressReport = performance.now();
-    if (!execution) command = {};
-    const start = performance.now();
+  // Report one processing_stalled event after 120 s without progress, and tell
+  // onStall when the stalled state changes. Returns a stop function.
+  function watchForStall(operation, fileIndex, start) {
     let warned = false,
       reportedStall = false;
     const notifyStall = (value) => {
@@ -266,24 +281,35 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
         /* Optional UI. */
       }
     };
-    const watchdog = execution
-      ? setInterval(() => {
-          const idle = (performance.now() - (lastProgress ?? start)) / 1000;
-          const stalled = idle >= 120;
-          if (stalled && !reportedStall) {
-            reportedStall = true;
-            emit("processing_stalled", fileIndex, {
-              stage: operation,
-              ...facts(),
-              progress_idle_seconds: idle,
-            });
-          }
-          if (stalled !== warned) {
-            warned = stalled;
-            notifyStall(stalled);
-          }
-        }, 5000)
-      : null;
+    const watchdog = setInterval(() => {
+      const idle = (performance.now() - (lastProgress ?? start)) / 1000;
+      const stalled = idle >= 120;
+      if (stalled && !reportedStall) {
+        reportedStall = true;
+        emit("processing_stalled", fileIndex, {
+          stage: operation,
+          ...facts(),
+          progress_idle_seconds: idle,
+        });
+      }
+      if (stalled !== warned) {
+        warned = stalled;
+        notifyStall(stalled);
+      }
+    }, 5000);
+    return () => {
+      clearInterval(watchdog);
+      if (warned) notifyStall(false);
+    };
+  }
+  async function step(operation, fileIndex, action, failureCode) {
+    stage = operation;
+    const execution = ["encoding", "remux"].includes(operation);
+    resetEvidence();
+    lastProgressReport = performance.now();
+    if (!execution) command = {};
+    const start = performance.now();
+    const stopWatchdog = execution ? watchForStall(operation, fileIndex, start) : null;
     emit("stage_started", fileIndex, { stage, ...facts() });
     try {
       const result = await action();
@@ -310,11 +336,7 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
       );
       error.diagnosticFacts = {
         ...error.diagnosticFacts,
-        exception_kind: ["Error", "TypeError", "RangeError", "RuntimeError", "AbortError"].includes(
-          error.name,
-        )
-          ? error.name
-          : "other",
+        exception_kind: exceptionKind(error.name),
       };
       error.diagnosticCode = code(error);
       emit("stage_finished", fileIndex, {
@@ -326,25 +348,20 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
       });
       throw error;
     } finally {
-      clearInterval(watchdog);
-      if (warned) notifyStall(false);
+      stopWatchdog?.();
     }
   }
   return {
     begin() {
       flush();
-      runId = id();
+      runId = eventId();
       sequence = 0;
       runStarted = performance.now();
       stage = "validation";
       command = {};
-      signal = "";
-      signalSource = "";
       attempt = 0;
       activeFile = 0;
-      lastProgress = null;
-      lastMedia = null;
-      lastPercent = null;
+      resetEvidence();
       emit("stage_started", 0, {
         stage,
         cross_origin_isolated: self.crossOriginIsolated === true,
@@ -367,13 +384,9 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
     mark(operation) {
       stage = operation;
       command = {};
-      signal = "";
-      signalSource = "";
       attempt = 0;
       activeFile = 0;
-      lastProgress = null;
-      lastMedia = null;
-      lastPercent = null;
+      resetEvidence();
       emit("stage_started", 0, { stage });
     },
     configure(args, engine, build, pass, adjustment) {
@@ -401,11 +414,7 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
       activeFile = fileIndex;
       attempt = number;
       command = {};
-      signal = "";
-      signalSource = "";
-      lastProgress = null;
-      lastMedia = null;
-      lastPercent = null;
+      resetEvidence();
       emit("attempt_started", fileIndex, { attempt: number });
     },
     log(line) {
@@ -444,7 +453,7 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
     },
     context() {
       try {
-        return { ...environment(), stage };
+        return { ...browserEnvironment(), stage };
       } catch (_) {
         return {};
       }
@@ -453,7 +462,7 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
       try {
         error = normalizeError(error);
         emit("client_failed", error.diagnosticFileIndex ?? activeFile, {
-          ...environment(),
+          ...browserEnvironment(),
           stage,
           ...failureFacts(error),
           error_code: code(error),
