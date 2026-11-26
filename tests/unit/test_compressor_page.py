@@ -81,7 +81,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('id="clear-selection" type="button"', self.page)
         self.assertIn('aria-label="Clear selected videos"', self.page)
         self.assertNotIn("a new selection replaces the previous one", self.page)
-        self.assertIn("Up to 10 clips, 1 GiB each.", self.page)
+        self.assertIn("Up to 10 clips · 1 GiB each · 4 GiB total", self.page)
 
     def test_feedback_is_optional_and_has_a_support_link(self) -> None:
         self.assertIn(
@@ -99,7 +99,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertNotIn("Plain @names are text", self.page)
 
     def test_progress_and_cancel_are_in_reading_order(self):
-        self.assertIn("Keep this page open and active until it finishes.", self.page)
+        self.assertIn("Keep this page open until it finishes.", self.page)
         self.assertLess(self.page.index('id="work"'), self.page.index('id="cancel"'))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")

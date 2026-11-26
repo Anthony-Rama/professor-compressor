@@ -634,10 +634,10 @@ for (const width of [375, 1440]) {
     await expect(page.locator("#page-heading")).toHaveText("Compression in progress");
     await expect(page.locator("#stay-open")).toBeVisible();
     await expect(page.locator("#stay-open")).toContainText(
-      "Keep this page open and active until it finishes.",
+      "Keep this page open until it finishes.",
     );
     await expect(page.locator("#stay-open")).toContainText(
-      "This helps compression run at full speed.",
+      "Keep your screen on and this tab in front.",
     );
     for (const selector of [
       "#picker-row",

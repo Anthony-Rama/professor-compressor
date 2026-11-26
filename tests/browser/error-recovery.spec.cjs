@@ -335,7 +335,7 @@ for (const diagnostics of [true, false]) {
       };
     });
     await open(page, request);
-    await expect(page.locator("#stay-open")).toContainText("keep the screen unlocked");
+    await expect(page.locator("#stay-open")).toContainText("Keep your screen on");
     await page.locator("#clips").setInputFiles(join(fixtures, "large-small.mp4"));
     await page.locator("#submit").click();
     await expect.poll(() => page.evaluate(() => Boolean(window.heldEncoder))).toBe(true);

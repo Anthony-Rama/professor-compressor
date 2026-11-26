@@ -12,7 +12,13 @@
   <span class="done-mark" aria-hidden="true"><span class="icon icon-check"></span></span>
   <h1 id="page-heading" tabindex="-1">Send videos to Discord</h1>
   <p class="intro" id="page-intro">Shrink your clips to fit Discord's upload limit, right
-    here on your device. Nothing is uploaded until you press Send.</p>
+    here on your device.</p>
+</div>
+<div class="notice stay-open" id="stay-open">
+  <span class="icon icon-phone device-small" aria-hidden="true"></span>
+  <span class="icon icon-laptop device-large" aria-hidden="true"></span>
+  <span><strong>Keep this page open until it finishes.</strong>
+  Keep your screen on and this tab in front.</span>
 </div>
 <ol class="start-steps" aria-label="Steps">
   <li aria-current="step"><span>1</span>Add videos</li>
@@ -40,7 +46,7 @@
       <label class="file-picker" id="drop-zone" for="clips">
         <span class="picker-icon" aria-hidden="true"><span class="icon icon-video-add"></span></span>
         <span class="picker-text"><strong><span class="when-empty">Add your videos</span><span class="when-filled">Add more videos</span></strong>
-          <small>Up to __MAX_CLIPS__ clips, 1 GiB each. <span class="when-empty">Add them in batches or drop them anywhere on this page.</span><span class="when-filled">Drop them anywhere on this page.</span></small></span>
+          <small>Up to __MAX_CLIPS__ clips · 1 GiB each · 4 GiB total</small></span>
         <span class="picker-button" aria-hidden="true">Choose videos</span>
       </label>
       <button class="clear-selection" id="clear-selection" type="button"
@@ -52,9 +58,8 @@
         </svg>
       </button>
     </div>
-    <p class="formats-link"><a href="#format-help">Which formats work?</a></p>
     <p id="selection" class="selection" aria-live="polite">No videos selected</p>
-    <p id="preparation-help" class="selection">Clips are copied to temporary storage on this device. Wait for Ready before exporting your next clip. Up to 1 GiB per clip and 4 GiB total, subject to available browser storage.</p>
+    <p id="preparation-help" class="selection">Wait for <strong>Ready</strong> before exporting your next clip.</p>
     <div id="work" class="work" hidden>
       <div id="stall-warning" class="background-warning" hidden role="status">No processing progress has been reported for at least 2 minutes. Processing may be slow or paused; this is not a confirmed failure. Keep this page visible and your screen unlocked. You can keep waiting, or cancel and retry on a desktop if it does not resume.</div>
       <div id="background-warning" class="background-warning" hidden role="status">
@@ -79,12 +84,6 @@
     <p id="completion-summary" class="completion-summary" hidden role="status"></p>
     <p id="size-summary" class="size-summary" hidden></p>
     <div id="files" class="file-list" hidden></div>
-    <div class="notice stay-open" id="stay-open">
-      <span class="icon icon-phone" aria-hidden="true"></span>
-      <span><strong>Keep this page open and active until it finishes.</strong><br>
-      This helps compression run at full speed. On phones, keep the screen unlocked
-      and this browser in the foreground. Long videos are best processed on a desktop.</span>
-    </div>
   </div>
   <div class="col-side">
     <div class="send-panel">
@@ -130,8 +129,7 @@
         <strong>Energy Saver</strong> while processing.</p>
     </details>
     <p class="privacy"><span id="processing-privacy"><span class="icon icon-lock" aria-hidden="true"></span>Compression runs on
-      this device. Only finished files are sent through the relay to Discord.
-      MP4s that already fit may be sent unchanged.<br></span>
+      this device. Only finished files are sent to Discord; MP4s that already fit may be sent unchanged.<br></span>
       <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
       <span aria-hidden="true"> · </span>
       <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></p>

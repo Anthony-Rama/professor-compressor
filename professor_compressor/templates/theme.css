@@ -51,6 +51,7 @@
       --i-video-add: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='13' height='14' rx='2.5'/%3E%3Cpath d='m16 10 5-3v10l-5-3'/%3E%3Cpath d='M9.5 9.5v5M7 12h5'/%3E%3C/svg%3E");
       --i-video-off: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='13' height='14' rx='2.5'/%3E%3Cpath d='m16 10 5-3v10l-5-3'/%3E%3Cpath d='M7.5 10l4 4M11.5 10l-4 4'/%3E%3C/svg%3E");
       --i-phone: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='6' y='2' width='12' height='20' rx='2.5'/%3E%3Cpath d='M11 18h2'/%3E%3C/svg%3E");
+      --i-laptop: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='16' height='11' rx='2'/%3E%3Cpath d='M2 19h20'/%3E%3C/svg%3E");
       --i-lock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E");
       --i-refresh: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 1 0-2.3 5.7'/%3E%3Cpath d='M20 5v6h-6'/%3E%3C/svg%3E");
       --i-download: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v11M7 10l5 5 5-5M5 20h14'/%3E%3C/svg%3E");
@@ -155,6 +156,7 @@
     .icon-video-add { --icon: var(--i-video-add); }
     .icon-video-off { --icon: var(--i-video-off); }
     .icon-phone { --icon: var(--i-phone); }
+    .icon-laptop { --icon: var(--i-laptop); }
     .icon-lock { --icon: var(--i-lock); }
     .icon-refresh { --icon: var(--i-refresh); }
     .icon-download { --icon: var(--i-download); }

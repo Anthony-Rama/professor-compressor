@@ -76,10 +76,10 @@ __THEME_CSS__
     /* Compressor workspace */
     main.compressor { width: min(100% - 40px, 1184px); padding-top: 24px; }
     .page-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
-    .page-head .intro { margin: 0; max-width: 640px; }
+    .page-head .intro { margin: 0; }
     .page-head:focus-within h1 { outline: none; }
     #page-heading:focus { outline: none; }
-    .recovery-notice { margin-bottom: 8px; }
+    .recovery-notice { margin-bottom: 8px; text-align: left; }
     .start-steps { display: flex; gap: 8px; margin: 0 0 20px; padding: 0; list-style: none; }
     .start-steps li { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0;
                       padding: 10px; border: 1px solid var(--border); border-radius: 12px;
@@ -103,7 +103,7 @@ __THEME_CSS__
                       border-radius: 20px; background: var(--danger-tint); color: var(--danger); }
     .startup-visual .icon { width: 34px; height: 34px; }
     .startup-error .support-actions { width: 100%; }
-    main:has(#startup-error:not([hidden])) :is(#upload, #page-intro, .recovery-notice) {
+    main:has(#startup-error:not([hidden])) :is(#upload, #page-intro, .recovery-notice, #stay-open) {
       display: none; }
     .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 40px;
                  align-items: start; }
@@ -148,8 +148,6 @@ __THEME_CSS__
                        cursor: pointer; }
     .clear-selection:hover:not(:disabled) { background: var(--raised); color: var(--text); }
     .clear-selection:disabled { opacity: .45; cursor: not-allowed; }
-    .formats-link { font-size: 13px; text-align: center; }
-    #upload:has(.file-card) .formats-link { display: none; }
     .selection { color: var(--muted); font-size: 13px; }
     #preparation-help { color: var(--faint); font-size: 12px; }
     .file-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
@@ -218,7 +216,13 @@ __THEME_CSS__
     progress::-webkit-progress-bar { background: var(--track); border-radius: 999px; }
     progress::-webkit-progress-value { background: var(--accent-fill); border-radius: 999px; }
     progress::-moz-progress-bar { background: var(--accent-fill); border-radius: 999px; }
+    .stay-open { margin-bottom: 20px; }
     .stay-open > .icon { color: var(--warning); }
+    .stay-open > .device-large { display: none; }
+    @media (min-width: 768px) {
+      .stay-open > .device-small { display: none; }
+      .stay-open > .device-large { display: block; }
+    }
     .processing-view .stay-open { border-color: var(--warning-border);
                                   background: var(--warning-tint); color: var(--warning-text); }
     .processing-view .stay-open strong { color: var(--warning-text); }
@@ -292,9 +296,9 @@ __THEME_CSS__
     #submit:hover:not(:disabled) { background: var(--accent-hover); }
     #submit:disabled { background: var(--disabled-bg); color: var(--disabled-text);
                        cursor: not-allowed; }
-    #cancel { border: 1px solid var(--border-strong); background: transparent;
-              color: var(--text); }
-    #cancel:hover:not(:disabled) { background: var(--raised); }
+    #cancel { border: 1px solid var(--danger-border); background: var(--danger-surface);
+              color: var(--danger); }
+    #cancel:hover:not(:disabled) { background: var(--danger-tint); }
     #cancel:disabled { opacity: .55; cursor: not-allowed; }
     .submit-help { color: var(--text-soft); font-size: 13px; text-align: center; }
     .submit-help:empty { display: none; }
@@ -328,7 +332,8 @@ __THEME_CSS__
     .performance-help code { color: var(--accent-text); overflow-wrap: anywhere; }
     .privacy { color: var(--faint); font-size: 13px; text-align: center; }
     .privacy .icon { width: 13px; height: 13px; margin: 0 4px -2px 0; }
-    .processing :is(.formats-link, .next-steps), .completed :is(.formats-link, .next-steps) {
+    .compressor .privacy { text-align: left; }
+    .processing .next-steps, .completed .next-steps {
       display: none; }
     main.processing-view, main:has(> #upload.completed) { width: min(100% - 40px, 640px); }
     .processing.workspace, .completed.workspace { grid-template-columns: minmax(0, 1fr);
