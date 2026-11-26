@@ -62,23 +62,65 @@ guild IDs, channel IDs, filenames, IP addresses, or file contents.
 
 ## Code boundaries
 
-The runtime is organized as a Python package with intentionally narrow module
-responsibilities:
+The runtime is organized as a Python package whose subpackages have narrow,
+one-directional responsibilities:
 
 - `config.py` is the only environment parsing boundary. It validates numbers,
   URLs, and Discord IDs, and prevents secret values from appearing in object
-  representations.
-- `domain.py` defines upload jobs, delivery requests, browser results, and the
-  explicit job-state machine.
-- `application.py` integrates Discord and aiohttp and owns process lifecycle.
-- `web_ui.py` renders the browser compression client and serializes dynamic
-  values safely into JavaScript.
-- `media_validation.py` validates untrusted MP4 structure without trusting
-  filenames or MIME headers.
-- `notifications.py` formats operator messages with escaped Discord usernames
-  and user IDs, but without channel names, filenames, IP addresses, session
-  tokens, or file content.
-- `metrics.py` provides locked, aggregate, process-lifetime counters.
+  representations. `domain.py` defines upload jobs, delivery requests, browser
+  results, and the explicit job-state machine. `branding.py` holds the public
+  application identity and listing URLs; `paths.py` locates packaged
+  templates, static files, and browser assets.
+- `app/` composes the process. `runtime.py` is the composition root: it
+  constructs a `Runtime` from validated settings and wires the session
+  registry, rate limiter, delivery service, health service, alerts, and stats
+  reporters together. Each runtime owns its sessions, rate limits, delivery
+  queue, metrics, and diagnostic writer, so independent instances (such as the
+  loopback browser harness, which injects a fake sender) never share globals.
+  Run independent instances with distinct diagnostic database paths when
+  persistence is enabled. `lifecycle.py` owns startup, background loops,
+  graceful drain, and shutdown; `tasks.py` owns fire-and-forget task lifetimes.
+- `bot/` is the Discord boundary: `commands.py` implements the registered
+  command workflows, `events.py` handles guild membership and command
+  registration, `delivery.py` posts relayed results to channels with the
+  checks in `delivery_policy.py`, and `messages.py` formats operator messages
+  with escaped Discord usernames and user IDs, but without channel names,
+  filenames, IP addresses, session tokens, or file content.
+- `sessions/registry.py` holds in-memory upload sessions, short-lived delivery
+  receipts, and their expiry rules.
+- `web/` is the HTTP boundary. `app.py` builds the aiohttp application and its
+  route table in registration order. `session_routes.py` handles browser
+  claims, authentication, leases, and uploads; `report_routes.py` accepts
+  progress and diagnostic reports separately. `security.py` applies security
+  and caching headers to every response, `rate_limit.py` enforces per-client
+  windows, and `health.py` serves liveness, readiness, and aggregate metrics.
+  `pages/` renders public documents and private session pages; the private
+  page embeds a safely serialized JSON configuration.
+- `relay/` owns result handling. `upload.py` validates completed multipart
+  uploads and owns buffer reservations until enqueue; `media_validation.py`
+  checks untrusted MP4 structure without trusting filenames or MIME headers;
+  `diagnostics.py` validates optional per-batch and per-file measurements,
+  which never determine delivery; `worker.py` takes queued batches, records
+  delivery outcomes, and releases their reservations.
+- `observability/` defines allowed event names and values (`contract.py`),
+  owns the SQLite writer (`store.py`) and per-session tracking
+  (`tracking.py`), builds dashboard reports from one bounded, read-only
+  snapshot (`queries.py`, `dashboard.py`), and keeps locked aggregate
+  process-lifetime counters (`metrics.py`).
+- `integrations/` contains optional third-party reporting (Top.gg, dsc.sh) and
+  webhook alerts, isolated from compression work.
+
+Browser modules in `static/` contain no session-specific values; they read
+configuration from the private, non-cacheable document. `compressor.js` is the
+entry point that loads the other modules; `batch-controller.js` runs the batch
+workflow and `compressor-view.js` renders it; `file-selection.js` owns the
+picker and local preparation, `video-encoder.js` owns FFmpeg lifecycle and
+encoding, `relay-client.js` owns upload and delivery polling, and
+`prepared-downloads.js` offers save links when delivery cannot be confirmed.
+`shared.js` holds pure helpers and limits.
+
+Log records keep the logger names they had before the package was split into
+subpackages, so existing log searches continue to match.
 
 The package root has no import-time startup behavior. The runtime token is
 required only when the entry point starts the Discord client, so individual

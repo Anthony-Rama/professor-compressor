@@ -1,0 +1,18 @@
+<img class="brand" src="/brand/professor-compressor.png" alt="Professor Compressor mascot">
+<h1 id="delivery-heading">Checking Discord delivery</h1>
+<p id="delivery-explanation" class="intro">Your browser may have refreshed while
+  finished files were being sent. Below is the current status:</p>
+<p id="delivery-status" class="message" role="status">Checking status…</p>
+<p id="diagnostic-reference" class="privacy" hidden></p>
+<p id="reselect" hidden>That upload did not complete. Videos held by the previous
+  page cannot be restored. <a href="" id="return-to-compressor">Return to compressor</a>
+  and select them again.</p>
+__REVIEW_PROMPT__
+<p class="privacy"><a href="/privacy">Privacy Policy</a></p>
+<script type="application/json" id="delivery-config">__CONFIG_JSON__</script>
+<script type="module">
+import("/brand/delivery-status.js").catch(() => {
+  document.getElementById("delivery-status").textContent =
+    "Could not check delivery. Reload this page or check Discord before trying again.";
+});
+</script>

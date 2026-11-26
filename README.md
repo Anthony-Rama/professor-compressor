@@ -57,7 +57,7 @@ The selection limit is 10 videos. Browser memory, CPU, and background-tab thrott
 
 ## Verification
 
-The repository includes Python tests for configuration, session and delivery behavior, HTTP routes, MP4 validation, and notifications. Browser tests run real FFmpeg WebAssembly against sample videos and cover conversion, the single-thread fallback, 10-file batches, drag and drop, invalid inputs, retries, and narrow layouts. GitHub Actions runs these checks, Python lint and formatting, dependency audits, and a production-container smoke test.
+The repository includes Python tests for configuration, session and delivery behavior, HTTP routes, MP4 validation, and notifications. Browser tests run real FFmpeg WebAssembly against sample videos and cover conversion, the single-thread fallback, 10-file batches, drag and drop, invalid inputs, retries, and narrow layouts; an opt-in encoder stress suite (`RUN_ENCODER_STRESS=1`) exercises longer encodes. GitHub Actions runs these checks, Python and browser lint and formatting, type checks, dependency audits, coverage reporting, and a production-container smoke test.
 
 For maintainers, the test commands and development workflow are in [DEVELOPMENT.md](DEVELOPMENT.md). Local integration uses a separate development Discord application and a private `.env` with `DISCORD_TOKEN`. Browser tests simulate Discord delivery; a live `/compress` test is still needed to check deployed Discord permissions and delivery.
 
@@ -65,13 +65,20 @@ For maintainers, the test commands and development workflow are in [DEVELOPMENT.
 
 | Path | Responsibility |
 | --- | --- |
-| `professor_compressor/application.py` | Discord commands, HTTP relay, delivery workers, and lifecycle |
-| `professor_compressor/domain.py` | Upload jobs, delivery models, and job states |
-| `professor_compressor/web_ui.py` | Browser interface and FFmpeg workflow |
-| `professor_compressor/media_validation.py` | MP4 structure validation before delivery |
-| `professor_compressor/config.py` | Environment parsing and bounds checks |
-| `professor_compressor/notifications.py` and `metrics.py` | Operator alerts and aggregate counters |
-| `tests/` and `.github/workflows/ci.yml` | Automated regression checks |
+| `professor_compressor/app/` | Runtime composition, startup, shutdown, and background tasks |
+| `professor_compressor/bot/` | Discord commands, gateway events, channel delivery, and operator messages |
+| `professor_compressor/sessions/` | In-memory upload sessions, delivery receipts, and expiry |
+| `professor_compressor/web/` | Route table, session and report routes, security headers, health, and pages |
+| `professor_compressor/relay/` | Upload admission, MP4 validation, and the delivery queue worker |
+| `professor_compressor/observability/` | Diagnostic event contract, SQLite writer, dashboard queries, and metrics |
+| `professor_compressor/integrations/` | Optional listing statistics and webhook alerts |
+| `professor_compressor/config.py`, `domain.py`, `branding.py`, `paths.py` | Settings, domain models, public identity, and packaged file locations |
+| `professor_compressor/templates/` | Page markup |
+| `professor_compressor/static/compressor.js` | Private page entry point; loads the browser modules |
+| `professor_compressor/static/batch-controller.js`, `compressor-view.js` | Batch workflow and page rendering |
+| `professor_compressor/static/file-selection.js`, `video-encoder.js`, `relay-client.js` | Local file preparation, encoding, and delivery recovery |
+| `tests/unit/`, `tests/integration/`, `tests/browser/` | Module, HTTP, and browser regression tests |
+| `.github/workflows/ci.yml` | Lint, type checks, audits, tests, and the container smoke test |
 
 ## Source and licensing
 
