@@ -1,3 +1,5 @@
+"""Structural MP4 checks for untrusted browser output before delivery."""
+
 MP4_BRANDS = {
     b"avc1",
     b"dash",

@@ -17,9 +17,12 @@ python -m pip install -r requirements-dev.txt
 npm ci
 python -m ruff check .
 python -m ruff format --check .
+python -m mypy
+npm run lint
+npm run format:check
 python -m pip_audit --requirement requirements.txt
-PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
-python -m compileall -q bot.py professor_compressor tests
+PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -t . -v
+python -m compileall -q bot.py dev_bot.py professor_compressor tests
 npm audit --omit=dev
 npx playwright install chromium
 npm run test:browser

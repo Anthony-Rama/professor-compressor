@@ -1,3 +1,5 @@
+"""Composition root: builds the runtime services and wires them together."""
+
 import asyncio
 import logging
 import os
