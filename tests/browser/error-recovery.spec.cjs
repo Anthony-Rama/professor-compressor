@@ -225,6 +225,28 @@ for (const outcome of ["unknown", "rejected"]) {
     });
   });
 }
+test("delivery status reports a lost connection separately from a busy relay", async ({
+  page,
+  request,
+}) => {
+  const session = await (await request.post("/test/session?slow=1")).json();
+  await page.goto(session.path);
+  await expect(page.locator("#clips")).toBeEnabled();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#page-heading")).toHaveText("Sending to Discord");
+  await page.route("**" + session.path + "/status", (route) => route.abort());
+  await page.reload();
+  await expect(page.locator("#delivery-status")).toContainText(
+    "Connection lost while checking delivery. Retrying safely",
+  );
+  // Drain this test's deliberately slow fake delivery before the next test.
+  await page.unroute("**" + session.path + "/status");
+  await expect(page.locator("#delivery-status")).toContainText("Delivered to Discord", {
+    timeout: 15000,
+  });
+});
+
 test("delivery status backs off on temporary failures and rechecks only on request", async ({
   page,
   request,
@@ -247,7 +269,7 @@ test("delivery status backs off on temporary failures and rechecks only on reque
   });
   await page.clock.install();
   await page.reload();
-  await expect(page.locator("#delivery-status")).toContainText("Retrying safely");
+  await expect(page.locator("#delivery-status")).toContainText("The relay is busy");
   // Advance page time in steps so each retry's request can finish and schedule the next.
   for (
     let second = 0;

@@ -15,7 +15,7 @@ const checkAgain = document.getElementById("check-again");
 const RETRY_DELAYS_MS = [3000, 6000, 12000, 24000, 30000];
 let temporaryFailures = 0;
 
-function retryLater() {
+function retryLater(serverBusy = false) {
   referenceLine.hidden = !DIAGNOSTIC_REFERENCE;
   explanation.hidden = true;
   if (temporaryFailures >= RETRY_DELAYS_MS.length) {
@@ -24,7 +24,9 @@ function retryLater() {
     checkAgain.hidden = false;
     return;
   }
-  statusLine.textContent = "Connection lost while checking delivery. Retrying safely…";
+  statusLine.textContent = serverBusy
+    ? "The relay is busy. Checking delivery again shortly…"
+    : "Connection lost while checking delivery. Retrying safely…";
   setTimeout(checkDelivery, RETRY_DELAYS_MS[temporaryFailures]);
   temporaryFailures += 1;
 }
@@ -47,7 +49,7 @@ async function checkDelivery() {
     const recognized =
       body.pending || body.ok || body.ready || body.code === "discord_delivery_failed";
     if (!recognized && (response.status === 429 || response.status >= 500)) {
-      retryLater();
+      retryLater(true);
       return;
     }
     temporaryFailures = 0;
