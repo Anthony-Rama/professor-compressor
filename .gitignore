@@ -31,3 +31,6 @@ observability-data/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+
+# Local tool state
+.claude/
