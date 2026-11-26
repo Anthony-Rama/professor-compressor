@@ -26,6 +26,14 @@ from .web_responses import json_error, pending_response
 logger = logging.getLogger(__name__)
 
 DELIVERY_RESPONSE_WAIT_SECONDS = 2
+UPLOAD_DEADLINE_SECONDS = 300
+# Longest wait for the next multipart field or chunk before the upload stalls.
+CHUNK_TIMEOUT_SECONDS = 30
+METADATA_CHUNK_BYTES = 1024
+CLIP_CHUNK_BYTES = 1024 * 1024
+MAX_CAPTION_BYTES = 4000
+MAX_CAPTION_CHARACTERS = 1000
+MAX_DIAGNOSTICS_BYTES = 16384
 
 
 class UploadLimits(Protocol):
@@ -157,11 +165,13 @@ async def receive_results(
         if not request.content_type.startswith("multipart/"):
             raise ValueError("The upload format was invalid. Please try again.")
         reader = await request.multipart()
-        upload_deadline = time.monotonic() + 300
+        upload_deadline = time.monotonic() + UPLOAD_DEADLINE_SECONDS
         while True:
             field = await asyncio.wait_for(
                 reader.next(),
-                timeout=max(0, min(30, upload_deadline - time.monotonic())),
+                timeout=max(
+                    0, min(CHUNK_TIMEOUT_SECONDS, upload_deadline - time.monotonic())
+                ),
             )
             if field is None:
                 break
@@ -171,21 +181,24 @@ async def receive_results(
                 caption_received = True
                 caption_data = bytearray()
                 while chunk := await asyncio.wait_for(
-                    field.read_chunk(1024),
-                    timeout=max(0, min(30, upload_deadline - time.monotonic())),
+                    field.read_chunk(METADATA_CHUNK_BYTES),
+                    timeout=max(
+                        0,
+                        min(CHUNK_TIMEOUT_SECONDS, upload_deadline - time.monotonic()),
+                    ),
                 ):
                     caption_data.extend(chunk)
                     received_bytes += len(chunk)
                     last_chunk_at = time.monotonic()
-                    if len(caption_data) > 4000:
+                    if len(caption_data) > MAX_CAPTION_BYTES:
                         break
-                if len(caption_data) > 4000:
+                if len(caption_data) > MAX_CAPTION_BYTES:
                     raise ValueError("The message is too long.")
                 try:
                     caption = " ".join(caption_data.decode("utf-8").split())
                 except UnicodeDecodeError as error:
                     raise ValueError("The message contains invalid text.") from error
-                if len(caption) > 1000:
+                if len(caption) > MAX_CAPTION_CHARACTERS:
                     raise ValueError("The message must be 1,000 characters or fewer.")
                 continue
             if field.name == "diagnostics":
@@ -196,13 +209,16 @@ async def receive_results(
                 diagnostics_received = True
                 raw_diagnostics = bytearray()
                 while chunk := await asyncio.wait_for(
-                    field.read_chunk(1024),
-                    timeout=max(0, min(30, upload_deadline - time.monotonic())),
+                    field.read_chunk(METADATA_CHUNK_BYTES),
+                    timeout=max(
+                        0,
+                        min(CHUNK_TIMEOUT_SECONDS, upload_deadline - time.monotonic()),
+                    ),
                 ):
                     raw_diagnostics.extend(chunk)
                     received_bytes += len(chunk)
                     last_chunk_at = time.monotonic()
-                    if len(raw_diagnostics) > 16384:
+                    if len(raw_diagnostics) > MAX_DIAGNOSTICS_BYTES:
                         raise ValueError("The diagnostics field is too long.")
                 diagnostics = parse_compression_diagnostics(
                     bytes(raw_diagnostics), max_clips=limits.max_clips
@@ -217,8 +233,10 @@ async def receive_results(
 
             file_data = bytearray()
             while chunk := await asyncio.wait_for(
-                field.read_chunk(1024 * 1024),
-                timeout=max(0, min(30, upload_deadline - time.monotonic())),
+                field.read_chunk(CLIP_CHUNK_BYTES),
+                timeout=max(
+                    0, min(CHUNK_TIMEOUT_SECONDS, upload_deadline - time.monotonic())
+                ),
             ):
                 if not state.try_reserve(len(chunk), limits.max_delivery_buffer_bytes):
                     return json_error(

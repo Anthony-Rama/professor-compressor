@@ -10,6 +10,8 @@ import discord
 from .config import MIB
 from .domain import BrowserResult, CompressionDiagnostic, UploadJob
 
+DISCORD_MESSAGE_LIMIT = 2000
+
 INPUT_FORMAT_LABELS = {
     "mp4": "MP4",
     "mov": "MOV",
@@ -243,7 +245,7 @@ def compression_outcome_alert(
             )
     lines.append(f"Elapsed: `{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}`")
     message = "\n".join(lines)
-    if len(message) > 2000:
+    if len(message) > DISCORD_MESSAGE_LIMIT:
         # Detailed per-file measurements remain in structured logs.
         lines = [line for line in lines if not line.startswith("File ")]
         lines.insert(6, "Per-file diagnostics are available in the server logs.")

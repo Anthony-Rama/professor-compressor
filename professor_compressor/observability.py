@@ -21,6 +21,7 @@ from pathlib import Path
 from .observability_contract import (
     CLIENT_EVENTS,
     EVENTS,
+    MAX_FILE_INDEX,
     diagnostic_reference,
     sanitize,
     valid_id,
@@ -119,7 +120,7 @@ class EventStore:
                 return
             if reference != diagnostic_reference(session_id):
                 return
-            if type(file_index) is not int or not 0 <= file_index <= 10:
+            if type(file_index) is not int or not 0 <= file_index <= MAX_FILE_INDEX:
                 return
             row = (
                 session_id,

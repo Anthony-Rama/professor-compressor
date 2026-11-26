@@ -15,6 +15,7 @@ from .notifications import compression_outcome_alert, compression_progress_alert
 from .observability import EventStore
 from .observability_contract import (
     CLIENT_EVENTS,
+    MAX_FILE_INDEX,
     diagnostic_reference,
     sanitize,
     valid_id,
@@ -23,6 +24,16 @@ from .relay_diagnostics import sanitize_telemetry
 from .web_responses import json_error
 
 logger = logging.getLogger(__name__)
+
+MAX_REPORT_BYTES = 4096
+REPORT_READ_TIMEOUT_SECONDS = 5
+MAX_DIAGNOSTIC_REPORT_BYTES = 16384
+DIAGNOSTIC_READ_TIMEOUT_SECONDS = 3
+DIAGNOSTIC_REQUESTS_PER_MINUTE = 120
+MAX_EVENTS_PER_REPORT = 20
+MAX_EVENTS_PER_SESSION = 1000
+FAILURE_REPORTS_PER_MINUTE = 30
+MAX_STAGE_LABEL_CHARACTERS = 60
 
 
 class ReportContext(Protocol):
@@ -65,7 +76,10 @@ async def receive_browser_progress(
             "The session is already being delivered.", 409, "session_used"
         )
     try:
-        payload = await asyncio.wait_for(request.clone(client_max_size=4096).json(), 5)
+        payload = await asyncio.wait_for(
+            request.clone(client_max_size=MAX_REPORT_BYTES).json(),
+            REPORT_READ_TIMEOUT_SECONDS,
+        )
     except web.HTTPRequestEntityTooLarge:
         return json_error("Progress report is too large.", 413, "report_too_large")
     except (ValueError, TypeError, TimeoutError):
@@ -154,21 +168,26 @@ async def receive_diagnostic_events(
     if not diagnostic_id:
         return json_error("Session unavailable.", 410, "session_expired")
     if (
-        context.rate_limit_retry_after(request, "diagnostic_events", limit=120)
+        context.rate_limit_retry_after(
+            request, "diagnostic_events", limit=DIAGNOSTIC_REQUESTS_PER_MINUTE
+        )
         is not None
     ):
         return json_error("Too many diagnostic reports.", 429, "rate_limited")
     try:
-        payload = await asyncio.wait_for(request.clone(client_max_size=16384).json(), 3)
+        payload = await asyncio.wait_for(
+            request.clone(client_max_size=MAX_DIAGNOSTIC_REPORT_BYTES).json(),
+            DIAGNOSTIC_READ_TIMEOUT_SECONDS,
+        )
     except (ValueError, TypeError, TimeoutError, web.HTTPException):
         return json_error("Invalid diagnostic report.", 400, "invalid_report")
     if not isinstance(payload, dict) or not valid_id(payload.get("run_id")):
         return json_error("Invalid run.", 400, "invalid_report")
     events = payload.get("events")
-    if not isinstance(events, list) or len(events) > 20:
+    if not isinstance(events, list) or len(events) > MAX_EVENTS_PER_REPORT:
         return json_error("Invalid events.", 400, "invalid_report")
     count = context.diagnostic_event_counts.get(diagnostic_id, 0)
-    if count + len(events) > 1000:
+    if count + len(events) > MAX_EVENTS_PER_SESSION:
         return json_error("Diagnostic limit reached.", 429, "rate_limited")
     for item in events:
         if (
@@ -212,7 +231,10 @@ async def receive_browser_telemetry(
     if context.rate_limit_retry_after(request, "telemetry") is not None:
         return json_error("Too many reports.", 429, "rate_limited")
     try:
-        payload = await asyncio.wait_for(request.clone(client_max_size=4096).json(), 5)
+        payload = await asyncio.wait_for(
+            request.clone(client_max_size=MAX_REPORT_BYTES).json(),
+            REPORT_READ_TIMEOUT_SECONDS,
+        )
     except (ValueError, TypeError, TimeoutError, web.HTTPException):
         return json_error("Invalid report.", 400, "invalid_report")
     if not isinstance(payload, dict):
@@ -302,10 +324,18 @@ async def receive_browser_failure(
             409,
             "outcome_already_recorded",
         )
-    if context.rate_limit_retry_after(request, "failure", limit=30) is not None:
+    if (
+        context.rate_limit_retry_after(
+            request, "failure", limit=FAILURE_REPORTS_PER_MINUTE
+        )
+        is not None
+    ):
         return json_error("Too many failure reports.", 429, "rate_limited")
     try:
-        payload = await asyncio.wait_for(request.clone(client_max_size=4096).json(), 5)
+        payload = await asyncio.wait_for(
+            request.clone(client_max_size=MAX_REPORT_BYTES).json(),
+            REPORT_READ_TIMEOUT_SECONDS,
+        )
     except web.HTTPRequestEntityTooLarge:
         return json_error("Failure report is too large.", 413, "report_too_large")
     except (ValueError, TypeError, TimeoutError):
@@ -316,7 +346,7 @@ async def receive_browser_failure(
     operation = sanitize({"stage": payload.get("operation")}).get("stage", "")
     failure_run = valid_id(payload.get("run_id")) or job.active_run_id
     failure_file = payload.get("file_index", 0)
-    if type(failure_file) is not int or not 0 <= failure_file <= 10:
+    if type(failure_file) is not int or not 0 <= failure_file <= MAX_FILE_INDEX:
         failure_file = 0
     context.track(
         job,
@@ -332,7 +362,7 @@ async def receive_browser_failure(
         character
         for character in raw_stage
         if character.isalnum() or character in " ._-"
-    ).strip()[:60]
+    ).strip()[:MAX_STAGE_LABEL_CHARACTERS]
     if not job.browser_failure_reported and (
         not job.active_run_id or failure_run == job.active_run_id
     ):

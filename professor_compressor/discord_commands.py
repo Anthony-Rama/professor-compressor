@@ -21,6 +21,8 @@ from .notifications import (
 )
 
 PAGE_EXIT_GRACE_SECONDS = 5
+# Longer status reports are attached as a file, below Discord's 2000 limit.
+MAX_INLINE_REPORT_CHARACTERS = 1900
 
 
 class CommandContext(Protocol):
@@ -232,7 +234,7 @@ async def botstats(context: CommandContext, interaction: discord.Interaction) ->
         return
 
     report = botstats_report(context.client.guilds, context.metrics.snapshot())
-    if len(report) <= 1900:
+    if len(report) <= MAX_INLINE_REPORT_CHARACTERS:
         await interaction.followup.send(report, ephemeral=True)
         return
     report_file = discord.File(

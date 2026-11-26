@@ -19,10 +19,17 @@ from .web_responses import json_error, pending_response
 from .web_ui import browser_compressor, browser_delivery_status
 
 OUTCOME_TTL_SECONDS = 3600
+# Matches the upload rate limiter's sliding window.
+RATE_LIMIT_WINDOW_SECONDS = 60
 RESUME_COOKIE_NAME = "__Secure-pc-browser"
 RESUME_COOKIE_MAX_AGE_SECONDS = 3 * 3600
 # Activity renews a claimed link, but never beyond this long after it was opened.
 HARD_SESSION_LIFETIME_SECONDS = 7200
+# A heartbeat marks the page as actively processing for this long.
+PROCESSING_LEASE_SECONDS = 90
+# Expired cooldown entries are dropped after the larger of 4 cooldowns and this.
+MIN_COOLDOWN_RETENTION_SECONDS = 300
+MIN_RETAINED_RECEIPTS = 1000
 
 
 class SessionContext(Protocol):
@@ -158,14 +165,17 @@ def discard_expired_jobs(context: SessionContext) -> None:
     stale_cooldowns = [
         key
         for key, started_at in context.last_job_at.items()
-        if now - started_at > max(context.settings.user_cooldown_seconds * 4, 300)
+        if now - started_at
+        > max(
+            context.settings.user_cooldown_seconds * 4, MIN_COOLDOWN_RETENTION_SECONDS
+        )
     ]
     for key in stale_cooldowns:
         context.last_job_at.pop(key, None)
 
     monotonic_now = time.monotonic()
     for values in context.request_times.values():
-        while values and monotonic_now - values[0] >= 60:
+        while values and monotonic_now - values[0] >= RATE_LIMIT_WINDOW_SECONDS:
             values.popleft()
     stale_rate_keys = [
         key for key, values in context.request_times.items() if not values
@@ -288,7 +298,9 @@ def record_outcome(
         is_test=job.guild_id in context.settings.diagnostic_test_guild_ids,
     )
     # Bound receipt memory independently from active sessions. No media is retained.
-    while len(context.outcomes) > max(1000, context.settings.max_active_jobs * 4):
+    while len(context.outcomes) > max(
+        MIN_RETAINED_RECEIPTS, context.settings.max_active_jobs * 4
+    ):
         context.outcomes.pop(next(iter(context.outcomes)))
 
 
@@ -350,7 +362,9 @@ async def renew_session(context: SessionContext, request: web.Request) -> web.Re
     if job.state is JobState.CLAIMED:
         if not context.draining:
             extend_claimed_session(job, context.settings.active_session_ttl_seconds)
-        job.processing_until = min(time.time() + 90, job.expires_at)
+        job.processing_until = min(
+            time.time() + PROCESSING_LEASE_SECONDS, job.expires_at
+        )
     return await session_status(context, request)
 
 

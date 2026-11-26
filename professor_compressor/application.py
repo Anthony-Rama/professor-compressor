@@ -48,6 +48,14 @@ from .web_pages import browser_security_headers, register_public_pages
 
 logger = logging.getLogger(__name__)
 
+ALERT_TIMEOUT_SECONDS = 5
+DSC_TIMEOUT_SECONDS = 10
+RATE_LIMIT_WINDOW_SECONDS = 60
+EXPIRY_SWEEP_SECONDS = 60
+COMMAND_SYNC_RETRY_SECONDS = 30
+# Shutdown grace for in-flight work; compose allows 150 s before SIGKILL.
+DRAIN_TIMEOUT_SECONDS = 120
+
 
 def request_ip(request: web.Request) -> str:
     """Use Caddy's forwarded address only when the direct peer is private."""
@@ -165,7 +173,7 @@ class Runtime:
         if not self.settings.alert_webhook_url:
             return
         try:
-            timeout = ClientTimeout(total=5)
+            timeout = ClientTimeout(total=ALERT_TIMEOUT_SECONDS)
             async with ClientSession(timeout=timeout) as session:
                 async with session.post(
                     self.settings.alert_webhook_url,
@@ -190,7 +198,7 @@ class Runtime:
         if not self.settings.dsc_api_token or self.client.user is None:
             return False
         try:
-            timeout = ClientTimeout(total=10)
+            timeout = ClientTimeout(total=DSC_TIMEOUT_SECONDS)
             async with ClientSession(timeout=timeout) as session:
                 async with session.post(
                     f"https://dsc.sh/api/bots/{self.client.user.id}/stats",
@@ -250,11 +258,11 @@ class Runtime:
         now = time.monotonic()
         key = (bucket, request_ip(request))
         timestamps = self.request_times.setdefault(key, deque())
-        while timestamps and now - timestamps[0] >= 60:
+        while timestamps and now - timestamps[0] >= RATE_LIMIT_WINDOW_SECONDS:
             timestamps.popleft()
         if len(timestamps) >= (limit or self.settings.upload_rate_limit_per_minute):
             self.metrics.increment("rate_limited_requests")
-            return max(1, int(60 - (now - timestamps[0])))
+            return max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - timestamps[0])))
         timestamps.append(now)
         return None
 
@@ -265,7 +273,7 @@ class Runtime:
         try:
             while not self.client.is_closed():
                 self.discard_expired_jobs()
-                await asyncio.sleep(60)
+                await asyncio.sleep(EXPIRY_SWEEP_SECONDS)
         except asyncio.CancelledError:
             pass
 
@@ -678,7 +686,7 @@ class Runtime:
                     error.status,
                     error.code,
                 )
-                await asyncio.sleep(30)
+                await asyncio.sleep(COMMAND_SYNC_RETRY_SECONDS)
 
     async def on_ready(self) -> None:
         await self.start_upload_server()
@@ -700,7 +708,7 @@ class Runtime:
             "Logged in as %s in %d server(s)", self.client.user, len(self.client.guilds)
         )
 
-    async def drain_sessions(self, timeout: float = 120) -> None:
+    async def drain_sessions(self, timeout: float = DRAIN_TIMEOUT_SECONDS) -> None:
         """Reject new work while allowing existing browser/relay work to finish."""
         self.draining = True
         deadline = time.monotonic() + timeout

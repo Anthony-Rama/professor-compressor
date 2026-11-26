@@ -4,6 +4,8 @@ import math
 import re
 
 HEX_ID = re.compile(r"[0-9a-f]{32}\Z")
+# File positions are 1-based; 0 means the event concerns the whole batch.
+MAX_FILE_INDEX = 10
 EVENTS = frozenset(
     {
         "created",

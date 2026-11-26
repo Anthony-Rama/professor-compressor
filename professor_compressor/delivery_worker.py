@@ -14,6 +14,9 @@ from .notifications import compression_outcome_alert
 
 logger = logging.getLogger(__name__)
 
+# Upper bound for one Discord upload; later outcomes are reported as unconfirmed.
+SEND_TIMEOUT_SECONDS = 120
+
 
 def delivery_timing(delivery: DeliveryRequest, started: float) -> dict:
     return {
@@ -85,7 +88,7 @@ async def run_delivery_worker(
         try:
             message = await asyncio.wait_for(
                 send(delivery.job, delivery.results, delivery.caption),
-                timeout=120,
+                timeout=SEND_TIMEOUT_SECONDS,
             )
             total_bytes = sum(len(result.data) for result in delivery.results)
             try:
