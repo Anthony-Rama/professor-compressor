@@ -28,3 +28,11 @@ warn_redundant_casts = true
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.coverage.run]
+source = ["professor_compressor"]
+branch = true
+
+[tool.coverage.report]
+skip_empty = true
+precision = 1
