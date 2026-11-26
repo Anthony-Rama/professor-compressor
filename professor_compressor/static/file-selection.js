@@ -1,5 +1,11 @@
 // File picker, drag and drop, and browser-local input preparation.
-import { INPUT_BATCH_LIMIT, INPUT_FILE_LIMIT, bytesToGiB, codedError } from "./shared.js";
+import {
+  INPUT_BATCH_LIMIT,
+  INPUT_FILE_LIMIT,
+  bytesToGiB,
+  codedError,
+  readableSize,
+} from "./shared.js";
 
 export function createFileSelection({
   sessionSecret: SESSION_SECRET,
@@ -13,12 +19,8 @@ export function createFileSelection({
   filesElement,
   isRunning,
   sessionExpired,
-  readableSize,
-  updateFile,
   reportProgress,
-  clearPreparedFiles,
-  showSelectionError,
-  hideMessage,
+  events,
 }) {
   let selectedFiles = [];
   const inputCopies = new Map();
@@ -260,7 +262,7 @@ export function createFileSelection({
       const state = selectedFiles.find((item) => item.identity === copy.identity);
       if (state) {
         state.file = saved;
-        updateFile(state, "Ready", 0);
+        events.emit("fileStatus", state, "Ready", 0);
         setSelectedFiles(selectedFiles.map((item) => item.file));
       }
     } catch (error) {
@@ -273,10 +275,10 @@ export function createFileSelection({
         : "Local file preparation could not start. Reload this page and reselect the clip, or try an updated Chrome or Edge browser.";
       const state = selectedFiles.find((item) => item.identity === copy.identity);
       if (state) {
-        updateFile(state, "Reselect file", 0);
+        events.emit("fileStatus", state, "Reselect file", 0);
         state.meta.textContent = copy.error;
         state.reselect.hidden = false;
-        showSelectionError("Video " + state.index + ": " + copy.error);
+        events.emit("selectionError", "Video " + state.index + ": " + copy.error);
       }
     } finally {
       refreshPreparation();
@@ -300,7 +302,7 @@ export function createFileSelection({
         picker.remove();
         if (!file || isRunning() || clips.disabled || selectedFiles[index] !== old) return;
         if (selectedFiles.some((state) => state !== old && state.identity === fileIdentity(file))) {
-          showSelectionError("That video is already selected.");
+          events.emit("selectionError", "That video is already selected.");
           return;
         }
         const replacementBytes = selectedFiles.reduce(
@@ -309,7 +311,8 @@ export function createFileSelection({
         );
         if (file.size > INPUT_FILE_LIMIT || replacementBytes > INPUT_BATCH_LIMIT) {
           preparationReport(0, replacementBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
-          showSelectionError(
+          events.emit(
+            "selectionError",
             "That replacement exceeds the 1 GiB per-video or 4 GiB batch limit. Your existing selection was kept.",
           );
           return;
@@ -318,7 +321,7 @@ export function createFileSelection({
         discardInputCopy(inputCopies.get(old.identity));
         inputCopies.delete(old.identity);
         setSelectedFiles(selectedFiles.map((state) => (state === old ? file : state.file)));
-        hideMessage();
+        events.emit("messageCleared");
         renderSelection();
       },
       { once: true },
@@ -327,7 +330,7 @@ export function createFileSelection({
   }
 
   function renderSelection() {
-    clearPreparedFiles();
+    events.emit("selectionChanged");
     const files = Array.from(clips.files);
     const identities = new Set(files.map(fileIdentity));
     for (const [identity, copy] of inputCopies) {
@@ -381,7 +384,10 @@ export function createFileSelection({
         if (generation === selectionGeneration) return acceptSelectedFiles(incoming);
       })
       .catch(() => {
-        showSelectionError("Could not check this selection. Please select the videos again.");
+        events.emit(
+          "selectionError",
+          "Could not check this selection. Please select the videos again.",
+        );
       })
       .finally(() => {
         pendingSelections -= 1;
@@ -392,7 +398,8 @@ export function createFileSelection({
   async function acceptSelectedFiles(incoming) {
     if (isRunning() || clips.disabled) return;
     if (sessionExpired()) {
-      showSelectionError(
+      events.emit(
+        "selectionError",
         "This session expired. Run /compress for a new link before selecting videos.",
       );
       return;
@@ -411,14 +418,15 @@ export function createFileSelection({
     });
     if (current.length + additions.length > MAX_CLIPS) {
       setSelectedFiles(current);
-      showSelectionError(
+      events.emit(
+        "selectionError",
         "Choose no more than " + MAX_CLIPS + " videos total. Remove some before adding more.",
       );
       return;
     }
     if (!additions.length) {
       setSelectedFiles(current);
-      showSelectionError("Those videos are already selected.");
+      events.emit("selectionError", "Those videos are already selected.");
       return;
     }
     if (additions.some((file) => file.size > INPUT_FILE_LIMIT)) {
@@ -427,14 +435,18 @@ export function createFileSelection({
         additions.reduce((sum, file) => sum + file.size, 0),
       )("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
       setSelectedFiles(current);
-      showSelectionError("Each video must be 1 GiB or smaller. Existing clips were kept.");
+      events.emit(
+        "selectionError",
+        "Each video must be 1 GiB or smaller. Existing clips were kept.",
+      );
       return;
     }
     const totalBytes = [...current, ...additions].reduce((sum, file) => sum + file.size, 0);
     if (totalBytes > INPUT_BATCH_LIMIT) {
       preparationReport(0, totalBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
       setSelectedFiles(current);
-      showSelectionError(
+      events.emit(
+        "selectionError",
         "This selection would total " +
           bytesToGiB(totalBytes).toFixed(2) +
           " GiB, above the 4 GiB batch limit. Existing clips were kept. Add fewer videos or remove some first.",
@@ -456,7 +468,7 @@ export function createFileSelection({
       if (selectedFiles === snapshot && !isRunning() && !clips.disabled) {
         report("failed", error);
         setSelectedFiles(current);
-        showSelectionError(error.message);
+        events.emit("selectionError", error.message);
       } else report("cancelled");
       return;
     }
@@ -466,7 +478,7 @@ export function createFileSelection({
     }
     report("ready");
     setSelectedFiles([...current, ...additions]);
-    hideMessage();
+    events.emit("messageCleared");
     renderSelection();
   }
 
@@ -476,7 +488,7 @@ export function createFileSelection({
     setSelectedFiles(
       selectedFiles.filter((_, position) => position !== index).map((state) => state.file),
     );
-    hideMessage();
+    events.emit("messageCleared");
     renderSelection();
     const remaining = filesElement.querySelectorAll(".remove-file");
     if (remaining.length) remaining[Math.min(index, remaining.length - 1)].focus();
@@ -488,7 +500,7 @@ export function createFileSelection({
     if (isRunning() || clips.disabled) return;
     selectionGeneration += 1;
     clips.value = "";
-    hideMessage();
+    events.emit("messageCleared");
     renderSelection();
     clips.focus();
   });
@@ -524,7 +536,7 @@ export function createFileSelection({
       if (isRunning() || clips.disabled || !event.dataTransfer) return;
       const items = Array.from(event.dataTransfer.items || []);
       if (items.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) {
-        showSelectionError("Drop video files, not folders.");
+        events.emit("selectionError", "Drop video files, not folders.");
         return;
       }
       const files = Array.from(event.dataTransfer.files);
@@ -549,7 +561,7 @@ export function createFileSelection({
     copy.phase = "failed";
     copy.error = errorMessage;
     if (copy.task) void copy.task.dispose().catch(() => {});
-    updateFile(state, "Reselect file", 0);
+    events.emit("fileStatus", state, "Reselect file", 0);
     state.meta.textContent = copy.error;
     state.reselect.hidden = false;
     refreshPreparation();

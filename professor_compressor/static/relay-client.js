@@ -9,10 +9,7 @@ export function createRelayClient({
   hiddenSeconds,
   getCaption,
   isCancelled,
-  overallProgress,
-  phaseCopy,
-  updateFile,
-  setRunDetail,
+  events,
 }) {
   let uploadRequest = null;
   let sessionDeadline = Date.now() + expiresInSeconds * 1000;
@@ -70,7 +67,7 @@ export function createRelayClient({
       request.upload.addEventListener("progress", (event) => {
         if (!event.lengthComputable) return;
         const fraction = event.loaded / event.total;
-        overallProgress.value = 80 + fraction * 18;
+        events.emit("progress", 80 + fraction * 18);
         const resultBytes = results.reduce((sum, result) => sum + result.blob.size, 0);
         const sentBytes = fraction * resultBytes;
         let previousBytes = 0;
@@ -79,19 +76,22 @@ export function createRelayClient({
             0,
             Math.min(1, (sentBytes - previousBytes) / result.blob.size),
           );
-          if (fileFraction >= 1) updateFile(result.state, "Sent to relay", 100);
+          if (fileFraction >= 1) events.emit("fileStatus", result.state, "Sent to relay", 100);
           else if (fileFraction > 0)
-            updateFile(
+            events.emit(
+              "fileStatus",
               result.state,
               "Sending " + Math.round(fileFraction * 100) + "%",
               fileFraction * 100,
             );
-          else updateFile(result.state, "Waiting to send", 0);
+          else events.emit("fileStatus", result.state, "Waiting to send", 0);
           previousBytes += result.blob.size;
         }
-        phaseCopy.textContent =
-          "Uploading finished files through the secure relay: " + Math.round(fraction * 100) + "%";
-        setRunDetail("Sending " + Math.round(fraction * 100) + "%");
+        events.emit(
+          "phaseCopy",
+          "Uploading finished files through the secure relay: " + Math.round(fraction * 100) + "%",
+        );
+        events.emit("runDetail", "Sending " + Math.round(fraction * 100) + "%");
       });
       request.upload.addEventListener("loadend", () => {
         batchMetrics.upload_seconds =
@@ -100,11 +100,14 @@ export function createRelayClient({
       request.upload.addEventListener("load", () => {
         batchMetrics.stage = "delivery";
         diagnostic.mark("delivery");
-        overallProgress.value = 98;
-        phaseCopy.textContent =
-          "Upload sent. Waiting for the relay to confirm receipt and Discord delivery.";
-        setRunDetail("Waiting for Discord");
-        for (const result of results) updateFile(result.state, "Waiting for Discord", 100);
+        events.emit("progress", 98);
+        events.emit(
+          "phaseCopy",
+          "Upload sent. Waiting for the relay to confirm receipt and Discord delivery.",
+        );
+        events.emit("runDetail", "Waiting for Discord");
+        for (const result of results)
+          events.emit("fileStatus", result.state, "Waiting for Discord", 100);
       });
       request.addEventListener("load", () => {
         const body = request.response || {};
@@ -147,9 +150,11 @@ export function createRelayClient({
         uploadRequest = null;
         const deadline = performance.now() + 600000;
         while (response.pending) {
-          setRunDetail("Waiting for Discord");
-          phaseCopy.textContent =
-            "The relay is processing this batch. You do not need to send it again.";
+          events.emit("runDetail", "Waiting for Discord");
+          events.emit(
+            "phaseCopy",
+            "The relay is processing this batch. You do not need to send it again.",
+          );
           if (performance.now() > deadline)
             throw Object.assign(
               new Error("Delivery is still pending. Check its status again without recompressing."),
@@ -178,15 +183,17 @@ export function createRelayClient({
             : Math.pow(2, attempt) + Math.floor(Math.random() * 3);
         for (let remaining = waitSeconds; remaining > 0; remaining -= 1) {
           if (isCancelled()) throw new DOMException("Cancelled", "AbortError");
-          phaseCopy.textContent =
+          events.emit(
+            "phaseCopy",
             "The connection was interrupted. Your compressed files are still available on this page. " +
-            "Checking delivery again in " +
-            remaining +
-            " second" +
-            (remaining === 1 ? "" : "s") +
-            " (attempt " +
-            (attempt + 1) +
-            " of 3).";
+              "Checking delivery again in " +
+              remaining +
+              " second" +
+              (remaining === 1 ? "" : "s") +
+              " (attempt " +
+              (attempt + 1) +
+              " of 3).",
+          );
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }

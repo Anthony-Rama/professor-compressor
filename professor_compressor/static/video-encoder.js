@@ -1,5 +1,5 @@
 // FFmpeg lifecycle, media probing, and size-targeted encoding.
-import { codedError } from "./shared.js";
+import { codedError, processingError } from "./shared.js";
 
 export function createVideoEncoder({
   assetPrefix: ASSET_PREFIX,
@@ -9,17 +9,12 @@ export function createVideoEncoder({
   EncoderClient,
   fetchFile,
   diagnostic,
-  processingError,
   getFiles,
   getBatchMetrics,
   isCancelled,
   executeWithActivity,
   noteEncodingProgress,
-  updateFile,
-  updateFileSizes,
-  setRunDetail,
-  overallProgress,
-  phaseCopy,
+  events,
 }) {
   const OUTPUT_TARGET_RATIO = 0.97;
   const SINGLE_CORE_BASE = ASSET_PREFIX + "/core-esm";
@@ -78,11 +73,12 @@ export function createVideoEncoder({
       lastProgressAttempt = currentAttempt;
       lastProgressPercent = percent;
       const adjustment = currentAttempt > 1 ? "Adjusting size" : "Compressing";
-      updateFile(currentState, adjustment + " " + percent + "%", percent);
+      events.emit("fileStatus", currentState, adjustment + " " + percent + "%", percent);
       const completed = getFiles().filter((state) => state.finalSize > 0).length;
       const overall = ((completed + fraction) / getFiles().length) * 80;
-      overallProgress.value = Math.max(0, Math.min(80, overall));
-      setRunDetail(
+      events.emit("progress", Math.max(0, Math.min(80, overall)));
+      events.emit(
+        "runDetail",
         "Video " + currentState.index + " of " + getFiles().length + " · " + percent + "%",
       );
     });
@@ -132,14 +128,14 @@ export function createVideoEncoder({
   async function loadEncoderCore() {
     if (isCancelled()) throw new DOMException("Cancelled", "AbortError");
     for (const state of getFiles()) {
-      if (!state.finalSize) updateFile(state, "Loading video engine", 0);
+      if (!state.finalSize) events.emit("fileStatus", state, "Loading video engine", 0);
     }
-    setRunDetail("Loading video engine");
+    events.emit("runDetail", "Loading video engine");
     const supportsThreads = self.crossOriginIsolated && typeof SharedArrayBuffer !== "undefined";
     if (supportsThreads) {
       ffmpeg = createEncoder();
       try {
-        setRunDetail("Starting video engine");
+        events.emit("runDetail", "Starting video engine");
         await startEncoder({
           coreURL: MULTI_CORE_BASE + "/ffmpeg-core.js",
           wasmURL: MULTI_CORE_BASE + "/ffmpeg-core.wasm",
@@ -160,9 +156,9 @@ export function createVideoEncoder({
     ffmpeg = createEncoder();
     try {
       for (const state of getFiles()) {
-        if (!state.finalSize) updateFile(state, "Loading compatibility engine", 0);
+        if (!state.finalSize) events.emit("fileStatus", state, "Loading compatibility engine", 0);
       }
-      setRunDetail("Loading compatibility engine");
+      events.emit("runDetail", "Loading compatibility engine");
       await startEncoder({
         coreURL: SINGLE_CORE_BASE + "/ffmpeg-core.js",
         wasmURL: SINGLE_CORE_BASE + "/ffmpeg-core.wasm",
@@ -312,8 +308,8 @@ export function createVideoEncoder({
     });
     const effectiveTargetBytes = outputTargetBytes();
     if (file.size <= unchangedLimitBytes() && format === "mp4") {
-      updateFile(state, "Already fits", 100);
-      updateFileSizes(state, file.size);
+      events.emit("fileStatus", state, "Already fits", 100);
+      events.emit("fileSizes", state, file.size);
       return {
         blob: file,
         name: safeOriginalName(file.name, state.index),
@@ -341,7 +337,7 @@ export function createVideoEncoder({
         },
         "FILE_READ_FAILED",
       );
-      updateFile(state, "Reading video metadata", 0);
+      events.emit("fileStatus", state, "Reading video metadata", 0);
       const metadataStarted = performance.now();
       await diagnostic.step(
         "metadata",
@@ -457,7 +453,7 @@ export function createVideoEncoder({
         ) {
           currentAttempt = 1;
           lastFfmpegMessage = "";
-          updateFile(state, "Preparing MP4 without re-encoding", 0);
+          events.emit("fileStatus", state, "Preparing MP4 without re-encoding", 0);
           batchMetrics.stage = "remux";
           const remuxArgs = [
             "-i",
@@ -481,8 +477,8 @@ export function createVideoEncoder({
             const remuxed = await ffmpeg.readFile(outputName);
             if (remuxed.byteLength <= unchangedLimitBytes()) {
               const blob = new Blob([remuxed], { type: "video/mp4" });
-              updateFile(state, "Converted without re-encoding", 100);
-              updateFileSizes(state, blob.size);
+              events.emit("fileStatus", state, "Converted without re-encoding", 100);
+              events.emit("fileSizes", state, blob.size);
               return {
                 blob,
                 name: safeStem(file.name, state.index) + "-converted.mp4",
@@ -504,7 +500,7 @@ export function createVideoEncoder({
           requireEncodingBudget();
           currentAttempt = 1;
           lastFfmpegMessage = "";
-          updateFile(state, "Converting to MP4", 0);
+          events.emit("fileStatus", state, "Converting to MP4", 0);
           const conversionExit = await timedEncode(state, [
             "-i",
             inputName,
@@ -543,8 +539,8 @@ export function createVideoEncoder({
           const converted = await ffmpeg.readFile(outputName);
           if (converted.byteLength <= unchangedLimitBytes()) {
             const blob = new Blob([converted], { type: "video/mp4" });
-            updateFile(state, "Converted to MP4", 100);
-            updateFileSizes(state, blob.size);
+            events.emit("fileStatus", state, "Converted to MP4", 100);
+            events.emit("fileSizes", state, blob.size);
             return {
               blob,
               name: safeStem(file.name, state.index) + "-converted.mp4",
@@ -560,7 +556,7 @@ export function createVideoEncoder({
           }
           await removeVirtualFile(outputName);
         }
-        updateFile(state, "Converted MP4 is too large; adjusting size", 0);
+        events.emit("fileStatus", state, "Converted MP4 is too large; adjusting size", 0);
       }
       requireEncodingBudget();
       let videoKbps = budgetVideoKbps;
@@ -618,7 +614,7 @@ export function createVideoEncoder({
         videoKbps = Math.max(100, Math.floor(videoKbps * correction * OUTPUT_TARGET_RATIO));
         await removeVirtualFile(outputName);
         currentAttempt = 2;
-        updateFile(state, "Adjusting final size", 0);
+        events.emit("fileStatus", state, "Adjusting final size", 0);
         exitCode = await encode(videoKbps);
         if (isCancelled()) throw new DOMException("Cancelled", "AbortError");
         if (exitCode !== 0)
@@ -637,8 +633,8 @@ export function createVideoEncoder({
         );
       }
       const blob = new Blob([output], { type: "video/mp4" });
-      updateFile(state, "Compressed", 100);
-      updateFileSizes(state, blob.size);
+      events.emit("fileStatus", state, "Compressed", 100);
+      events.emit("fileSizes", state, blob.size);
       return {
         blob,
         name: safeStem(file.name, state.index) + "-compressed.mp4",
@@ -698,7 +694,7 @@ export function createVideoEncoder({
       try {
         currentState = state;
         diagnostic.attempt(state.index, attempt);
-        updateFile(state, attempt === 1 ? "Starting" : "Retrying automatically", 0);
+        events.emit("fileStatus", state, attempt === 1 ? "Starting" : "Retrying automatically", 0);
         const result = await compressOne(state);
         if (isCancelled()) throw new DOMException("Cancelled", "AbortError");
         result.diagnostic.encoding_seconds = Math.round(state.encodingMs) / 1000;
@@ -755,10 +751,10 @@ export function createVideoEncoder({
             error.message,
           )
         ) {
-          updateFile(state, "Needs attention", 0);
+          events.emit("fileStatus", state, "Needs attention", 0);
           throw error;
         }
-        updateFile(state, "Retrying encoder", 0);
+        events.emit("fileStatus", state, "Retrying encoder", 0);
         diagnostic.emit("retry", state.index, {
           ...diagnostic.failureContext(error),
           attempt: attempt + 1,
@@ -767,10 +763,12 @@ export function createVideoEncoder({
           error_code: diagnostic.code(error),
           retryable: true,
         });
-        phaseCopy.textContent =
+        events.emit(
+          "phaseCopy",
           "The encoder stopped unexpectedly. Reloading it and retrying " +
-          state.file.name +
-          " once.";
+            state.file.name +
+            " once.",
+        );
         await resetEncoder();
       }
     }

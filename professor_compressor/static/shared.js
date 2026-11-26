@@ -25,6 +25,33 @@ export function codedError(message, code) {
   return error;
 }
 
+// The worker can reject with a primitive even when diagnostics cannot load.
+export function processingError(value) {
+  return value && typeof value === "object"
+    ? value
+    : new Error(typeof value === "string" ? value : "The video engine stopped unexpectedly.");
+}
+
+export function readableSize(bytes) {
+  if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+// Synchronous channel from the processing modules to the page view. Each event
+// type has one handler; it runs inside emit(), so ordering and exceptions are
+// exactly those of a direct call.
+export function createEmitter() {
+  const handlers = new Map();
+  return {
+    on(type, handler) {
+      handlers.set(type, handler);
+    },
+    emit(type, ...args) {
+      return handlers.get(type)?.(...args);
+    },
+  };
+}
+
 // 32 lowercase hex characters from 16 random bytes. Throws if crypto is unavailable.
 export function randomHex() {
   const bytes = new Uint8Array(16);

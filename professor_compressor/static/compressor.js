@@ -17,7 +17,7 @@ async function initializeCompressor() {
     { createRelayClient, createPreparedDownloadView },
     { createFileSelection },
     { createVideoEncoder },
-    { FAILURE_REPORT_RETRY_STATUSES, randomHex },
+    { FAILURE_REPORT_RETRY_STATUSES, createEmitter, processingError, randomHex, readableSize },
   ] = await Promise.all([
     import("/brand/encoder-client.js"),
     import(ASSET_PREFIX + "/util-esm/index.js"),
@@ -91,12 +91,6 @@ async function initializeCompressor() {
       });
     })
     .catch(() => {});
-  function processingError(value) {
-    // The worker can reject with a primitive even when diagnostics cannot load.
-    return value && typeof value === "object"
-      ? value
-      : new Error(typeof value === "string" ? value : "The video engine stopped unexpectedly.");
-  }
   const form = document.getElementById("upload");
   const clips = document.getElementById("clips");
   const clearSelectionButton = document.getElementById("clear-selection");
@@ -270,6 +264,21 @@ async function initializeCompressor() {
     pageIsLeaving = false;
   });
 
+  // The selection, encoder and relay modules report UI changes as events; the page applies them.
+  const events = createEmitter();
+  events.on("fileStatus", updateFile);
+  events.on("fileSizes", updateFileSizes);
+  events.on("runDetail", setRunDetail);
+  events.on("progress", (value) => {
+    overallProgress.value = value;
+  });
+  events.on("phaseCopy", (text) => {
+    phaseCopy.textContent = text;
+  });
+  events.on("selectionError", showSelectionError);
+  events.on("messageCleared", hideMessage);
+  events.on("selectionChanged", clearPreparedFiles);
+
   const relay = createRelayClient({
     sessionSecret: SESSION_SECRET,
     expiresInSeconds: SESSION_EXPIRES_SECONDS,
@@ -278,10 +287,7 @@ async function initializeCompressor() {
     hiddenSeconds,
     getCaption: () => caption.value,
     isCancelled: () => cancelled,
-    overallProgress,
-    phaseCopy,
-    updateFile,
-    setRunDetail,
+    events,
   });
   const preparedDownloads = createPreparedDownloadView();
 
@@ -307,11 +313,6 @@ async function initializeCompressor() {
       if (error.status === 410 || error.status === 403) relay.expire();
       updateExpiry();
     }
-  }
-
-  function readableSize(bytes) {
-    if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   }
 
   function readableTime(seconds) {
@@ -468,12 +469,8 @@ async function initializeCompressor() {
     filesElement,
     isRunning: () => running,
     sessionExpired,
-    readableSize,
-    updateFile,
     reportProgress,
-    clearPreparedFiles,
-    showSelectionError,
-    hideMessage,
+    events,
   });
 
   const encoder = createVideoEncoder({
@@ -484,17 +481,12 @@ async function initializeCompressor() {
     EncoderClient,
     fetchFile,
     diagnostic,
-    processingError,
     getFiles: () => fileSelection.files,
     getBatchMetrics: () => batchMetrics,
     isCancelled: () => cancelled,
     executeWithActivity,
     noteEncodingProgress,
-    updateFile,
-    updateFileSizes,
-    setRunDetail,
-    overallProgress,
-    phaseCopy,
+    events,
   });
 
   async function reportBrowserFailure(stage, error) {
