@@ -1062,14 +1062,21 @@ test("invalid input can be removed and retried in the same session", async ({ pa
 });
 
 test("cancel during engine loading settles before another attempt", async ({ page, request }) => {
+  // Hold the engine core until Cancel is pressed, so cancellation always lands mid-load.
+  let engineRequested, releaseEngine;
+  const engineLoading = new Promise((resolve) => (engineRequested = resolve));
+  const engineReleased = new Promise((resolve) => (releaseEngine = resolve));
   await page.route("**/assets/**/core-mt-esm/ffmpeg-core.js", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    engineRequested();
+    await engineReleased;
     await route.continue();
   });
   await openSession(page, request);
   await page.locator("#clips").setInputFiles(join(fixtures, "large.mp4"));
   await page.locator("#submit").click();
+  await engineLoading;
   await page.locator("#cancel").click();
+  releaseEngine();
   await expect(page.locator("#submit")).toBeEnabled({ timeout: 30000 });
   await page.getByRole("button", { name: "Remove large.mp4" }).click();
   await deliver(page, join(fixtures, "small.mp4"));

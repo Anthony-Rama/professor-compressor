@@ -507,11 +507,17 @@ for (const audio of [true, false])
   });
 test("repeated submit events cannot send the same batch twice", async ({ page, request }) => {
   const session = await open(page, request);
-  let posts = 0;
+  let posts = 0,
+    uploadStarted,
+    releaseUpload;
+  const uploading = new Promise((resolve) => (uploadStarted = resolve));
+  const uploadReleased = new Promise((resolve) => (releaseUpload = resolve));
+  // Hold the upload in flight until the test has seen it, instead of a fixed delay.
   await page.route("**" + session.path, async (route) => {
     if (route.request().method() === "POST") {
       posts++;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      uploadStarted();
+      await uploadReleased;
     }
     return route.continue();
   });
@@ -521,6 +527,8 @@ test("repeated submit events cannot send the same batch twice", async ({ page, r
     document.querySelector("#upload").requestSubmit();
     document.querySelector("#upload").requestSubmit();
   });
+  await uploading;
+  releaseUpload();
   await expect(page.locator("#page-heading")).toHaveText("Delivered to Discord");
   expect(posts).toBe(1);
 });
