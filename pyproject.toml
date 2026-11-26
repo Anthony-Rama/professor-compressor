@@ -20,6 +20,12 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 "professor_compressor/observability/store.py" = ["E501"]
 "professor_compressor/observability/queries.py" = ["E501"]
 
+[tool.mypy]
+python_version = "3.11"
+files = ["bot.py", "dev_bot.py", "professor_compressor"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
