@@ -56,8 +56,11 @@ class PublicRouteTests(WebAppTestCase):
             f"{self.runtime.settings.public_base_url}/",
         )
         self.assertIn("Add to Discord", home_html)
-        self.assertIn("Written Guide", home_html)
-        self.assertIn("Read how it works", home_html)
+        self.assertIn(
+            '<a href="/guide/compress-video-for-discord">Guide</a>', home_html
+        )
+        self.assertIn('href="#how">See how it works</a>', home_html)
+        self.assertIn('<section id="how"', home_html)
         self.assertIn('id="support"', home_html)
         self.assertIn("Join the support server", home_html)
         self.assertIn(
@@ -69,8 +72,11 @@ class PublicRouteTests(WebAppTestCase):
             home_html,
         )
         self.assertNotIn("Video guide", home_html)
-        self.assertNotIn("Top.gg", home_html)
         self.assertIn('id="listings"', home_html)
+        listings = home_html.split('id="listings"', 1)[1].split("</section>", 1)[0]
+        self.assertIn(
+            '<a href="https://top.gg/bot/1550752400271351839">Top.gg</a>', listings
+        )
         self.assertIn("https://dsc.sh/bot/1550752400271351839", home_html)
         self.assertIn("https://discordbotlist.com/bots/professor-compressor", home_html)
         self.assertIn("https://discord.bots.gg/bots/1550752400271351839", home_html)

@@ -1,60 +1,69 @@
 """Public legal pages for the hosted Professor Compressor service."""
 
+import re
 from html import escape
 
-from ...branding import PROJECT_URL
+from ...paths import TEMPLATES
+from .site import SITE_CSS, site_footer, site_header
 
 EFFECTIVE_DATE = "October 31, 2026"
 
+_SECTION_HEADING = re.compile(r"<h2>((\d+)\. [^<]+)</h2>")
+
+_LEGAL_CSS = (TEMPLATES / "legal.css").read_text(encoding="utf-8")
+
 
 def _document(title: str, content: str) -> str:
+    sections: list[tuple[str, str]] = []
+
+    def anchor(match: re.Match[str]) -> str:
+        sections.append((match.group(2), match.group(1)))
+        return f'<h2 id="section-{match.group(2)}">{match.group(1)}</h2>'
+
+    content = _SECTION_HEADING.sub(anchor, content)
+    section_links = "\n".join(
+        f'        <a href="#section-{number}">{heading}</a>'
+        for number, heading in sections
+    )
+    privacy_current = ' aria-current="page"' if title == "Privacy Policy" else ""
+    terms_current = ' aria-current="page"' if title == "Terms of Service" else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
   <meta name="description" content="{escape(title)} for Professor Compressor">
   <title>Professor Compressor | {escape(title)}</title>
   <link rel="icon" type="image/png" href="/brand/professor-compressor.png">
   <link rel="apple-touch-icon" href="/brand/professor-compressor.png">
   <style>
-    :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui,
-             -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; background: #090e18; color: #f8fafc; }}
-    main {{ width: min(820px, calc(100% - 32px)); margin: 40px auto;
-            padding: clamp(24px, 5vw, 52px); border: 1px solid #2b3a50;
-            border-radius: 22px; background: #172131;
-            box-shadow: 0 24px 70px rgba(0, 0, 0, .35); }}
-    header {{ padding-bottom: 24px; border-bottom: 1px solid #344158; }}
-    h1 {{ margin: 0 0 8px; font-size: clamp(32px, 7vw, 48px);
-          letter-spacing: -.035em; }}
-    h2 {{ margin: 34px 0 10px; font-size: 21px; }}
-    p, li {{ color: #bdc7d5; line-height: 1.65; }}
-    li + li {{ margin-top: 8px; }}
-    a {{ color: #aeb4ff; }}
-    .effective {{ margin: 0; color: #8f9db0; }}
-    .notice {{ margin-top: 24px; padding: 15px 17px; border: 1px solid #41506a;
-               border-radius: 12px; background: #111a2a; }}
-    footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #344158;
-              color: #8f9db0; font-size: 14px; }}
-    footer a + a {{ margin-left: 18px; }}
+{SITE_CSS}
+{_LEGAL_CSS}
   </style>
 </head>
 <body>
-  <main>
-    <header>
-      <h1>{escape(title)}</h1>
-      <p class="effective">Effective date: {EFFECTIVE_DATE}</p>
-    </header>
-    {content}
-    <footer>
-      <a href="/privacy">Privacy Policy</a>
-      <a href="/terms">Terms of Service</a>
-      <a href="/brand/third-party-notices.txt">Third-party notices</a>
-      <a href="{PROJECT_URL}">Source code</a>
-    </footer>
-  </main>
+  {site_header()}
+  <div class="wrap legal-layout">
+    <aside class="legal-aside">
+      <nav class="doc-switch" aria-label="Legal documents">
+        <a href="/privacy"{privacy_current}>Privacy</a>
+        <a href="/terms"{terms_current}>Terms</a>
+      </nav>
+      <nav class="sections" aria-label="Sections">
+        <strong>Sections</strong>
+{section_links}
+      </nav>
+    </aside>
+    <main class="legal">
+      <header>
+        <h1>{escape(title)}</h1>
+        <p class="effective">Effective date: {EFFECTIVE_DATE}</p>
+      </header>
+      {content}
+    </main>
+  </div>
+  {site_footer()}
 </body>
 </html>"""
 
