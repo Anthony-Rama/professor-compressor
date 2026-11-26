@@ -8,7 +8,8 @@ accepted. See the README for the original code's reuse terms.
 
 1. Create a focused branch from `main`.
 2. Create a private `dev.env` for the separate development Discord application.
-3. Install Python and browser dependencies.
+3. Install Python and browser dependencies, using Python 3.11 and Node.js 22
+   (`.python-version` and `.nvmrc`), which match CI and the production image.
 4. Add or update tests for behavior changes.
 5. Run the complete local quality suite before opening a pull request.
 
