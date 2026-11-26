@@ -37,6 +37,13 @@ export function readableSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+export function readableTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "--:--";
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  return minutes + ":" + String(rounded % 60).padStart(2, "0");
+}
+
 // Synchronous channel from the processing modules to the page view. Each event
 // type has one handler; it runs inside emit(), so ordering and exceptions are
 // exactly those of a direct call.
