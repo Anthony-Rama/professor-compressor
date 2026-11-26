@@ -8,19 +8,17 @@ from ...paths import TEMPLATES
 from ..assets import ASSET_PREFIX
 from .theme import with_shared_markup
 
+_SESSION_FOOTER = (TEMPLATES / "session-footer.html").read_text(encoding="utf-8")
+
 
 def _fragment(name: str) -> str:
     """Load an HTML fragment that is inserted into another document."""
     text = (TEMPLATES / name).read_text(encoding="utf-8").rstrip("\n")
-    return with_shared_markup(text)
+    return with_shared_markup(text.replace("__SESSION_FOOTER__", _SESSION_FOOTER))
 
 
-_COMPRESSOR_TEMPLATE = with_shared_markup(
-    (TEMPLATES / "compressor.html").read_text(encoding="utf-8")
-)
-_DELIVERY_TEMPLATE = with_shared_markup(
-    (TEMPLATES / "delivery-status.html").read_text(encoding="utf-8")
-)
+_COMPRESSOR_TEMPLATE = _fragment("compressor.html")
+_DELIVERY_TEMPLATE = _fragment("delivery-status.html")
 REVIEW_PROMPT = _fragment("review-prompt.html").replace(
     "__TOPGG_URL__", TOPGG_LISTING_URL
 )

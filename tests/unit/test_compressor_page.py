@@ -218,9 +218,10 @@ class ThemeChoiceMarkupTests(unittest.TestCase):
                 )
                 self.assertNotIn("__THEME", document)
 
-    def test_session_pages_offer_a_theme_radio_group_outside_forms(self) -> None:
+    def test_session_pages_share_the_support_and_legal_footer(self) -> None:
         documents = self.documents()
         for name in (
+            "compressor",
             "delivery status",
             "unavailable",
             "maintenance",
@@ -228,26 +229,23 @@ class ThemeChoiceMarkupTests(unittest.TestCase):
         ):
             with self.subTest(page=name):
                 body = documents[name].split("<body>", 1)[1]
-                header, _, rest = body.partition("</header>")
-                switch = '<fieldset class="theme-switch" hidden>'
-                self.assertNotIn(switch, header)
-                footer = rest.split('<footer class="page-footer', 1)[1]
+                footer = body.split('<footer class="page-footer session-footer">', 1)[1]
                 container = footer.split("</footer>", 1)[0]
-                self.assertIn(switch, container)
-                self.assertIn(
-                    '<legend class="visually-hidden">Theme</legend>', container
-                )
-                for value in ("system", "light", "dark"):
-                    self.assertIn(
-                        f'type="radio" name="theme-choice" value="{value}"', container
-                    )
-                self.assertNotIn("theme-menu", body)
+                self.assertEqual(container.count("<a href="), 4)
+                for target in (
+                    "/privacy",
+                    "/terms",
+                    "mailto:professorcompressor.support@gmail.com?",
+                    "https://discord.com/invite/32RWwNWyEH",
+                ):
+                    self.assertIn(f'href="{target}', container)
+                self.assertNotIn("theme-menu", container)
 
-    def test_compressor_and_website_offer_a_theme_menu_in_the_header(self) -> None:
+    def test_all_pages_offer_a_theme_menu_in_the_header(self) -> None:
         documents = self.documents()
-        for name in ("compressor", "home", "guide", "privacy", "terms"):
+        for name, document in documents.items():
             with self.subTest(page=name):
-                body = documents[name].split("<body>", 1)[1]
+                body = document.split("<body>", 1)[1]
                 header = body.split("</header>", 1)[0]
                 self.assertIn('aria-haspopup="menu" aria-expanded="false"', header)
                 self.assertIn('aria-label="Theme: System"', header)

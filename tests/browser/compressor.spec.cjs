@@ -258,12 +258,8 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
   await expect(page.locator("#completion-summary")).toBeVisible();
   await expect(page.locator("#work")).toBeHidden();
   await expect(page.locator(".file-card progress")).toBeHidden();
-  // Contact and server links share the outlined style (light theme by default).
-  await expect(page.locator("#feedback-link")).toHaveCSS("border-top-color", "rgb(126, 134, 168)");
-  await expect(page.locator("#feedback-actions .support-link")).toHaveCSS(
-    "border-top-color",
-    "rgb(126, 134, 168)",
-  );
+  await expect(page.locator("#feedback-link")).toBeHidden();
+  await expect(page.locator("#feedback-actions .support-link")).toBeHidden();
   await expect(page.getByRole("link", { name: "Back to Discord" })).toBeVisible();
   await expect(page.locator("#page-intro")).toBeHidden();
   await expect(page.locator("#drop-zone")).toBeHidden();
@@ -274,24 +270,15 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
   await expect(page.locator("#performance-help")).toBeHidden();
   await expect(page.locator("#format-help")).toBeHidden();
   await expect(page.locator("#message")).toHaveCSS("text-align", "center");
-  await expect(page.getByRole("link", { name: "Contact us" })).toHaveAttribute(
+  const footer = page.getByRole("navigation", { name: "Support and legal" });
+  await expect(footer.getByRole("link", { name: "Contact Support" })).toHaveAttribute(
     "href",
     /^mailto:professorcompressor\.support@gmail\.com\?/,
   );
-  await expect(page.getByRole("link", { name: "Join our server" })).toHaveAttribute(
+  await expect(footer.getByRole("link", { name: "Join Discord" })).toHaveAttribute(
     "href",
     "https://discord.com/invite/32RWwNWyEH",
   );
-  const actions = page.locator("#feedback-actions");
-  const firstAction = await actions.getByRole("link", { name: "Contact us" }).boundingBox();
-  const secondAction = await actions.getByRole("link", { name: "Join our server" }).boundingBox();
-  const actionsBox = await actions.boundingBox();
-  expect(
-    Math.abs(
-      (firstAction.x + secondAction.x + secondAction.width) / 2 -
-        (actionsBox.x + actionsBox.width / 2),
-    ),
-  ).toBeLessThan(2);
 });
 
 test("single-thread fallback still encodes when multithread core is unavailable", async ({

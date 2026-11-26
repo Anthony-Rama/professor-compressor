@@ -130,6 +130,32 @@ test("the Ready tip only shows when videos are selected", async ({ page, request
   await expect(tip).toBeHidden();
 });
 
+test("the shared footer stays available on the compressor and completed delivery", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  async function expectSharedNavigation() {
+    const header = page.getByRole("banner");
+    await expect(header.getByRole("button", { name: "Theme: System" })).toBeVisible();
+    const footer = page.getByRole("contentinfo");
+    const links = footer.getByRole("link");
+    await expect(links).toHaveText([
+      "Privacy Policy",
+      "Terms of Service",
+      "Contact Support",
+      "Join Discord",
+    ]);
+    await expect(footer.locator(".theme-menu, .theme-switch")).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+  }
+  await openSession(page, request);
+  await expectSharedNavigation();
+  await openDeliveredStatus(page, request);
+  await expectSharedNavigation();
+  await expect(page.locator(".status-support")).toBeHidden();
+});
+
 test("the action bar explains why sending is unavailable", async ({ page, request }) => {
   await page.addInitScript(() => {
     const slice = File.prototype.slice;

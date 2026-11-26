@@ -32,7 +32,12 @@ __THEME_CSS__
                    justify-content: center; gap: 8px 16px; padding: 12px 20px 20px;
                    border-top: 1px solid var(--border); color: var(--faint);
                    font-size: 13px; text-align: center; }
-    .theme-footer { border-top: 0; padding-top: 0; }
+    .session-footer { padding: 13px 20px; }
+    main.compressor + .session-footer { margin-top: auto; }
+    .session-footer nav { display: flex; flex-wrap: wrap; align-items: center;
+                          justify-content: center; gap: 4px 22px; }
+    .session-footer a { color: var(--muted); padding: 5px 0; text-underline-offset: 3px; }
+    .session-footer a:hover, .session-footer a:focus-visible { color: var(--text); }
     .message { padding: 13px 14px; border: 1px solid var(--border); border-radius: 14px;
                background: var(--surface); color: var(--text); font-size: 14px;
                line-height: 1.45; }
@@ -319,6 +324,7 @@ __THEME_CSS__
     .download-link .icon { color: var(--accent-text); }
     #feedback-actions .back-to-discord { display: none; }
     .completed #feedback-actions .back-to-discord { display: inline-flex; }
+    .completed #feedback-actions :is(.feedback-link, .support-link) { display: none; }
     .next-steps { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0 8px;
                   color: var(--text-soft); font-size: 14px; list-style: none;
                   counter-reset: next; }
@@ -337,8 +343,7 @@ __THEME_CSS__
     .privacy { color: var(--faint); font-size: 13px; text-align: center; }
     .privacy .icon { width: 13px; height: 13px; margin: 0 4px -2px 0; }
     .compressor .privacy { text-align: left; }
-    .compressor .legal-links { display: block; text-align: center; }
-    #processing-privacy:not([hidden]) + .legal-links { margin-top: 6px; }
+    .completed .privacy { display: none; }
     .processing .next-steps, .completed .next-steps {
       display: none; }
     main.processing-view, main:has(> #upload.completed) { width: min(100% - 40px, 640px); }
@@ -435,11 +440,10 @@ __THEME_CSS__
     #reselect { display: flex; flex-direction: column; gap: 14px; }
     #reselect[hidden] { display: none; }
     #reselect p { color: var(--text-soft); font-size: 15px; text-align: center; }
-    .status-support { display: none; }
-    .status-page:is([data-state="stalled"], [data-state="failed"], [data-state="unconfirmed"],
-                    [data-state="unavailable"], [data-state="delivered"])
+    #delivery-page .status-support { display: none; }
+    #delivery-page:is([data-state="stalled"], [data-state="failed"], [data-state="unconfirmed"],
+                      [data-state="unavailable"])
       .status-support { display: flex; }
-    .status-page[data-state="delivered"] .status-support p { display: none; }
     .steps-card { display: flex; flex-direction: column; gap: 10px; }
     .steps-card strong { font-size: 15px; }
     .steps-card ol { display: flex; flex-direction: column; gap: 8px; margin: 0;
