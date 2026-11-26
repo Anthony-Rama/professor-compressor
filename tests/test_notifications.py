@@ -99,7 +99,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         import asyncio
         import time
 
-        from professor_compressor.application import log_delivery_diagnostics
+        from professor_compressor.delivery_worker import log_delivery_diagnostics
         from professor_compressor.domain import DeliveryRequest
 
         job = UploadJob("x", 1, 2, 9999999999, 20 * 1024 * 1024, Mock())
@@ -109,7 +109,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             asyncio.get_event_loop().create_future(),
             diagnostics=[CompressionDiagnostic(100, 86400, 100, False, "mp4", 1e-320)],
         )
-        with patch("professor_compressor.application.logger.info") as log:
+        with patch("professor_compressor.delivery_worker.logger.info") as log:
             log_delivery_diagnostics(delivery, time.monotonic(), "delivered")
         payload = json.loads(log.call_args.args[1])
         self.assertNotIn("encoding_speed", payload["files"][0])

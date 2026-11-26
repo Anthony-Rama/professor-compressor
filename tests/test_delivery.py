@@ -79,6 +79,47 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
     def test_compression_target_keeps_small_delivery_reserve(self) -> None:
         self.assertEqual(compression_target(20_000_000), 19_600_000)
 
+    async def test_cancelled_worker_releases_only_its_dequeued_batch(self):
+        from professor_compressor.domain import DeliveryRequest, JobState
+
+        sending = asyncio.Event()
+
+        async def send(*_):
+            sending.set()
+            await asyncio.Future()
+
+        runtime = Runtime(Settings(discord_token=""), deliver_results=send)
+        runtime.delivery_queue = asyncio.Queue(2)
+        for token, payload in (("in-flight", b"first"), ("queued", b"second")):
+            job = UploadJob(
+                token, 1, 2, 9999999999, 1000, Mock(), state=JobState.QUEUED
+            )
+            runtime.jobs[token] = job
+            runtime.delivery_bytes_held += len(payload)
+            runtime.delivery_queue.put_nowait(
+                DeliveryRequest(
+                    job,
+                    [BrowserResult("clip.mp4", payload)],
+                    asyncio.get_running_loop().create_future(),
+                )
+            )
+        in_flight = runtime.jobs["in-flight"]
+        worker = asyncio.create_task(runtime.delivery_worker(1))
+        try:
+            await asyncio.wait_for(sending.wait(), 2)
+        finally:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        self.assertEqual(runtime.delivery_bytes_held, len(b"second"))
+        self.assertIs(in_flight.state, JobState.DONE)
+        self.assertEqual(set(runtime.jobs), {"queued"})
+        self.assertEqual(runtime.outcomes, {})
+        remaining = runtime.delivery_queue.get_nowait()
+        self.assertEqual(remaining.job.token, "queued")
+        remaining.completed.cancel()
+        runtime.delivery_queue.task_done()
+        await asyncio.wait_for(runtime.delivery_queue.join(), 2)
+
     def test_unknown_failures_are_not_rejections_or_raw_exception_messages(
         self,
     ) -> None:

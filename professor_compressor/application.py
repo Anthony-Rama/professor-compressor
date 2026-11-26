@@ -26,8 +26,10 @@ from .delivery_policy import (
     DeliveryFailure,
     bot_upload_limit,
     channel_delivery_problem,
+    compression_target,
     delivery_failure,
 )
+from .delivery_worker import run_delivery_worker
 from .domain import (
     BrowserResult,
     CompressionDiagnostic,
@@ -60,11 +62,6 @@ RESUME_COOKIE_NAME = "__Secure-pc-browser"
 RESUME_COOKIE_MAX_AGE_SECONDS = 3 * 3600
 PAGE_EXIT_GRACE_SECONDS = 5
 DELIVERY_RESPONSE_WAIT_SECONDS = 2
-
-
-def compression_target(discord_limit: int) -> int:
-    """Reserve two percent for delivery while preserving output quality."""
-    return max(1 * MIB, int(discord_limit * 0.98))
 
 
 def request_ip(request: web.Request) -> str:
@@ -132,50 +129,6 @@ def pending_response() -> web.Response:
         },
         status=202,
         headers={"Cache-Control": "no-store"},
-    )
-
-
-def delivery_timing(delivery: DeliveryRequest, started: float) -> dict:
-    return {
-        "relay_receive_seconds": round(delivery.received_seconds, 3),
-        "queue_seconds": round(max(0, started - delivery.queued_at), 3),
-        "discord_delivery_seconds": round(max(0, time.monotonic() - started), 3),
-    }
-
-
-def log_delivery_diagnostics(
-    delivery: DeliveryRequest, started: float, outcome: str
-) -> None:
-    files = []
-    for index, diagnostic in enumerate(delivery.diagnostics):
-        item = {
-            "file": index + 1,
-            **diagnostic.telemetry,
-            "encoding_seconds": diagnostic.encoding_seconds,
-            "duration_seconds": diagnostic.duration_seconds,
-            "input_bytes": diagnostic.input_bytes,
-            "output_bytes": len(delivery.results[index].data),
-            "input_format": diagnostic.input_format,
-            "video_kbps": diagnostic.video_kbps,
-        }
-        if diagnostic.encoding_seconds and diagnostic.duration_seconds:
-            speed = diagnostic.duration_seconds / diagnostic.encoding_seconds
-            if math.isfinite(speed):
-                item["encoding_speed"] = round(speed, 3)
-        files.append(item)
-    logger.info(
-        "Processing diagnostics %s",
-        json.dumps(
-            {
-                "outcome": outcome,
-                "diagnostic_id": delivery.job.diagnostic_id,
-                "reference": delivery.job.diagnostic_reference,
-                "run_id": delivery.run_id,
-                "files": files,
-                **delivery_timing(delivery, started),
-            },
-            allow_nan=False,
-        ),
     )
 
 
@@ -1456,154 +1409,32 @@ class Runtime:
                 else "DISCORD_REJECTED",
             ) from error
 
+    def finish_delivery(self, delivery: DeliveryRequest) -> None:
+        self.delivery_bytes_held = max(
+            0,
+            self.delivery_bytes_held
+            - sum(len(result.data) for result in delivery.results),
+        )
+        delivery.job.state = JobState.DONE
+        self.jobs.pop(delivery.job.token, None)
+
     async def delivery_worker(self, worker_number: int) -> None:
         assert self.delivery_queue is not None
-        while not self.client.is_closed():
-            delivery = await self.delivery_queue.get()
-            delivery_started = time.monotonic()
-            self.track(
-                delivery.job,
-                "delivery_started",
-                run_id=delivery.run_id,
-                data={"queue_seconds": max(0, delivery_started - delivery.queued_at)},
-            )
-            try:
-                message = await asyncio.wait_for(
-                    (self._deliver_results or self.deliver_browser_results)(
-                        delivery.job, delivery.results, delivery.caption
-                    ),
-                    timeout=120,
-                )
-                total_bytes = sum(len(result.data) for result in delivery.results)
-                try:
-                    log_delivery_diagnostics(delivery, delivery_started, "delivered")
-                except Exception:
-                    logger.warning("Optional delivery diagnostic formatting failed")
-                self.track(
-                    delivery.job,
-                    "delivered",
-                    run_id=delivery.run_id,
-                    data={
-                        "files": len(delivery.results),
-                        "output_bytes": total_bytes,
-                        **delivery_timing(delivery, delivery_started),
-                    },
-                )
-                self.metrics.increment("deliveries_succeeded")
-                self.metrics.increment("files_delivered", len(delivery.results))
-                self.metrics.increment("bytes_delivered", total_bytes)
-                self.record_outcome(
-                    delivery.job,
-                    200,
-                    {
-                        "ok": True,
-                        "message": message,
-                        "count": len(delivery.results),
-                    },
-                )
-                self.schedule_owner_alert(
-                    compression_outcome_alert(
-                        delivery.job,
-                        succeeded=True,
-                        file_count=len(delivery.results),
-                        total_bytes=total_bytes,
-                        results=delivery.results,
-                        diagnostics=delivery.diagnostics,
-                        timing=delivery_timing(delivery, delivery_started),
-                        effective_target=min(
-                            compression_target(delivery.job.discord_limit),
-                            min(
-                                self.settings.max_result_total_bytes,
-                                self.settings.max_delivery_buffer_bytes,
-                            )
-                            // len(delivery.results),
-                        ),
-                        unchanged_limit=min(
-                            delivery.job.discord_limit,
-                            min(
-                                self.settings.max_result_total_bytes,
-                                self.settings.max_delivery_buffer_bytes,
-                            )
-                            // len(delivery.results),
-                        ),
-                    )
-                )
-                if not delivery.completed.done():
-                    delivery.completed.set_result(message)
-            except Exception as error:
-                failure = delivery_failure(error)
-                try:
-                    log_delivery_diagnostics(
-                        delivery, delivery_started, "delivery_failed"
-                    )
-                except Exception:
-                    logger.warning("Optional delivery diagnostic formatting failed")
-                self.track(
-                    delivery.job,
-                    "delivery_failed",
-                    run_id=delivery.run_id,
-                    data={
-                        "error_code": failure.error_code,
-                        "stage": "delivery",
-                        **delivery_timing(delivery, delivery_started),
-                    },
-                )
-                self.metrics.increment("deliveries_failed")
-                message = str(failure)
-                self.record_outcome(
-                    delivery.job,
-                    502,
-                    {
-                        "ok": False,
-                        "error": message,
-                        "code": "discord_delivery_failed",
-                        "delivery_outcome": failure.outcome,
-                        "error_code": failure.error_code,
-                    },
-                )
-                self.schedule_owner_alert(
-                    compression_outcome_alert(
-                        delivery.job,
-                        succeeded=False,
-                        file_count=len(delivery.results),
-                        total_bytes=sum(
-                            len(result.data) for result in delivery.results
-                        ),
-                        stage="Discord delivery",
-                        results=delivery.results,
-                        diagnostics=delivery.diagnostics,
-                        timing=delivery_timing(delivery, delivery_started),
-                        effective_target=min(
-                            compression_target(delivery.job.discord_limit),
-                            min(
-                                self.settings.max_result_total_bytes,
-                                self.settings.max_delivery_buffer_bytes,
-                            )
-                            // len(delivery.results),
-                        ),
-                        unchanged_limit=min(
-                            delivery.job.discord_limit,
-                            min(
-                                self.settings.max_result_total_bytes,
-                                self.settings.max_delivery_buffer_bytes,
-                            )
-                            // len(delivery.results),
-                        ),
-                    )
-                )
-                if not delivery.completed.done():
-                    delivery.completed.set_exception(RuntimeError(message))
-            finally:
-                self.delivery_bytes_held = max(
-                    0,
-                    self.delivery_bytes_held
-                    - sum(len(result.data) for result in delivery.results),
-                )
-                delivery.job.state = JobState.DONE
-                self.jobs.pop(delivery.job.token, None)
-                self.delivery_queue.task_done()
-                logger.info("Delivery worker %d completed a session", worker_number)
-                del delivery
+        await run_delivery_worker(
+            worker_number,
+            queue=self.delivery_queue,
+            send=self._deliver_results or self.deliver_browser_results,
+            is_closed=self.client.is_closed,
+            track=self.track,
+            metrics=self.metrics,
+            record_outcome=self.record_outcome,
+            notify=self.schedule_owner_alert,
+            finish=self.finish_delivery,
+            batch_limit=min(
+                self.settings.max_result_total_bytes,
+                self.settings.max_delivery_buffer_bytes,
+            ),
+        )
 
     @app_commands.guild_only()
     @app_commands.allowed_installs(guilds=True, users=False)

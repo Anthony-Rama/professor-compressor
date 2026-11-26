@@ -69,3 +69,8 @@ def bot_upload_limit(guild: discord.Guild, base_limit: int = 20 * MIB) -> int:
     # discord.py 2.7.1 still has a 10 MiB base; Discord's reference now states
     # 20 MiB. Keep a maintainer override for future platform changes.
     return max(base_limit, guild.filesize_limit)
+
+
+def compression_target(discord_limit: int) -> int:
+    """Reserve two percent for delivery while preserving output quality."""
+    return max(1 * MIB, int(discord_limit * 0.98))
