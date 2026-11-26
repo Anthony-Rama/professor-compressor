@@ -1,4 +1,6 @@
 // Relay-owned request cancellation, session deadlines, and delivery reconciliation.
+import { UPLOAD_RETRY_STATUSES } from "./shared.js";
+
 export function createRelayClient({
   sessionSecret: SESSION_SECRET,
   expiresInSeconds,
@@ -166,12 +168,7 @@ export function createRelayClient({
         batchMetrics.delivery_failures = (batchMetrics.delivery_failures || 0) + 1;
         if (isCancelled() || error.name === "AbortError") throw error;
         const retryable =
-          error.status === 0 ||
-          error.status === 408 ||
-          error.status === 429 ||
-          error.status === 500 ||
-          error.status === 503 ||
-          error.status === 504 ||
+          UPLOAD_RETRY_STATUSES.includes(error.status) ||
           (error.status === 502 && error.code !== "discord_delivery_failed");
         if (!retryable || attempt === 3) throw error;
         const requestedWait = Number(error.retryAfter);

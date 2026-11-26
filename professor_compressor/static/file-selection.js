@@ -1,10 +1,11 @@
 // File picker, drag and drop, and browser-local input preparation.
+import { INPUT_BATCH_LIMIT, INPUT_FILE_LIMIT, bytesToGiB, codedError } from "./shared.js";
+
 export function createFileSelection({
   sessionSecret: SESSION_SECRET,
   maxClips: MAX_CLIPS,
   diagnosticEventsEnabled: DIAGNOSTIC_EVENTS_ENABLED,
   diagnostic,
-  diagnosticError,
   clips,
   clearSelectionButton,
   submit,
@@ -26,7 +27,7 @@ export function createFileSelection({
     const timer = setTimeout(() => {
       expired = true;
       reject(
-        diagnosticError(
+        codedError(
           "Local file preparation could not start in time. Reload this page and reselect your clips. Check your connection if this repeats.",
           "INPUT_PREPARATION_TIMEOUT",
         ),
@@ -39,7 +40,7 @@ export function createFileSelection({
       .catch(() => {
         if (!expired)
           reject(
-            diagnosticError(
+            codedError(
               "Local file preparation could not start. Reload this page and reselect your clips, or try an updated Chrome or Edge browser.",
               "INPUT_STORAGE_UNAVAILABLE",
             ),
@@ -306,7 +307,7 @@ export function createFileSelection({
           (sum, state) => sum + (state === old ? file.size : state.file.size),
           0,
         );
-        if (file.size > 1024 ** 3 || replacementBytes > 4 * 1024 ** 3) {
+        if (file.size > INPUT_FILE_LIMIT || replacementBytes > INPUT_BATCH_LIMIT) {
           preparationReport(0, replacementBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
           showSelectionError(
             "That replacement exceeds the 1 GiB per-video or 4 GiB batch limit. Your existing selection was kept.",
@@ -350,7 +351,7 @@ export function createFileSelection({
         files.length +
         (files.length === 1 ? " video" : " videos") +
         " selected · " +
-        (totalBytes / 1024 ** 3).toFixed(2) +
+        bytesToGiB(totalBytes).toFixed(2) +
         " / 4 GiB";
     }
     renderSelectedFiles(files);
@@ -420,7 +421,7 @@ export function createFileSelection({
       showSelectionError("Those videos are already selected.");
       return;
     }
-    if (additions.some((file) => file.size > 1024 ** 3)) {
+    if (additions.some((file) => file.size > INPUT_FILE_LIMIT)) {
       preparationReport(
         0,
         additions.reduce((sum, file) => sum + file.size, 0),
@@ -430,12 +431,12 @@ export function createFileSelection({
       return;
     }
     const totalBytes = [...current, ...additions].reduce((sum, file) => sum + file.size, 0);
-    if (totalBytes > 4 * 1024 ** 3) {
+    if (totalBytes > INPUT_BATCH_LIMIT) {
       preparationReport(0, totalBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
       setSelectedFiles(current);
       showSelectionError(
         "This selection would total " +
-          (totalBytes / 1024 ** 3).toFixed(2) +
+          bytesToGiB(totalBytes).toFixed(2) +
           " GiB, above the 4 GiB batch limit. Existing clips were kept. Add fewer videos or remove some first.",
       );
       return;

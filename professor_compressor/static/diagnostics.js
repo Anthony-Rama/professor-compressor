@@ -8,6 +8,7 @@ import {
   stageError,
 } from "./processing-errors.js";
 export { engineSignal } from "./processing-errors.js";
+import { randomHex } from "./shared.js";
 
 export function commandSettings(args) {
   const value = (flag) => {
@@ -160,9 +161,7 @@ export function createDiagnostics(secret, reference, collect = true, onStall = (
   }
   const id = () => {
     try {
-      const bytes = new Uint8Array(16);
-      crypto.getRandomValues(bytes);
-      return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      return randomHex();
     } catch (_) {
       return "";
     }

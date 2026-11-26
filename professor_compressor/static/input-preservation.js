@@ -1,23 +1,17 @@
 // Original bytes stay on this device. No filenames or media are sent to a server.
-export const INPUT_FILE_LIMIT = 1024 ** 3;
-export const INPUT_BATCH_LIMIT = 4 * 1024 ** 3;
+import { INPUT_BATCH_LIMIT, INPUT_FILE_LIMIT, codedError } from "./shared.js";
+export { INPUT_BATCH_LIMIT, INPUT_FILE_LIMIT } from "./shared.js";
 const CHUNK_BYTES = 1024 ** 2;
 const ROOT_NAME = "professor-compressor-inputs-v1";
 const SESSION_NAME = /^session-[a-f0-9-]{36}$/;
 
-function failure(message, code) {
-  const error = new Error(message);
-  error.diagnosticCode = code;
-  return error;
-}
-
 function storageFailure(error) {
   if (error?.name === "QuotaExceededError")
-    return failure(
+    return codedError(
       "Not enough browser storage to prepare this clip. Remove some clips or free disk space, then reselect it.",
       "INPUT_STORAGE_FULL",
     );
-  return failure(
+  return codedError(
     "This browser could not save a temporary local copy. Try an updated Chrome or Edge window with browser storage enabled, then reselect the clip.",
     "INPUT_STORAGE_UNAVAILABLE",
   );
@@ -33,7 +27,7 @@ function within(promise, milliseconds = 30000, onLate = () => {}) {
     const timer = setTimeout(() => {
       expired = true;
       reject(
-        failure(
+        codedError(
           "Preparing this clip took too long. Reselect it from a saved folder and try again.",
           "INPUT_PREPARATION_TIMEOUT",
         ),
@@ -78,7 +72,7 @@ export class InputPreserver {
   async open() {
     const checkOpen = () => {
       if (this.closed)
-        throw failure(
+        throw codedError(
           "Local storage initialization stopped. Reload this page and reselect your clips.",
           "INPUT_STORAGE_UNAVAILABLE",
         );
@@ -139,18 +133,18 @@ export class InputPreserver {
     if (this.closed)
       throw (
         this.initializationError ||
-        failure(
+        codedError(
           "Local storage is no longer available for this session. Reload this page and reselect your clips.",
           "INPUT_STORAGE_UNAVAILABLE",
         )
       );
     if (file.size > INPUT_FILE_LIMIT)
-      throw failure(
+      throw codedError(
         "Local preparation supports clips up to 1 GiB each. Choose a smaller exported clip.",
         "INPUT_TOO_LARGE",
       );
     if (this.entries.size >= 10 || this.reservedBytes + file.size > INPUT_BATCH_LIMIT)
-      throw failure(
+      throw codedError(
         "Local preparation supports up to 10 clips and 4 GiB total. Remove some clips before adding more.",
         "INPUT_TOO_LARGE",
       );
@@ -176,7 +170,7 @@ export class InputPreserver {
 
   async checkAvailable(additionalBytes) {
     if (typeof globalThis.FileSystemFileHandle?.prototype?.createWritable !== "function") {
-      throw failure(
+      throw codedError(
         "This browser cannot make the temporary copy needed to prepare your videos. Nothing was uploaded. Update your browser or use a current desktop browser, then run /compress again in Discord for a new link.",
         "INPUT_WRITE_UNSUPPORTED",
       );
@@ -201,7 +195,7 @@ export class InputPreserver {
     const remaining = Math.max(0, quota - usage);
     const headroom = Math.max(256 * 1024 ** 2, remaining * 0.1);
     if (additionalBytes + pendingBytes > Math.max(0, remaining - headroom)) {
-      throw failure(
+      throw codedError(
         "These videos may not fit in available browser storage. Existing clips were kept. Add fewer videos or free disk space and try again.",
         "INPUT_STORAGE_FULL",
       );
@@ -234,7 +228,7 @@ export class InputPreserver {
           if (bytes.byteLength !== end - offset) throw new Error("Short source read");
         } catch (error) {
           if (error?.diagnosticCode === "INPUT_PREPARATION_TIMEOUT") throw error;
-          throw failure(
+          throw codedError(
             "This clip could not be read. It may have changed since export. Finish exporting, then reselect it from a saved folder.",
             "FILE_READ_FAILED",
           );

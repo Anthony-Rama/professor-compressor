@@ -1,6 +1,8 @@
 // Application-owned transport for the pinned @ffmpeg/ffmpeg 0.12.15 worker.
 // Keep the engine/worker unmodified. Transfer buffers without an extra copy.
 // Only the RPC methods used by this application are exposed.
+import { codedError } from "./shared.js";
+
 export class EncoderClient {
   constructor(workerURL) {
     this.workerURL = workerURL;
@@ -27,9 +29,7 @@ export class EncoderClient {
     this.pending.clear();
   }
   transportFailure(code) {
-    const error = new Error("The video engine connection stopped unexpectedly.");
-    error.diagnosticCode = code;
-    this.stop(error);
+    this.stop(codedError("The video engine connection stopped unexpectedly.", code));
   }
   load(config) {
     if (!this.worker) {

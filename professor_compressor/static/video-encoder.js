@@ -1,4 +1,6 @@
 // FFmpeg lifecycle, media probing, and size-targeted encoding.
+import { codedError } from "./shared.js";
+
 export function createVideoEncoder({
   assetPrefix: ASSET_PREFIX,
   targetBytes: TARGET_BYTES,
@@ -7,7 +9,6 @@ export function createVideoEncoder({
   EncoderClient,
   fetchFile,
   diagnostic,
-  diagnosticError,
   processingError,
   getFiles,
   getBatchMetrics,
@@ -186,7 +187,7 @@ export function createVideoEncoder({
     try {
       bytes = new Uint8Array(await file.slice(0, 512).arrayBuffer());
     } catch (_) {
-      const error = diagnosticError(
+      const error = codedError(
         "This clip could not be read. Reselect it from a saved folder and try again.",
         "FILE_READ_FAILED",
       );
@@ -216,7 +217,7 @@ export function createVideoEncoder({
       for (let offset = 8; offset + 4 <= boxLength; offset += 4) {
         if (allowedBrands.has(ascii(offset, 4))) return "mp4";
       }
-      throw diagnosticError(
+      throw codedError(
         file.name +
           " uses an unsupported media-container signature. " +
           "Choose a supported video format listed below the upload controls.",
@@ -254,7 +255,7 @@ export function createVideoEncoder({
     if (bytes.length >= 377 && bytes[0] === 0x47 && bytes[188] === 0x47) return "ts";
     if (bytes.length >= 389 && bytes[4] === 0x47 && bytes[196] === 0x47 && bytes[388] === 0x47)
       return "m2ts";
-    throw diagnosticError(
+    throw codedError(
       file.name +
         " does not have a recognized video signature. " +
         "Choose a supported video format listed below the upload controls.",
@@ -370,9 +371,9 @@ export function createVideoEncoder({
       try {
         metadata = JSON.parse(await ffmpeg.readFile(probeName, "utf8"));
         if (metadata.error || !Array.isArray(metadata.streams)) throw new Error("Invalid metadata");
-      } catch (error) {
+      } catch (_) {
         if (isCancelled()) throw new DOMException("Cancelled", "AbortError");
-        throw diagnosticError(
+        throw codedError(
           "Could not determine video metadata for " +
             file.name +
             ". The file may be damaged or unsupported by this encoder.",
@@ -382,7 +383,7 @@ export function createVideoEncoder({
       const videoStream = metadata.streams.find((stream) => stream.codec_type === "video");
       const audioStream = metadata.streams.find((stream) => stream.codec_type === "audio");
       if (!videoStream)
-        throw diagnosticError(
+        throw codedError(
           "No video stream found in " + file.name + ". Choose a video, not an audio-only file.",
           "NO_VIDEO_STREAM",
         );
@@ -401,7 +402,7 @@ export function createVideoEncoder({
         .map(Number)
         .find((value) => Number.isFinite(value) && value > 0);
       if (!duration)
-        throw diagnosticError(
+        throw codedError(
           "Could not determine the duration of " +
             file.name +
             ". Re-export the clip with a finite duration.",
@@ -422,7 +423,7 @@ export function createVideoEncoder({
       // Fitting MP4 passthrough above deliberately does not require decoding.
       if (videoStream.codec_name === "av1") {
         diagnostic.mark("validation");
-        throw diagnosticError(
+        throw codedError(
           "This video uses AV1, which this version of the compressor cannot convert. " +
             "Export it as H.264 MP4 with AAC audio, then replace this file. Your other selected clips are still available.",
           "UNSUPPORTED_CODEC",
@@ -435,7 +436,7 @@ export function createVideoEncoder({
       function requireEncodingBudget() {
         if (budgetVideoKbps < 100) {
           diagnostic.mark("validation");
-          throw diagnosticError(
+          throw codedError(
             "This video is too long to fit the available upload limit with the current video and audio settings. " +
               "Choose a shorter video or a destination with a larger upload allowance. Your other selected clips are still available.",
             "TARGET_NOT_FEASIBLE",
@@ -533,7 +534,7 @@ export function createVideoEncoder({
           ]);
           if (isCancelled()) throw new DOMException("Cancelled", "AbortError");
           if (conversionExit !== 0)
-            throw diagnosticError(
+            throw codedError(
               "The encoder could not read " +
                 file.name +
                 ". The video may use an unsupported or damaged codec.",
@@ -605,7 +606,7 @@ export function createVideoEncoder({
       let exitCode = await encode(videoKbps);
       if (isCancelled()) throw new DOMException("Cancelled", "AbortError");
       if (exitCode !== 0)
-        throw diagnosticError(
+        throw codedError(
           "The encoder could not read " +
             file.name +
             ". The video may use an unsupported or damaged codec.",
@@ -621,14 +622,14 @@ export function createVideoEncoder({
         exitCode = await encode(videoKbps);
         if (isCancelled()) throw new DOMException("Cancelled", "AbortError");
         if (exitCode !== 0)
-          throw diagnosticError(
+          throw codedError(
             "The final size adjustment failed for " + file.name + ". Try that video by itself.",
             "ENCODE_FAILED",
           );
         output = await ffmpeg.readFile(outputName);
       }
       if (output.byteLength > effectiveTargetBytes) {
-        throw diagnosticError(
+        throw codedError(
           file.name +
             " could not be reduced below Discord's limit. " +
             "Trim it into a shorter clip and try again.",

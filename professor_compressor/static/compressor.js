@@ -17,6 +17,7 @@ async function initializeCompressor() {
     { createRelayClient, createPreparedDownloadView },
     { createFileSelection },
     { createVideoEncoder },
+    { FAILURE_REPORT_RETRY_STATUSES, randomHex },
   ] = await Promise.all([
     import("/brand/encoder-client.js"),
     import(ASSET_PREFIX + "/util-esm/index.js"),
@@ -24,6 +25,7 @@ async function initializeCompressor() {
     import("/brand/relay-client.js"),
     import("/brand/file-selection.js"),
     import("/brand/video-encoder.js"),
+    import("/brand/shared.js"),
   ]);
   // Imports cannot be cancelled. A late response must not revive a timed-out page.
   if (!window.compressorStartup.pending()) return;
@@ -33,9 +35,7 @@ async function initializeCompressor() {
   const diagnostic = {
     begin: () => {
       try {
-        const bytes = new Uint8Array(16);
-        crypto.getRandomValues(bytes);
-        fallbackDiagnosticRun = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+        fallbackDiagnosticRun = randomHex();
       } catch (_) {
         fallbackDiagnosticRun = "";
       }
@@ -91,11 +91,6 @@ async function initializeCompressor() {
       });
     })
     .catch(() => {});
-  function diagnosticError(message, code) {
-    const error = new Error(message);
-    error.diagnosticCode = code;
-    return error;
-  }
   function processingError(value) {
     // The worker can reject with a primitive even when diagnostics cannot load.
     return value && typeof value === "object"
@@ -228,7 +223,6 @@ async function initializeCompressor() {
   }
   let startedAt = 0;
   let timer = null;
-  let expiryTimer = null;
   let wakeLock = null;
   let cancelled = false;
   let running = false;
@@ -467,7 +461,6 @@ async function initializeCompressor() {
     maxClips: MAX_CLIPS,
     diagnosticEventsEnabled: DIAGNOSTIC_EVENTS_ENABLED,
     diagnostic,
-    diagnosticError,
     clips,
     clearSelectionButton,
     submit,
@@ -491,7 +484,6 @@ async function initializeCompressor() {
     EncoderClient,
     fetchFile,
     diagnostic,
-    diagnosticError,
     processingError,
     getFiles: () => fileSelection.files,
     getBatchMetrics: () => batchMetrics,
@@ -541,7 +533,7 @@ async function initializeCompressor() {
           credentials: "same-origin",
           keepalive: true,
         });
-        if (response.ok || ![408, 500, 502, 503, 504].includes(response.status)) return;
+        if (response.ok || !FAILURE_REPORT_RETRY_STATUSES.includes(response.status)) return;
       } catch (reportError) {
         console.debug("The failure notification could not reach the relay.", reportError);
       }
@@ -628,7 +620,7 @@ async function initializeCompressor() {
 
   function finishRun() {
     running = false;
-    document.getElementById("stall-warning").hidden = true;
+    stallWarning.hidden = true;
     stopHeartbeat();
     pauseRequest = relay.sessionRequest("pause").catch(() => {});
     backgroundWarning.hidden = true;
@@ -976,7 +968,7 @@ async function initializeCompressor() {
   // still disable selection and clean up storage if the session elapsed at startup.
   clips.disabled = false;
   updateExpiry();
-  expiryTimer = setInterval(updateExpiry, 1000);
+  setInterval(updateExpiry, 1000);
   window.compressorStartup.ready();
 }
 await initializeCompressor().catch(() => window.compressorStartup.fail());
