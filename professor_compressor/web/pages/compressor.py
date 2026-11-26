@@ -47,7 +47,7 @@ def browser_compressor(
     session_secret: str,
     expires_in_seconds: int,
     *,
-    discord_limit_bytes: int | None = None,
+    discord_limit: int | None = None,
     reopened: bool = False,
     diagnostic_reference: str = "",
     diagnostic_events_enabled: bool = False,
@@ -58,7 +58,7 @@ def browser_compressor(
         "MAX_CLIPS": max_clips,
         "TARGET_BYTES": target_bytes,
         "DISCORD_LIMIT_BYTES": (
-            discord_limit_bytes if discord_limit_bytes is not None else target_bytes
+            discord_limit if discord_limit is not None else target_bytes
         ),
         "MAX_BATCH_BYTES": max_batch_bytes,
         "SESSION_SECRET": session_secret,

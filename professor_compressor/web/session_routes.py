@@ -101,7 +101,7 @@ class SessionRoutes:
                 ),
                 job.claim_secret or "",
                 max(1, int(job.expires_at - time.time())),
-                discord_limit_bytes=job.discord_limit,
+                discord_limit=job.discord_limit,
                 reopened=reopened,
                 diagnostic_reference=job.diagnostic_reference,
                 diagnostic_events_enabled=bool(self.settings.observability_db_path),
