@@ -130,6 +130,48 @@ class DeliveryWorkerTests(RuntimeTestCase):
                         worker.cancel()
                         await asyncio.gather(worker, return_exceptions=True)
 
+    async def test_unexpected_bookkeeping_error_never_stops_the_worker(self) -> None:
+        from professor_compressor.domain import DeliveryRequest, JobState
+
+        queue: asyncio.Queue[DeliveryRequest] = asyncio.Queue(2)
+        deliveries = []
+        for token in ("first", "second"):
+            job = UploadJob(token, 1, 2, 9999999999, 1000, Mock())
+            completed = asyncio.get_running_loop().create_future()
+            deliveries.append((job, completed))
+            queue.put_nowait(
+                DeliveryRequest(job, [BrowserResult("clip.mp4", b"video")], completed)
+            )
+        with (
+            patch.object(self.runtime.relay, "queue", queue),
+            patch.object(self.runtime.relay, "buffered_bytes", 10),
+            patch.object(
+                self.runtime.sessions,
+                "record_outcome",
+                Mock(side_effect=[RuntimeError("receipt store failed"), None]),
+            ),
+            patch.object(
+                self.runtime.delivery,
+                "deliver_browser_results",
+                AsyncMock(return_value="sent"),
+            ),
+        ):
+            worker = asyncio.create_task(self.runtime.delivery.run_worker(1))
+            try:
+                await asyncio.wait_for(queue.join(), 2)
+                self.assertFalse(worker.done())
+                (first_job, first), (second_job, second) = deliveries
+                # The browser is told delivery could not be confirmed rather
+                # than waiting forever; the next batch is delivered normally.
+                self.assertIsInstance(first.exception(), RuntimeError)
+                self.assertEqual(second.result(), "sent")
+                self.assertIs(first_job.state, JobState.DONE)
+                self.assertIs(second_job.state, JobState.DONE)
+                self.assertEqual(self.runtime.relay.buffered_bytes, 0)
+            finally:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+
     async def test_cancelled_worker_releases_only_its_dequeued_batch(self):
         from professor_compressor.domain import DeliveryRequest, JobState
 
