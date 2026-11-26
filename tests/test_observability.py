@@ -12,15 +12,12 @@ from unittest.mock import Mock, patch
 from aiohttp import BasicAuth
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor.application import (
-    RESUME_COOKIE_NAME,
-    Runtime,
-    browser_cookie_matches,
-)
+from professor_compressor.application import Runtime
 from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
 from professor_compressor.observability import EventStore
 from professor_compressor.observability_contract import sanitize
+from professor_compressor.sessions import RESUME_COOKIE_NAME, browser_cookie_matches
 
 
 class StoreTests(unittest.TestCase):

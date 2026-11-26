@@ -9,12 +9,12 @@ from professor_compressor.application import (
     BrowserResult,
     Runtime,
     UploadJob,
-    compression_target,
 )
 from professor_compressor.config import Settings
 from professor_compressor.delivery_policy import (
     UNCONFIRMED_DELIVERY_MESSAGE,
     DeliveryFailure,
+    compression_target,
     delivery_failure,
 )
 from professor_compressor.upload_relay import safe_result_name
