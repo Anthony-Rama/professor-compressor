@@ -1,8 +1,8 @@
 const { test, expect } = require("@playwright/test");
-const { execFileSync } = require("node:child_process");
-const { mkdtempSync, readFileSync, writeFileSync, rmSync } = require("node:fs");
+const { mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
+const { openSession, padWithFreeBox, testPatternClip } = require("./helpers.cjs");
 let fixtures;
 test.beforeAll(() => {
   fixtures = mkdtempSync(join(tmpdir(), "compressor-recovery-"));
@@ -12,28 +12,14 @@ test.beforeAll(() => {
     ["av1.webm", "libaom-av1"],
     ["small.mov", "libx264"],
   ]) {
-    execFileSync("ffmpeg", [
-      "-v",
-      "error",
-      "-f",
-      "lavfi",
-      "-i",
-      "testsrc2=size=320x240:rate=30",
-      "-t",
-      "0.4",
-      "-c:v",
+    testPatternClip(join(fixtures, name), {
+      rate: 30,
       codec,
-      ...(codec === "libaom-av1" ? ["-cpu-used", "8"] : []),
-      join(fixtures, name),
-    ]);
+      options: codec === "libaom-av1" ? ["-cpu-used", "8"] : [],
+    });
   }
-  for (const name of ["small.mp4", "av1.mp4"]) {
-    const input = readFileSync(join(fixtures, name)),
-      padding = Buffer.alloc(1200000 - input.length);
-    padding.writeUInt32BE(padding.length);
-    padding.write("free", 4);
-    writeFileSync(join(fixtures, "large-" + name), Buffer.concat([input, padding]));
-  }
+  for (const name of ["small.mp4", "av1.mp4"])
+    padWithFreeBox(join(fixtures, name), join(fixtures, "large-" + name), 1200000);
 });
 test.afterAll(() => rmSync(fixtures, { recursive: true, force: true }));
 
@@ -256,10 +242,7 @@ async function open(page, request, metadata = null) {
       return send.call(this, message, ...rest);
     };
   }, metadata);
-  const session = await (await request.post("/test/session")).json();
-  await page.goto(session.path);
-  await expect(page.locator("#clips")).toBeEnabled();
-  return session;
+  return openSession(page, request);
 }
 for (const diagnostics of [true, false]) {
   test(`activity warning survives backgrounding and clears on progress, diagnostics=${diagnostics}`, async ({

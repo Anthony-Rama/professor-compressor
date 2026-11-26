@@ -1,10 +1,10 @@
 // Page-scope values that page.evaluate callbacks store on window and read back.
 /* global reporter, stallChanges, stalls, encodingDone, finishEncoding, operation, done */
 const { test, expect } = require("@playwright/test");
-const { execFileSync } = require("node:child_process");
-const { mkdtempSync, rmSync, readFileSync, writeFileSync } = require("node:fs");
+const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
+const { openSession, padWithFreeBox, testPatternClip } = require("./helpers.cjs");
 
 const operator = { username: "admin", password: "browser-test-only-operator-password" };
 const auth = {
@@ -14,36 +14,16 @@ const auth = {
 let fixtures;
 test.beforeAll(() => {
   fixtures = mkdtempSync(join(tmpdir(), "compressor-observability-"));
-  execFileSync("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-f",
-    "lavfi",
-    "-i",
-    "testsrc2=size=320x240:rate=25",
-    "-t",
-    "0.4",
-    "-c:v",
-    "libx264",
-    "-crf",
-    "35",
-    join(fixtures, "small.mp4"),
-  ]);
-  const input = readFileSync(join(fixtures, "small.mp4"));
-  const free = Buffer.alloc(1_200_000 - input.length);
-  free.writeUInt32BE(free.length);
-  free.write("free", 4);
-  writeFileSync(join(fixtures, "oversized.mp4"), Buffer.concat([input, free]));
+  testPatternClip(join(fixtures, "small.mp4"), { options: ["-crf", "35"] });
+  padWithFreeBox(join(fixtures, "small.mp4"), join(fixtures, "oversized.mp4"), 1_200_000);
   writeFileSync(join(fixtures, "damaged.mp4"), Buffer.from("not-a-video"));
 });
 test.afterAll(() => rmSync(fixtures, { recursive: true, force: true }));
 
+// Also wait for the optional diagnostics module, so reports from the page are collected.
 async function open(page, request) {
-  const session = await (await request.post("/test/session")).json();
   const loaded = page.waitForResponse((r) => r.url().endsWith("/brand/diagnostics.js"));
-  await page.goto(session.path);
-  await expect(page.locator("#clips")).toBeEnabled();
+  const session = await openSession(page, request);
   await loaded;
   return session;
 }

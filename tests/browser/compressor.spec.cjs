@@ -3,40 +3,20 @@ const { execFileSync } = require("node:child_process");
 const { mkdtempSync, rmSync, readFileSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
+const { openSession, ffmpeg, testPatternClip } = require("./helpers.cjs");
 
 let fixtures;
 test.beforeAll(() => {
   fixtures = mkdtempSync(join(tmpdir(), "compressor-browser-"));
   const generate = (name, crf, duration) =>
-    execFileSync("ffmpeg", [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "lavfi",
-      "-i",
-      "testsrc2=size=1280x720:rate=30",
-      "-t",
-      String(duration),
-      "-c:v",
-      "libx264",
-      "-crf",
-      String(crf),
-      "-preset",
-      "ultrafast",
-      join(fixtures, name),
-    ]);
+    testPatternClip(join(fixtures, name), {
+      size: "1280x720",
+      rate: 30,
+      duration,
+      options: ["-crf", String(crf), "-preset", "ultrafast"],
+    });
   generate("large.mp4", 0, 3);
-  execFileSync("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-i",
-    join(fixtures, "large.mp4"),
-    "-c",
-    "copy",
-    join(fixtures, "large.mov"),
-  ]);
+  ffmpeg("-i", join(fixtures, "large.mp4"), "-c", "copy", join(fixtures, "large.mov"));
   generate("small.mp4", 35, 0.5);
   const smallMp4 = readFileSync(join(fixtures, "small.mp4"));
   writeFileSync(
@@ -44,10 +24,7 @@ test.beforeAll(() => {
     Buffer.concat([smallMp4, Buffer.alloc(1_090_000 - smallMp4.length)]),
   );
   generate("small.mov", 35, 0.5);
-  execFileSync("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
+  ffmpeg(
     "-f",
     "lavfi",
     "-i",
@@ -71,7 +48,7 @@ test.beforeAll(() => {
     "-c:a",
     "pcm_s16le",
     join(fixtures, "portrait-audio-vfr.mov"),
-  ]);
+  );
   for (const [name, codec] of [
     ["sample.mkv", "libx264"],
     ["sample.avi", "mpeg4"],
@@ -86,26 +63,14 @@ test.beforeAll(() => {
     ["hevc.mkv", "libx265"],
     ["av1.mkv", "libaom-av1"],
   ])
-    execFileSync("ffmpeg", [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "lavfi",
-      "-i",
-      "testsrc2=size=320x240:rate=25",
-      "-t",
-      "0.4",
-      "-c:v",
+    testPatternClip(join(fixtures, name), {
       codec,
-      ...(codec === "libx265" ? ["-x265-params", "log-level=error:pools=2"] : []),
-      ...(codec === "libaom-av1" ? ["-cpu-used", "8"] : []),
-      join(fixtures, name),
-    ]);
-  execFileSync("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
+      options: [
+        ...(codec === "libx265" ? ["-x265-params", "log-level=error:pools=2"] : []),
+        ...(codec === "libaom-av1" ? ["-cpu-used", "8"] : []),
+      ],
+    });
+  ffmpeg(
     "-f",
     "lavfi",
     "-i",
@@ -115,15 +80,10 @@ test.beforeAll(() => {
     "-c:a",
     "libopus",
     join(fixtures, "audio.webm"),
-  ]);
+  );
 });
 test.afterAll(() => rmSync(fixtures, { recursive: true, force: true }));
 
-async function openSession(page, request) {
-  const response = await request.post("/test/session");
-  await page.goto((await response.json()).path);
-  await expect(page.locator("#clips")).toBeEnabled();
-}
 async function deliver(page, files) {
   await expect(page.locator("#clips")).toBeEnabled();
   await page.locator("#clips").setInputFiles(files);

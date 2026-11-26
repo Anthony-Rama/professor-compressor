@@ -1,40 +1,19 @@
 const { test, expect } = require("@playwright/test");
-const { execFileSync } = require("node:child_process");
 const { mkdtempSync, rmSync, readFileSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
+const { openSession: open, testPatternClip } = require("./helpers.cjs");
 
 let fixtures, original;
 test.beforeAll(() => {
   fixtures = mkdtempSync(join(tmpdir(), "compressor-preservation-"));
-  execFileSync("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-f",
-    "lavfi",
-    "-i",
-    "testsrc2=size=320x240:rate=25",
-    "-t",
-    "0.4",
-    "-c:v",
-    "libx264",
-    "-preset",
-    "ultrafast",
-    join(fixtures, "clip.mp4"),
-  ]);
+  testPatternClip(join(fixtures, "clip.mp4"), { options: ["-preset", "ultrafast"] });
   original = readFileSync(join(fixtures, "clip.mp4"));
   for (const name of ["other.mp4", "unreadable.mp4"]) writeFileSync(join(fixtures, name), original);
 });
 test.afterAll(() => rmSync(fixtures, { recursive: true, force: true }));
 
-async function open(page, request) {
-  const result = await (await request.post("/test/session")).json();
-  await page.goto(result.path);
-  await expect(page.locator("#clips")).toBeEnabled();
-  return result;
-}
 async function ready(page) {
   await expect(page.locator("#submit")).toBeEnabled();
   await expect(page.locator(".file-status")).toHaveText(["Ready"]);
