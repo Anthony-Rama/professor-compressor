@@ -14,9 +14,10 @@ async function initializeCompressor() {
     { EncoderClient },
     { fetchFile },
     { createProcessingFallback },
-    { createRelayClient, createPreparedDownloadView },
+    { createRelayClient },
     { createFileSelection },
     { createVideoEncoder },
+    { createPreparedDownloadView },
     { FAILURE_REPORT_RETRY_STATUSES, createEmitter, processingError, randomHex, readableSize },
   ] = await Promise.all([
     import("/brand/encoder-client.js"),
@@ -25,6 +26,7 @@ async function initializeCompressor() {
     import("/brand/relay-client.js"),
     import("/brand/file-selection.js"),
     import("/brand/video-encoder.js"),
+    import("/brand/prepared-downloads.js"),
     import("/brand/shared.js"),
   ]);
   // Imports cannot be cancelled. A late response must not revive a timed-out page.
