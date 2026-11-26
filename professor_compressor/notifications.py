@@ -39,6 +39,27 @@ def encoding_time(seconds: float) -> str:
     return f"{minutes}:{tenths / 10:04.1f}"
 
 
+def identity_lines(
+    *, guild_name: str, guild_id: object, username: str, user_id: int
+) -> list[str]:
+    """Server and member lines shared by session alerts, with names escaped."""
+    return [
+        f"Server: **{safe_alert_text(guild_name)}**",
+        f"Server ID: `{guild_id}`",
+        f"Username: **{safe_alert_text('@' + username)}**",
+        f"User ID: `{user_id}`",
+    ]
+
+
+def job_identity_lines(job: UploadJob) -> list[str]:
+    return identity_lines(
+        guild_name=job.guild_name or "Unknown server",
+        guild_id=job.guild_id if job.guild_id is not None else "Unknown",
+        username=job.username or "unknown",
+        user_id=job.user_id,
+    )
+
+
 def guild_alert_message(
     action: str,
     guild: discord.Guild,
@@ -81,10 +102,7 @@ def compression_outcome_alert(
     )
     lines = [
         outcome,
-        f"Server: **{safe_alert_text(job.guild_name or 'Unknown server')}**",
-        f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
-        f"Username: **{safe_alert_text('@' + (job.username or 'unknown'))}**",
-        f"User ID: `{job.user_id}`",
+        *job_identity_lines(job),
         f"Files: `{file_count}`",
         f"Reference: `{job.diagnostic_reference}`",
     ]
@@ -237,10 +255,7 @@ def compression_progress_alert(job: UploadJob, title: str, detail: str) -> str:
     return "\n".join(
         (
             f"{title}",
-            f"Server: **{safe_alert_text(job.guild_name or 'Unknown server')}**",
-            f"Server ID: `{job.guild_id if job.guild_id is not None else 'Unknown'}`",
-            f"Username: **{safe_alert_text('@' + (job.username or 'unknown'))}**",
-            f"User ID: `{job.user_id}`",
+            *job_identity_lines(job),
             f"Reference: `{job.diagnostic_reference}`",
             detail,
         )

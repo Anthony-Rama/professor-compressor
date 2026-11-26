@@ -14,7 +14,11 @@ from .config import Settings
 from .delivery_policy import bot_upload_limit, channel_delivery_problem
 from .domain import JobState, UploadJob
 from .metrics import RuntimeMetrics
-from .notifications import botstats_report, compression_progress_alert, safe_alert_text
+from .notifications import (
+    botstats_report,
+    compression_progress_alert,
+    identity_lines,
+)
 
 PAGE_EXIT_GRACE_SECONDS = 5
 
@@ -192,14 +196,21 @@ async def compress(context: CommandContext, interaction: discord.Interaction) ->
     )
     guild_name = context.interaction_guild_name(interaction)
     context.schedule_owner_alert(
-        "⚙️ **Compression session created**\n"
-        f"Server: **{safe_alert_text(guild_name)}**\n"
-        f"Server ID: `{interaction.guild_id}`\n"
-        f"Username: **{safe_alert_text('@' + interaction.user.name)}**\n"
-        f"User ID: `{interaction.user.id}`\n"
-        f"Connected servers: `{len(context.client.guilds)}`\n"
-        f"Sessions since restart: `{context.metrics.snapshot()['sessions_created']}`"
-        f"\nReference: `{context.jobs[token].diagnostic_reference}`"
+        "\n".join(
+            (
+                "⚙️ **Compression session created**",
+                *identity_lines(
+                    guild_name=guild_name,
+                    guild_id=interaction.guild_id,
+                    username=interaction.user.name,
+                    user_id=interaction.user.id,
+                ),
+                f"Connected servers: `{len(context.client.guilds)}`",
+                "Sessions since restart: "
+                f"`{context.metrics.snapshot()['sessions_created']}`",
+                f"Reference: `{context.jobs[token].diagnostic_reference}`",
+            )
+        )
     )
 
 
