@@ -9,6 +9,24 @@ import {
   readableTime,
 } from "./shared.js";
 
+// Fixed messages for processing failures, by diagnostic code. Relay, session and
+// connection errors are checked first; codes with variable text are handled after.
+const PROCESSING_MESSAGES = {
+  BROWSER_MEMORY:
+    "The video engine could not allocate enough memory in this browser. Close other tabs and try fewer or smaller videos.",
+  WASM_TRAP:
+    "Compression failed because the video engine hit a runtime error. Its underlying cause could not be confirmed. Try the clip by itself or use another desktop browser.",
+  FILE_READ_FAILED: "This clip could not be read. Reselect it from a saved folder and try again.",
+  WORKER_CRASH:
+    "Compression stopped because the video engine's background worker crashed. The underlying cause was not reported. Try again, or use another desktop browser. Contact support with the error reference if it repeats.",
+  WORKER_MESSAGE_ERROR:
+    "Compression stopped because the browser could not communicate with the video engine. Reload the page and try again. Contact support with the error reference if it repeats.",
+  INVALID_MEDIA:
+    "Compression failed because the video engine reported invalid media data. Try playing the original video, then re-export it and try again.",
+  ENCODE_FAILED:
+    "Compression failed while encoding this video. The engine did not report a specific cause. Try the clip by itself or another desktop browser. If it fails again, contact support with the error reference.",
+};
+
 export function startBatchController(config, modules) {
   const {
     MAX_CLIPS,
@@ -471,19 +489,8 @@ export function startBatchController(config, modules) {
     if (error.status === 0) {
       return "Delivery could not be confirmed. Check your connection and Discord, then use Check delivery / retry. Prepared files will not be recompressed.";
     }
-    if (diagnostic.code(error) === "BROWSER_MEMORY") {
-      return "The video engine could not allocate enough memory in this browser. Close other tabs and try fewer or smaller videos.";
-    }
-    if (diagnostic.code(error) === "WASM_TRAP") {
-      return "Compression failed because the video engine hit a runtime error. Its underlying cause could not be confirmed. Try the clip by itself or use another desktop browser.";
-    }
     const code = diagnostic.code(error);
-    if (code === "FILE_READ_FAILED")
-      return "This clip could not be read. Reselect it from a saved folder and try again.";
-    if (code === "WORKER_CRASH")
-      return "Compression stopped because the video engine's background worker crashed. The underlying cause was not reported. Try again, or use another desktop browser. Contact support with the error reference if it repeats.";
-    if (code === "WORKER_MESSAGE_ERROR")
-      return "Compression stopped because the browser could not communicate with the video engine. Reload the page and try again. Contact support with the error reference if it repeats.";
+    if (Object.hasOwn(PROCESSING_MESSAGES, code)) return PROCESSING_MESSAGES[code];
     if (code === "UNSUPPORTED_CODEC")
       return (
         (encoder.currentFile?.inputMedia?.video_codec === "av1"
@@ -492,16 +499,12 @@ export function startBatchController(config, modules) {
         "Export it as H.264 MP4 with AAC audio, then replace this file. Your other selected clips are still available."
       );
     if (code === "TARGET_NOT_FEASIBLE") return error.message;
-    if (code === "INVALID_MEDIA")
-      return "Compression failed because the video engine reported invalid media data. Try playing the original video, then re-export it and try again.";
     if (["ENGINE_LOAD_TIMEOUT", "ENGINE_LOAD_FAILED"].includes(code))
       return (
         "Compression could not start because the video engine failed to load" +
         (code === "ENGINE_LOAD_TIMEOUT" ? " in time" : "") +
         ". Check your connection, reload the page and try again."
       );
-    if (code === "ENCODE_FAILED")
-      return "Compression failed while encoding this video. The engine did not report a specific cause. Try the clip by itself or another desktop browser. If it fails again, contact support with the error reference.";
     if (error.diagnosticCode || error.status || error.code)
       return error.message || "The request failed. Contact support with the error reference.";
     return "Compression failed because the video engine stopped unexpectedly. A specific cause was not reported. Try again, or contact support with the error reference.";
