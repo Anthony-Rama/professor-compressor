@@ -1,19 +1,17 @@
 import asyncio
-import unittest
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from professor_compressor.app.runtime import Runtime
 from professor_compressor.app.tasks import BackgroundTasks
-from professor_compressor.config import Settings
 from professor_compressor.integrations.topgg import METRICS_URL, TopGGStats, retry_delay
+from tests.support.runtime import RuntimeTestCase
 
 
-class TopGGTests(unittest.IsolatedAsyncioTestCase):
+class TopGGTests(RuntimeTestCase):
     def setUp(self):
-        self.runtime = Runtime(Settings(discord_token=""))
+        super().setUp()
         self.client = Mock()
         self.client.user = SimpleNamespace(id=123)
         self.client.guilds = [object(), object()]

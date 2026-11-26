@@ -27,7 +27,3 @@ class RuntimeMetricsTests(unittest.TestCase):
         metrics = RuntimeMetrics()
         with self.assertRaises(ValueError):
             metrics.increment("files_delivered", -1)
-
-
-if __name__ == "__main__":
-    unittest.main()

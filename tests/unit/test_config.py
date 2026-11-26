@@ -115,7 +115,3 @@ class SettingsTests(unittest.TestCase):
             settings = Settings.from_environment(require_token=False)
             self.assertEqual(settings.diagnostic_test_guild_ids, frozenset())
             self.assertNotIn(os.environ["OBSERVABILITY_ADMIN_KEY"], repr(settings))
-
-
-if __name__ == "__main__":
-    unittest.main()

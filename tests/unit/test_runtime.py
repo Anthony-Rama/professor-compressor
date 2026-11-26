@@ -1,7 +1,6 @@
 import asyncio
 import signal
 import time
-import unittest
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -13,12 +12,11 @@ from professor_compressor.app.runtime import Runtime
 from professor_compressor.app.tasks import BackgroundTasks
 from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
+from tests.support.media import mp4
+from tests.support.runtime import RuntimeTestCase
 
 
-class RuntimeTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        self.runtime = Runtime(Settings(discord_token=""))
-
+class RuntimeTests(RuntimeTestCase):
     async def test_two_apps_isolate_uploads_delivery_and_metrics(self):
         settings = Settings(discord_token="")
         sender_a = AsyncMock(return_value="Test sender A delivered")
@@ -46,14 +44,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         path = f"/upload/{job.token}"
         headers = {"X-Upload-Session": "synthetic-claim"}
 
-        def box(kind, data):
-            return (len(data) + 8).to_bytes(4, "big") + kind + data
-
-        clip = (
-            box(b"ftyp", b"isom" + bytes(4) + b"mp41")
-            + box(b"moov", b"meta")
-            + box(b"mdat", b"video")
-        )
+        clip = mp4()
         data = FormData()
         data.add_field("clips", clip, filename="clip.mp4", content_type="video/mp4")
         async with (

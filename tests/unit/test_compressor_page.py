@@ -96,7 +96,7 @@ class BrowserPageTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_external_modules_have_valid_javascript(self) -> None:
-        static = Path(__file__).resolve().parents[1] / "professor_compressor" / "static"
+        static = Path(__file__).resolve().parents[2] / "professor_compressor" / "static"
         for name in (
             "compressor.js",
             "delivery-status.js",
@@ -142,7 +142,3 @@ class BrowserPageTests(unittest.TestCase):
         policy = secured.headers["Content-Security-Policy"]
         self.assertIn("frame-ancestors 'none'", policy)
         self.assertIn("object-src 'none'", policy)
-
-
-if __name__ == "__main__":
-    unittest.main()

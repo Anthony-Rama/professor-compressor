@@ -1,22 +1,14 @@
-import os
 import time
-import unittest
 from unittest.mock import AsyncMock, Mock, patch
-
-os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
 import discord
 
-from professor_compressor.app.runtime import Runtime
 from professor_compressor.branding import BOT_INVITE_URL
-from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
+from tests.support.runtime import RuntimeTestCase
 
 
-class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        self.runtime = Runtime(Settings(discord_token=""))
-
+class CompressCommandTests(RuntimeTestCase):
     def make_interaction(self) -> Mock:
         interaction = Mock()
         interaction.guild_id = 123
@@ -239,7 +231,3 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             self.runtime.tree.get_command("compress").allowed_installs.user
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

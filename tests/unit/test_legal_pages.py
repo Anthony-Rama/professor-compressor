@@ -48,7 +48,3 @@ class LegalPageTests(unittest.TestCase):
         self.assertEqual(response.content_type, "text/html")
         self.assertEqual(response.headers["Cache-Control"], "public, max-age=3600")
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
-
-
-if __name__ == "__main__":
-    unittest.main()

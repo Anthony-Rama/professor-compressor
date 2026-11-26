@@ -1,144 +1,17 @@
-import asyncio
-import os
-import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-os.environ.setdefault("DISCORD_TOKEN", "test-token")
+import discord
 
-from professor_compressor.app.runtime import Runtime
+from professor_compressor.bot import delivery as bot_delivery
 from professor_compressor.bot.delivery_policy import (
-    UNCONFIRMED_DELIVERY_MESSAGE,
     DeliveryFailure,
-    compression_target,
-    delivery_failure,
 )
-from professor_compressor.config import Settings
 from professor_compressor.domain import BrowserResult, UploadJob
-from professor_compressor.relay.upload import safe_result_name
+from tests.support.media import mp4
+from tests.support.runtime import RelayTestCase, RuntimeTestCase
 
 
-class DeliveryTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        self.runtime = Runtime(Settings(discord_token=""))
-
-    async def test_worker_releases_memory_after_success_and_failure(self) -> None:
-        from professor_compressor.domain import DeliveryRequest, JobState
-
-        for failure in (
-            None,
-            RuntimeError("Discord unavailable"),
-            TimeoutError(),
-            DeliveryFailure(
-                "Ask an admin to restore access.", "DELIVERY_ACCESS_DENIED"
-            ),
-        ):
-            job = UploadJob(
-                token="worker-test",
-                user_id=1,
-                channel_id=2,
-                expires_at=9999999999,
-                discord_limit=1000,
-                interaction=Mock(),
-            )
-            queue = asyncio.Queue(1)
-            completed = asyncio.get_running_loop().create_future()
-            queue.put_nowait(
-                DeliveryRequest(job, [BrowserResult("clip.mp4", b"video")], completed)
-            )
-            with (
-                patch.object(self.runtime.relay, "queue", queue),
-                patch.object(self.runtime.relay, "buffered_bytes", 5),
-                patch.object(self.runtime.alerts, "schedule"),
-                patch.object(self.runtime.sessions, "outcomes", {}),
-                patch.object(
-                    self.runtime.delivery,
-                    "deliver_browser_results",
-                    AsyncMock(return_value="sent", side_effect=failure),
-                ),
-            ):
-                worker = asyncio.create_task(self.runtime.delivery.run_worker(1))
-                try:
-                    await asyncio.wait_for(queue.join(), 2)
-                    self.assertEqual(self.runtime.relay.buffered_bytes, 0)
-                    self.assertIs(job.state, JobState.DONE)
-                    if failure is not None:
-                        expected = delivery_failure(failure)
-                        self.assertEqual(str(completed.exception()), str(expected))
-                        receipt = self.runtime.sessions.outcomes[job.token].body
-                        self.assertEqual(receipt["delivery_outcome"], expected.outcome)
-                        self.assertEqual(receipt["error_code"], expected.error_code)
-                    else:
-                        self.assertEqual(completed.result(), "sent")
-                finally:
-                    worker.cancel()
-                    await asyncio.gather(worker, return_exceptions=True)
-
-    def test_compression_target_keeps_small_delivery_reserve(self) -> None:
-        self.assertEqual(compression_target(20_000_000), 19_600_000)
-
-    async def test_cancelled_worker_releases_only_its_dequeued_batch(self):
-        from professor_compressor.domain import DeliveryRequest, JobState
-
-        sending = asyncio.Event()
-
-        async def send(*_):
-            sending.set()
-            await asyncio.Future()
-
-        runtime = Runtime(Settings(discord_token=""), deliver_results=send)
-        runtime.relay.queue = asyncio.Queue(2)
-        for token, payload in (("in-flight", b"first"), ("queued", b"second")):
-            job = UploadJob(
-                token, 1, 2, 9999999999, 1000, Mock(), state=JobState.QUEUED
-            )
-            runtime.sessions.jobs[token] = job
-            runtime.relay.buffered_bytes += len(payload)
-            runtime.relay.queue.put_nowait(
-                DeliveryRequest(
-                    job,
-                    [BrowserResult("clip.mp4", payload)],
-                    asyncio.get_running_loop().create_future(),
-                )
-            )
-        in_flight = runtime.sessions.jobs["in-flight"]
-        worker = asyncio.create_task(runtime.delivery.run_worker(1))
-        try:
-            await asyncio.wait_for(sending.wait(), 2)
-        finally:
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
-        self.assertEqual(runtime.relay.buffered_bytes, len(b"second"))
-        self.assertIs(in_flight.state, JobState.DONE)
-        self.assertEqual(set(runtime.sessions.jobs), {"queued"})
-        self.assertEqual(runtime.sessions.outcomes, {})
-        remaining = runtime.relay.queue.get_nowait()
-        self.assertEqual(remaining.job.token, "queued")
-        remaining.completed.cancel()
-        runtime.relay.queue.task_done()
-        await asyncio.wait_for(runtime.relay.queue.join(), 2)
-
-    def test_unknown_failures_are_not_rejections_or_raw_exception_messages(
-        self,
-    ) -> None:
-        for error in (
-            RuntimeError("private upstream detail"),
-            OSError("secret"),
-            TimeoutError(),
-        ):
-            failure = delivery_failure(error)
-            self.assertEqual(str(failure), UNCONFIRMED_DELIVERY_MESSAGE)
-            self.assertEqual(failure.outcome, "unknown")
-            self.assertEqual(
-                failure.error_code,
-                "DELIVERY_TIMEOUT"
-                if isinstance(error, TimeoutError)
-                else "DELIVERY_UNCONFIRMED",
-            )
-        known = DeliveryFailure(
-            "Ask an admin to restore access.", "DELIVERY_ACCESS_DENIED"
-        )
-        self.assertIs(delivery_failure(known), known)
-
+class BotDeliveryTests(RuntimeTestCase):
     async def test_missing_destination_is_a_confirmed_access_failure(self) -> None:
         job = UploadJob(
             token="missing",
@@ -219,12 +92,6 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(caught.exception.error_code, code)
                 self.assertEqual(caught.exception.outcome, outcome)
                 self.assertNotIn("detail", str(caught.exception))
-
-    def test_result_names_are_safe_and_bounded(self) -> None:
-        result = safe_result_name("../" + "a" * 300 + ".mp4", 1)
-
-        self.assertEqual(result, "a" * 120 + ".mp4")
-        self.assertNotIn("/", result)
 
     async def test_results_are_sent_as_a_new_channel_message(self) -> None:
         interaction = Mock()
@@ -321,5 +188,30 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(sent["allowed_mentions"].users)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class BotDeliveryRecheckTests(RelayTestCase):
+    async def test_delivery_rechecks_permissions_and_current_limit(self):
+        job = self.job()
+        guild = Mock(filesize_limit=20 * 1024 * 1024)
+        channel = Mock()
+        channel.send = AsyncMock()
+        channel.permissions_for.return_value = discord.Permissions(
+            view_channel=True, send_messages=True, attach_files=False
+        )
+        with (
+            patch.object(
+                self.runtime.delivery, "get_channel", AsyncMock(return_value=channel)
+            ),
+            patch.object(self.runtime.client, "get_guild", return_value=guild),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Attach Files"):
+                await self.runtime.delivery.deliver_browser_results(
+                    job, [BrowserResult("a.mp4", mp4())]
+                )
+            channel.send.assert_not_awaited()
+            channel.permissions_for.return_value.attach_files = True
+            with patch.object(bot_delivery, "bot_upload_limit", return_value=1):
+                with self.assertRaisesRegex(RuntimeError, "allowance changed"):
+                    await self.runtime.delivery.deliver_browser_results(
+                        job, [BrowserResult("a.mp4", mp4())]
+                    )
+            channel.send.assert_not_awaited()

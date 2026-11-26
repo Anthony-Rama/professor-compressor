@@ -5,10 +5,7 @@ from professor_compressor.relay.media_validation import (
     MAX_FTYP_BYTES,
     valid_mp4_signature,
 )
-
-
-def box(kind: bytes, payload: bytes = b"") -> bytes:
-    return (8 + len(payload)).to_bytes(4, "big") + kind + payload
+from tests.support.media import box
 
 
 class Mp4SignatureTests(unittest.TestCase):
@@ -76,7 +73,3 @@ class Mp4SignatureTests(unittest.TestCase):
             + b"mdatshort"
         )
         self.assertFalse(valid_mp4_signature(truncated))
-
-
-if __name__ == "__main__":
-    unittest.main()
