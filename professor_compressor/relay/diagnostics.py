@@ -1,6 +1,7 @@
 """Validate optional browser measurements before using them in delivery reports."""
 
 import json
+from typing import Any
 
 from ..domain import CompressionDiagnostic
 from ..observability.contract import ENUMS, valid_id
@@ -13,7 +14,7 @@ def sanitize_telemetry(value: object) -> dict:
     """Allow only bounded measurements and fixed categories, never arbitrary text."""
     if not isinstance(value, dict):
         return {}
-    clean = {}
+    clean: dict[str, Any] = {}
     batch_id = valid_id(value.get("batch_id"))
     if batch_id:
         clean["batch_id"] = batch_id
@@ -34,7 +35,7 @@ def sanitize_telemetry(value: object) -> dict:
         "processing_failures",
         "delivery_failures",
     ):
-        number = value.get(key)
+        number: Any = value.get(key)
         if type(number) in (int, float) and 0 <= number <= 86400:
             clean[key] = number
     for key in ("path", "engine"):
@@ -57,7 +58,7 @@ def parse_compression_diagnostics(
             if not isinstance(value, dict):
                 return []
             input_bytes = value.get("input_bytes")
-            duration = value.get("duration_seconds")
+            duration: Any = value.get("duration_seconds")
             video_kbps = value.get("video_kbps")
             copied = value.get("copied")
             input_format = value.get("input_format")

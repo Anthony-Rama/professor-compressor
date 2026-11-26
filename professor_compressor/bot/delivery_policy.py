@@ -1,5 +1,7 @@
 """Checks for normal bot-message delivery, not interaction responses."""
 
+from typing import Any
+
 import discord
 
 from ..config import MIB
@@ -31,7 +33,9 @@ def delivery_failure(error: Exception) -> DeliveryFailure:
     )
 
 
-def channel_delivery_problem(channel, permissions) -> str | None:
+def channel_delivery_problem(
+    channel: Any, permissions: discord.Permissions
+) -> str | None:
     if channel is None or not hasattr(channel, "send"):
         return "Use a text channel or thread where the bot can send files."
     missing = []

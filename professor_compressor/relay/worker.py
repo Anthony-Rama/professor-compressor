@@ -19,7 +19,7 @@ logger = logging.getLogger("professor_compressor.delivery_worker")
 SEND_TIMEOUT_SECONDS = 120
 
 
-def delivery_timing(delivery: DeliveryRequest, started: float) -> dict:
+def delivery_timing(delivery: DeliveryRequest, started: float) -> dict[str, float]:
     return {
         "relay_receive_seconds": round(delivery.received_seconds, 3),
         "queue_seconds": round(max(0, started - delivery.queued_at), 3),

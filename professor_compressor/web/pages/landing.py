@@ -17,7 +17,7 @@ GUIDE_PATH = "/guide/compress-video-for-discord"
 def _document(base_url: str, title: str, description: str, body: str, path: str) -> str:
     canonical = f"{base_url}{path}"
     image = f"{base_url}/brand/professor-compressor.png"
-    app_data = {
+    app_data: dict[str, object] = {
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "Professor Compressor",
@@ -38,7 +38,10 @@ def _document(base_url: str, title: str, description: str, body: str, path: str)
             "url": f"{base_url}/",
         }
         app_data.pop("@context")
-        schema = {"@context": "https://schema.org", "@graph": [website_data, app_data]}
+        schema: dict[str, object] = {
+            "@context": "https://schema.org",
+            "@graph": [website_data, app_data],
+        }
     else:
         schema = app_data
     structured_data = json.dumps(schema, separators=(",", ":")).replace("<", "\\u003c")

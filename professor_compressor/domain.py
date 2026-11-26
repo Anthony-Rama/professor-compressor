@@ -28,7 +28,7 @@ class UploadJob:
     channel_id: int
     expires_at: float
     discord_limit: int
-    interaction: discord.Interaction = field(repr=False)
+    interaction: discord.Interaction | None = field(repr=False)
     state: JobState = JobState.OPEN
     claim_secret: str | None = field(default=None, repr=False)
     browser_secret: str | None = field(default=None, repr=False)

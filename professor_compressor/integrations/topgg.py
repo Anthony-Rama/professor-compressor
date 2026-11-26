@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
+import discord
 from aiohttp import ClientSession, ClientTimeout
 
 # Log name is part of the operations contract; it must not follow the module path.
@@ -17,10 +18,11 @@ METRICS_URL = "https://top.gg/api/v1/projects/@me/metrics"
 def retry_delay(value: str | None) -> float:
     """Honor numeric or HTTP-date Retry-After, with a conservative hourly floor."""
     try:
-        seconds = float(value)
+        # A missing header raises TypeError here and below; both fall back.
+        seconds = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         try:
-            date = parsedate_to_datetime(value)
+            date = parsedate_to_datetime(value)  # type: ignore[arg-type]
             if date.tzinfo is None:
                 date = date.replace(tzinfo=UTC)
             seconds = (date - datetime.now(UTC)).total_seconds()
@@ -32,7 +34,7 @@ def retry_delay(value: str | None) -> float:
 class TopGGStats:
     """One serialized worker; guild bursts coalesce and cannot bypass backoff."""
 
-    def __init__(self, client, token: str, interval: int = 3600):
+    def __init__(self, client: discord.Client, token: str, interval: int = 3600):
         self.client = client
         self.token = token
         self.interval = max(1800, interval)

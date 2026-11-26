@@ -5,7 +5,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, TypedDict, cast
 
 from aiohttp import BodyPartReader, web
 
@@ -80,6 +80,15 @@ class RelayBufferFull(Exception):
     """Reserving another chunk would exceed the shared delivery buffer."""
 
 
+class UploadFailureFacts(TypedDict):
+    error_code: str
+    stage: str
+    upload_attempts: int
+    received_bytes: int
+    relay_receive_seconds: float
+    receive_idle_seconds: float
+
+
 @dataclass(slots=True)
 class UploadProgress:
     """Byte and timing facts for one upload attempt, reported if it fails."""
@@ -98,7 +107,7 @@ class UploadProgress:
         self.received_bytes += size
         self.last_chunk_at = time.monotonic()
 
-    def failure_facts(self, code: str, attempts: int) -> dict:
+    def failure_facts(self, code: str, attempts: int) -> UploadFailureFacts:
         now = time.monotonic()
         return {
             "error_code": code,
@@ -228,7 +237,11 @@ async def read_batch(
     caption_received = False
     diagnostics_received = False
     while True:
-        field = await asyncio.wait_for(reader.next(), timeout=progress.chunk_timeout())
+        # The upload form has no nested multipart bodies; each part is a field.
+        field = cast(
+            BodyPartReader | None,
+            await asyncio.wait_for(reader.next(), timeout=progress.chunk_timeout()),
+        )
         if field is None:
             break
         if field.name == "caption":

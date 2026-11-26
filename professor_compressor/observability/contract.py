@@ -2,6 +2,7 @@
 
 import math
 import re
+from typing import Any
 
 HEX_ID = re.compile(r"[0-9a-f]{32}\Z")
 # File positions are 1-based; 0 means the event concerns the whole batch.
@@ -335,7 +336,7 @@ def sanitize(data: object) -> dict:
         return {}
     clean = {}
     for key, allowed in ENUMS.items():
-        value = data.get(key)
+        value: Any = data.get(key)
         if isinstance(value, str) and value in allowed:
             clean[key] = value
     for key, maximum in NUMBERS.items():

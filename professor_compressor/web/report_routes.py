@@ -211,7 +211,7 @@ class ReportRoutes:
                     diagnostic_id,
                     diagnostic_reference(diagnostic_id),
                     item["event"],
-                    is_test=receipt.is_test,
+                    is_test=receipt.is_test,  # type: ignore[union-attr]
                     **kwargs,
                 )
         return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})

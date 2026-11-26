@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 import discord
 
@@ -90,7 +90,7 @@ def compression_outcome_alert(
     diagnostics: list[CompressionDiagnostic] | None = None,
     effective_target: int | None = None,
     unchanged_limit: int | None = None,
-    timing: dict | None = None,
+    timing: Mapping[str, float] | None = None,
     error_code: str | None = None,
 ) -> str:
     """Build an outcome alert without filenames or user mentions."""
@@ -166,7 +166,7 @@ def measurement_lines(
         else:
             lines.extend(single_file_lines(result, diagnostic, file_target))
     if all(item.encoding_seconds is not None for item in diagnostics):
-        total_encoding = sum(item.encoding_seconds for item in diagnostics)
+        total_encoding = sum(item.encoding_seconds for item in diagnostics)  # type: ignore[misc]
         lines.append(
             f"Compression time (encoding only): `{encoding_time(total_encoding)}`"
         )
@@ -259,7 +259,7 @@ def single_file_lines(
 def context_lines(
     stage: str | None,
     error_code: str | None,
-    timing: dict | None,
+    timing: Mapping[str, float] | None,
     diagnostics: list[CompressionDiagnostic] | None,
 ) -> list[str]:
     """Failure stage, error code, delivery timing, and browser engine facts."""

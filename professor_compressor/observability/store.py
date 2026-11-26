@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import TypedDict
 
 from .contract import (
     CLIENT_EVENTS,
@@ -51,6 +52,16 @@ CREATE INDEX IF NOT EXISTS events_time ON events(at);
 CREATE INDEX IF NOT EXISTS sessions_time ON sessions(created);
 CREATE INDEX IF NOT EXISTS sessions_reference ON sessions(reference);
 """
+
+
+class StorageHealth(TypedDict):
+    configured: bool
+    ready: bool
+    queued: int
+    dropped: int
+    errors: int
+    retention_days: int
+    max_events: int
 
 
 class EventStore:
@@ -357,7 +368,7 @@ class EventStore:
             if connection is not None:
                 connection.close()
 
-    def health(self) -> dict:
+    def health(self) -> StorageHealth:
         return {
             "configured": bool(self.path),
             "ready": self.ready,

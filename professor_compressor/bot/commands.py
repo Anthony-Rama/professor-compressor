@@ -224,7 +224,7 @@ class Commands:
         self.sessions.jobs[token] = UploadJob(
             token=token,
             user_id=interaction.user.id,
-            channel_id=interaction.channel_id,
+            channel_id=interaction.channel_id,  # type: ignore[arg-type]
             expires_at=time.time() + self.settings.job_ttl_seconds,
             discord_limit=min(
                 bot_upload_limit(guild, self.settings.bot_base_upload_bytes),

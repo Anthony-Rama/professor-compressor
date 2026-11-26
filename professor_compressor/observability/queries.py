@@ -4,7 +4,7 @@ import json
 import math
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 # Bounds the whole dashboard read; SQLite aborts statements past this budget.
@@ -27,7 +27,7 @@ FILTER_DIMENSIONS = frozenset(
 
 def query_dashboard(
     path: str,
-    health: Callable[[], dict],
+    health: Callable[[], Mapping[str, object]],
     *,
     days: int = 7,
     include_tests: bool = False,

@@ -4,7 +4,6 @@ import asyncio
 import io
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
 
 import discord
 
@@ -27,6 +26,7 @@ from .delivery_policy import (
 logger = logging.getLogger("professor_compressor.application")
 
 DeliverResults = Callable[[UploadJob, list[BrowserResult], str], Awaitable[str]]
+DeliveryChannel = discord.abc.GuildChannel | discord.Thread | discord.abc.PrivateChannel
 
 
 class DeliveryService:
@@ -61,7 +61,7 @@ class DeliveryService:
             not worker.done() for worker in self.workers
         )
 
-    async def get_channel(self, job: UploadJob) -> discord.abc.Messageable | None:
+    async def get_channel(self, job: UploadJob) -> DeliveryChannel | None:
         cached = self.client.get_channel(job.channel_id)
         if cached is not None:
             return cached
@@ -72,7 +72,7 @@ class DeliveryService:
 
     async def send_result_batch(
         self,
-        sender: Any,
+        sender: Callable[..., Awaitable[object]],
         results: list[BrowserResult],
         message: str,
     ) -> None:
@@ -98,7 +98,7 @@ class DeliveryService:
         results: list[BrowserResult],
         caption: str = "",
     ) -> str:
-        channel: discord.abc.Messageable | None = None
+        channel: DeliveryChannel | None = None
         try:
             channel = await self.get_channel(job)
             clip_label = "Clip" if len(results) == 1 else "Clips"
@@ -122,9 +122,9 @@ class DeliveryService:
                     "Ask a server admin to invite it again.",
                     "DELIVERY_ACCESS_DENIED",
                 )
-            problem = channel_delivery_problem(
-                channel, channel.permissions_for(guild.me)
-            )
+            # Channel capabilities are checked at runtime by channel_delivery_problem.
+            permissions = channel.permissions_for(guild.me)  # type: ignore[union-attr]
+            problem = channel_delivery_problem(channel, permissions)
             if problem:
                 raise DeliveryFailure(problem, "DELIVERY_ACCESS_DENIED")
             if any(
@@ -137,7 +137,8 @@ class DeliveryService:
                     "Run /compress again to prepare smaller files.",
                     "DELIVERY_LIMIT_CHANGED",
                 )
-            await self.send_result_batch(channel.send, results, message)
+            send = channel.send  # type: ignore[union-attr]
+            await self.send_result_batch(send, results, message)
             return "Your compressed videos were delivered to Discord."
         except Exception as error:
             logger.warning(
