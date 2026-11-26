@@ -6,15 +6,21 @@ from html import escape
 from ...branding import TOPGG_LISTING_URL
 from ...paths import TEMPLATES
 from ..assets import ASSET_PREFIX
+from .theme import with_shared_markup
 
 
 def _fragment(name: str) -> str:
     """Load an HTML fragment that is inserted into another document."""
-    return (TEMPLATES / name).read_text(encoding="utf-8").rstrip("\n")
+    text = (TEMPLATES / name).read_text(encoding="utf-8").rstrip("\n")
+    return with_shared_markup(text)
 
 
-_COMPRESSOR_TEMPLATE = (TEMPLATES / "compressor.html").read_text(encoding="utf-8")
-_DELIVERY_TEMPLATE = (TEMPLATES / "delivery-status.html").read_text(encoding="utf-8")
+_COMPRESSOR_TEMPLATE = with_shared_markup(
+    (TEMPLATES / "compressor.html").read_text(encoding="utf-8")
+)
+_DELIVERY_TEMPLATE = with_shared_markup(
+    (TEMPLATES / "delivery-status.html").read_text(encoding="utf-8")
+)
 REVIEW_PROMPT = _fragment("review-prompt.html").replace(
     "__TOPGG_URL__", TOPGG_LISTING_URL
 )

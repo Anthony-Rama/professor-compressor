@@ -20,8 +20,13 @@ export function createPreparedDownloadView() {
       link.href = URL.createObjectURL(result.blob);
       recoveryURLs.push(link.href);
       link.download = result.name;
-      link.className = "support-link";
-      link.textContent = "Save video " + result.state.index;
+      link.className = "download-link";
+      const label = document.createElement("span");
+      label.textContent = "Save video " + result.state.index + " · " + result.name;
+      const icon = document.createElement("span");
+      icon.className = "icon icon-download";
+      icon.setAttribute("aria-hidden", "true");
+      link.append(label, icon);
       downloads.append(link);
     }
     downloads.hidden = false;

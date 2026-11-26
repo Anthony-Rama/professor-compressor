@@ -1,103 +1,143 @@
-<img class="brand" src="/brand/professor-compressor.png"
-  alt="Professor Compressor mascot">
-<h1 id="page-heading" tabindex="-1">Compress videos for Discord</h1>
-<p class="intro" id="page-intro">Choose up to __MAX_CLIPS__ videos. Finished videos are formatted
-  for Discord's current upload limit.</p>
-__RECOVERY_NOTICE__
-<div class="stay-open" id="stay-open">
-  <span aria-hidden="true">⏱</span>
-  <span><strong>Keep this page open and active until it finishes.</strong><br>
-  This helps compression run at full speed. On phones, keep the screen unlocked
-  and this browser in the foreground. Long videos are best processed on a desktop.</span>
+<header class="topbar">
+  __BRAND__
+  <div class="session-note" id="session-note">
+    <span class="icon icon-clock" aria-hidden="true"></span>
+    <span class="session-label">Private session, bound to this browser ·</span>
+    <span id="expires">Expires in --:--</span>
+  </div>
+</header>
+<main class="compressor">
+<div class="page-head">
+  __RECOVERY_NOTICE__
+  <span class="done-mark" aria-hidden="true"><span class="icon icon-check"></span></span>
+  <h1 id="page-heading" tabindex="-1">Send videos to Discord</h1>
+  <p class="intro" id="page-intro">Shrink your clips to fit Discord's upload limit, right
+    here on your device. Nothing is uploaded until you press Send.</p>
 </div>
-<div id="startup-error" class="message error" hidden role="alert" tabindex="-1">
-  The video engine could not load. Nothing has been uploaded. Check your connection,
-  then reload this page before selecting videos. If it keeps happening, contact support.
+<ol class="start-steps" aria-label="Steps">
+  <li aria-current="step"><span>1</span>Add videos</li>
+  <li><span>2</span>Message</li>
+  <li><span>3</span>Send</li>
+</ol>
+<div id="startup-error" class="startup-error" hidden role="alert" tabindex="-1">
+  <span class="startup-visual" aria-hidden="true"><span class="icon icon-video-off"></span></span>
+  <h2>The video engine didn't load</h2>
+  <p>Nothing has been uploaded. Check your connection, then reload this page before selecting videos. If it keeps happening, try an
+    up-to-date Chrome or Edge, or contact support.</p>
+  <div class="support-actions">
+    <a class="btn-primary" href="">Reload page</a>
+    <a href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20contact">__MAIL_ICON__Contact us</a>
+    <a href="https://discord.com/invite/32RWwNWyEH">__DISCORD_ICON__Join our server</a>
+    <p>Please don't share private videos or session links.</p>
+  </div>
 </div>
 <noscript><p class="message error">JavaScript is required to process videos. Enable it, then reload this page.</p></noscript>
-<form id="upload">
-  <input class="file-input" id="clips" name="clips" type="file"
-    accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.mpeg,.mpg,.ogv,.ogg,.flv,.ts,.mts,.m2ts,.3gp,.3g2,.wmv,.asf" multiple required disabled>
-  <div class="picker-row" id="picker-row">
-    <label class="file-picker" id="drop-zone" for="clips">
-      <span class="picker-plus" aria-hidden="true">+</span>
-      <span><strong>Choose videos or drop them anywhere on this page</strong><small>Add videos in batches, up to __MAX_CLIPS__ total</small></span>
-    </label>
-    <button class="clear-selection" id="clear-selection" type="button"
-      aria-label="Clear selected videos" title="Clear selected videos" disabled>
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
-        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-        stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6"/>
-      </svg>
-    </button>
-  </div>
-  <p id="selection" class="selection" aria-live="polite">No videos selected</p>
-  <p id="preparation-help" class="selection">Clips are copied to temporary storage on this device. Wait for Ready before exporting your next clip. Up to 1 GiB per clip and 4 GiB total, subject to available browser storage.</p>
-  <label class="caption-label" for="caption">Add a message (optional)</label>
-  <textarea id="caption" name="caption" maxlength="1000" rows="3"
-    placeholder="Clips from yesterday"></textarea>
-  <p class="caption-help">1,000-character limit.</p>
-  <div class="session-note" id="session-note">
-    <span>Private session, bound to this browser</span><span id="expires">Expires in --:--</span>
-  </div>
-  <p id="completion-summary" class="completion-summary" hidden role="status"></p>
-  <div id="files" class="file-list" hidden></div>
-  <div id="work" class="work" hidden>
-    <div id="stall-warning" class="background-warning" hidden role="status">No processing progress has been reported for at least 2 minutes. Processing may be slow or paused; this is not a confirmed failure. Keep this page visible and your screen unlocked. You can keep waiting, or cancel and retry on a desktop if it does not resume.</div>
-    <div id="background-warning" class="background-warning" hidden role="status">
-      Compression may slow down or pause while this tab is hidden. Keep this
-      browser in the foreground and your screen unlocked.
+<form id="upload" class="workspace">
+  <div class="col-main">
+    <div class="picker-row" id="picker-row">
+      <input class="file-input" id="clips" name="clips" type="file"
+        accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.mpeg,.mpg,.ogv,.ogg,.flv,.ts,.mts,.m2ts,.3gp,.3g2,.wmv,.asf" multiple required disabled>
+      <label class="file-picker" id="drop-zone" for="clips">
+        <span class="picker-icon" aria-hidden="true"><span class="icon icon-video-add"></span></span>
+        <span class="picker-text"><strong><span class="when-empty">Add your videos</span><span class="when-filled">Add more videos</span></strong>
+          <small>Up to __MAX_CLIPS__ clips, 1 GiB each. <span class="when-empty">Add them in batches or drop them anywhere on this page.</span><span class="when-filled">Drop them anywhere on this page.</span></small></span>
+        <span class="picker-button" aria-hidden="true">Choose videos</span>
+      </label>
+      <button class="clear-selection" id="clear-selection" type="button"
+        aria-label="Clear selected videos" title="Clear selected videos" disabled>
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+          stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+          stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6"/>
+        </svg>
+      </button>
     </div>
-    <div class="phase-panel">
-      <div class="phase-track" aria-label="Processing steps">
-        <div id="compress-step" class="phase-step">1. Compressing on this device</div>
-        <div id="send-step" class="phase-step">2. Sending to Discord</div>
+    <p class="formats-link"><a href="#format-help">Which formats work?</a></p>
+    <p id="selection" class="selection" aria-live="polite">No videos selected</p>
+    <p id="preparation-help" class="selection">Clips are copied to temporary storage on this device. Wait for Ready before exporting your next clip. Up to 1 GiB per clip and 4 GiB total, subject to available browser storage.</p>
+    <div id="work" class="work" hidden>
+      <div id="stall-warning" class="background-warning" hidden role="status">No processing progress has been reported for at least 2 minutes. Processing may be slow or paused; this is not a confirmed failure. Keep this page visible and your screen unlocked. You can keep waiting, or cancel and retry on a desktop if it does not resume.</div>
+      <div id="background-warning" class="background-warning" hidden role="status">
+        Compression may slow down or pause while this tab is hidden. Keep this
+        browser in the foreground and your screen unlocked.
       </div>
-      <h2 id="phase-title" class="phase-title">Preparing videos</h2>
-      <p id="phase-copy" class="phase-copy">Nothing has been uploaded yet.</p>
-      <progress id="overall-progress" max="100" value="0"></progress>
-      <div class="run-meta">
-        <span id="elapsed">Elapsed 0:00</span><span id="run-detail">Preparing files</span>
+      <div class="phase-panel">
+        <p id="step-label" class="step-label">Step 2 of 3</p>
+        <h2 id="phase-title" class="phase-title">Preparing videos</h2>
+        <p id="phase-copy" class="phase-copy">Nothing has been uploaded yet.</p>
+        <progress id="overall-progress" max="100" value="0" aria-labelledby="phase-title"></progress>
+        <div class="run-meta">
+          <span id="elapsed">Elapsed 0:00</span><span id="run-detail">Preparing files</span>
+        </div>
       </div>
+      <ol class="phase-track" aria-label="Processing steps">
+        <li id="prepare-step" class="phase-step done"><span class="step-marker" aria-hidden="true"></span><span class="step-text"><span class="step-name">Videos prepared</span><span class="visually-hidden step-state">, completed</span></span></li>
+        <li id="compress-step" class="phase-step"><span class="step-marker" aria-hidden="true"></span><span class="step-text"><span class="step-name">Compressing on this device</span><span class="step-note">Shrinking each clip to fit Discord</span><span class="visually-hidden step-state"></span></span></li>
+        <li id="send-step" class="phase-step"><span class="step-marker" aria-hidden="true"></span><span class="step-text"><span class="step-name">Sending to Discord</span><span class="step-note">Then the bot posts them in your channel</span><span class="visually-hidden step-state"></span></span></li>
+      </ol>
+    </div>
+    <p id="completion-summary" class="completion-summary" hidden role="status"></p>
+    <p id="size-summary" class="size-summary" hidden></p>
+    <div id="files" class="file-list" hidden></div>
+    <div class="notice stay-open" id="stay-open">
+      <span class="icon icon-phone" aria-hidden="true"></span>
+      <span><strong>Keep this page open and active until it finishes.</strong><br>
+      This helps compression run at full speed. On phones, keep the screen unlocked
+      and this browser in the foreground. Long videos are best processed on a desktop.</span>
     </div>
   </div>
-  <div class="controls">
-    <button id="submit" type="submit" disabled>Compress and send to Discord</button>
-    <button id="cancel" class="secondary" type="button" hidden>Cancel</button>
+  <div class="col-side">
+    <div class="send-panel">
+      <label class="caption-label" for="caption">Message <span class="optional">(optional)</span></label>
+      <textarea id="caption" name="caption" maxlength="1000" rows="3"
+        placeholder="Clips from yesterday"></textarea>
+      <p class="caption-help">1,000-character limit.</p>
+      <div class="controls">
+        <button id="submit" type="submit" disabled aria-describedby="submit-help">Add videos to continue</button>
+        <button id="cancel" class="secondary" type="button" hidden>Cancel</button>
+        <p id="submit-help" class="submit-help"></p>
+      </div>
+      <div id="message" class="message" hidden tabindex="-1" aria-live="assertive"></div>
+    </div>
+    <div id="downloads" class="feedback-actions" hidden aria-label="Save prepared videos"></div>
+    __REVIEW_PROMPT__
+    <div id="feedback-actions" class="feedback-actions contact-actions" hidden>
+      <a class="back-to-discord btn-primary" href="https://discord.com/app">Back to Discord</a>
+      <a id="feedback-link" class="feedback-link"
+        href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20contact">__MAIL_ICON__Contact us</a>
+      <a class="support-link" href="https://discord.com/invite/32RWwNWyEH">__DISCORD_ICON__Join our server</a>
+      <p id="contact-help">The email link opens your email app; the server link opens Discord.
+        Please don't share private videos or session links.</p>
+    </div>
+    <ol class="next-steps" aria-label="What happens next">
+      <li>Clips are compressed on this device</li>
+      <li>Only finished files are sent to your channel</li>
+      <li>Keep this tab open until Discord confirms delivery</li>
+    </ol>
+    <details class="performance-help format-help" id="format-help">
+      <summary>Supported video formats</summary>
+      <p>MP4, MOV, M4V, WebM, MKV, AVI, MPEG, OGV, FLV, TS, MTS, M2TS,
+        3GP, 3G2, WMV, and ASF. Support also depends on the codec inside the file.
+        AV1 conversion is not supported by this encoder. Damaged, encrypted,
+        or unsupported videos cannot be converted.</p>
+    </details>
+    <details class="performance-help" id="performance-help">
+      <summary>Keep compression running quickly</summary>
+      <p>For maximum speed, move this tab into a separate window and keep part of
+        the window visible while compression runs.</p>
+      <p>In Chrome, open <code>chrome://settings/performance</code>, add this site
+        under <strong>Always keep these sites active</strong>, and turn off
+        <strong>Energy Saver</strong> while processing.</p>
+    </details>
+    <p class="privacy"><span id="processing-privacy"><span class="icon icon-lock" aria-hidden="true"></span>Compression runs on
+      this device. Only finished files are sent through the relay to Discord.
+      MP4s that already fit may be sent unchanged.<br></span>
+      <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+      <span aria-hidden="true"> · </span>
+      <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></p>
   </div>
-  <div id="message" class="message" hidden tabindex="-1" aria-live="assertive"></div>
-  <div id="downloads" class="feedback-actions" hidden aria-label="Save prepared videos"></div>
-  __REVIEW_PROMPT__
-  <div id="feedback-actions" class="feedback-actions contact-actions" hidden>
-    <a id="feedback-link" class="feedback-link"
-      href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20contact">Contact Us</a>
-    <a class="support-link" href="https://discord.com/invite/32RWwNWyEH">Join Discord Server</a>
-    <p id="contact-help">The email link opens your email app; the server link opens Discord.
-      Please don't share private videos or session links.</p>
-  </div>
-  <details class="performance-help format-help" id="format-help">
-    <summary>Supported video formats</summary>
-    <p>MP4, MOV, M4V, WebM, MKV, AVI, MPEG, OGV, FLV, TS, MTS, M2TS,
-      3GP, 3G2, WMV, and ASF. Support also depends on the codec inside the file.
-      AV1 conversion is not supported by this encoder. Damaged, encrypted,
-      or unsupported videos cannot be converted.</p>
-  </details>
-  <details class="performance-help" id="performance-help">
-    <summary>Keep compression running quickly</summary>
-    <p>For maximum speed, move this tab into a separate window and keep part of
-      the window visible while compression runs.</p>
-    <p>In Chrome, open <code>chrome://settings/performance</code>, add this site
-      under <strong>Always keep these sites active</strong>, and turn off
-      <strong>Energy Saver</strong> while processing.</p>
-  </details>
-  <p class="privacy"><span id="processing-privacy"><span aria-hidden="true">🔒</span> Compression runs on
-    this device. Only finished files are sent through the relay to Discord.
-    MP4s that already fit may be sent unchanged.<br></span>
-    <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
-    <span aria-hidden="true"> · </span>
-    <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></p>
 </form>
+</main>
 
 <script>
 // Independent of module imports: a failed dependency must not leave a silent form.

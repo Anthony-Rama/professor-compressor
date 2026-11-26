@@ -73,15 +73,15 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('id="clear-selection" type="button"', self.page)
         self.assertIn('aria-label="Clear selected videos"', self.page)
         self.assertNotIn("a new selection replaces the previous one", self.page)
-        self.assertIn("Add videos in batches, up to 10 total", self.page)
+        self.assertIn("Up to 10 clips, 1 GiB each.", self.page)
 
     def test_feedback_is_optional_and_has_a_support_link(self) -> None:
         self.assertIn(
             'id="feedback-actions" class="feedback-actions contact-actions" hidden',
             self.page,
         )
-        self.assertIn("Contact Us", self.page)
-        self.assertIn("Join Discord Server", self.page)
+        self.assertIn("Contact us</a>", self.page)
+        self.assertIn("Join our server</a>", self.page)
         self.assertIn("https://discord.com/invite/32RWwNWyEH", self.page)
         self.assertIn("mailto:professorcompressor.support@gmail.com", self.page)
 
