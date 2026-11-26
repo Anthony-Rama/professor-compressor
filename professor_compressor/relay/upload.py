@@ -369,7 +369,18 @@ async def receive_results(
     notify: Callable[[str], None],
     metrics: RuntimeMetrics,
 ) -> web.Response:
-    """Receive one completed browser batch and transfer it to the delivery queue."""
+    """Receive one completed browser batch and transfer it to the delivery queue.
+
+    This handler deliberately keeps resource ownership in one place. Once it
+    takes an upload slot, the request owns that slot and every byte reserved
+    while reading clips. Each failure path returns through the single
+    ``finally`` block, which releases both and resets the job to CLAIMED.
+    Ownership passes to a delivery worker only at the queue handoff, with no
+    ``await`` between ``enqueue`` and clearing ``upload_slot_held``, so a
+    cancelled request can never release bytes a worker is already using.
+    Keep that structure when changing this function; the reading, validation,
+    and queueing steps it calls are separate helpers above.
+    """
     receive_started = time.monotonic()
     job, response = authorize(request)
     if response is not None:
