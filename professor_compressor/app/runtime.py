@@ -5,7 +5,6 @@ import logging
 import os
 from collections.abc import Callable
 
-import certifi
 import discord
 from aiohttp import web
 from discord import app_commands
@@ -32,7 +31,6 @@ from .tasks import BackgroundTasks
 
 
 def run() -> None:
-    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
     runtime_settings = Settings.from_environment(require_token=True)
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
