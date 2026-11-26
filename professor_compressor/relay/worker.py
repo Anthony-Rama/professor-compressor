@@ -13,7 +13,7 @@ from ..domain import BrowserResult, DeliveryRequest, UploadJob
 from ..observability.metrics import RuntimeMetrics
 
 # Log name is part of the operations contract; it must not follow the module path.
-logger = logging.getLogger("professor_compressor.delivery_worker")
+logger = logging.getLogger("professor_compressor.application")
 
 # Upper bound for one Discord upload; later outcomes are reported as unconfirmed.
 SEND_TIMEOUT_SECONDS = 120

@@ -24,7 +24,7 @@ from .diagnostics import parse_compression_diagnostics
 from .media_validation import valid_mp4_signature
 
 # Log name is part of the operations contract; it must not follow the module path.
-logger = logging.getLogger("professor_compressor.upload_relay")
+logger = logging.getLogger("professor_compressor.application")
 
 DELIVERY_RESPONSE_WAIT_SECONDS = 2
 UPLOAD_DEADLINE_SECONDS = 300
