@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from professor_compressor.application import Runtime
+from professor_compressor.background_tasks import BackgroundTasks
 from professor_compressor.config import Settings
 from professor_compressor.topgg import METRICS_URL, TopGGStats, retry_delay
 
@@ -149,7 +150,7 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
         blocker = asyncio.Event()
         stats = Mock(token="test")
         stats.run = AsyncMock(side_effect=blocker.wait)
-        tasks = set()
+        tasks = BackgroundTasks()
         with (
             patch.object(self.runtime, "topgg_stats", stats),
             patch.object(self.runtime, "topgg_stats_task", None),

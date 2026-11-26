@@ -18,6 +18,7 @@ from discord import app_commands
 
 from . import browser_reports, discord_commands, sessions
 from .assets import ASSET_PACKAGES, ASSET_PREFIX
+from .background_tasks import BackgroundTasks
 from .branding import USER_AGENT
 from .config import MIB, Settings
 from .dashboard import register_dashboard
@@ -97,7 +98,7 @@ class Runtime:
         self.diagnostic_event_counts: dict[str, int] = {}
         self.relay = RelayState()
         self.delivery_workers: list[asyncio.Task[None]] = []
-        self.background_tasks: set[asyncio.Task[Any]] = set()
+        self.background_tasks = BackgroundTasks()
         self.web_runner: web.AppRunner | None = None
         self.cleanup_task: asyncio.Task[None] | None = None
         self.command_sync_task: asyncio.Task[None] | None = None
@@ -182,9 +183,7 @@ class Runtime:
         """Run an alert in the background so Discord commands remain responsive."""
         if not self.settings.alert_webhook_url:
             return
-        task = asyncio.create_task(self.send_owner_alert(message))
-        self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
+        self.background_tasks.spawn(self.send_owner_alert(message))
 
     async def report_dsc_stats(self) -> bool:
         """Publish the current server count to dsc.sh without blocking bot work."""
@@ -213,9 +212,7 @@ class Runtime:
         """Schedule a best-effort dsc.sh update after a server-count change."""
         if not self.settings.dsc_api_token:
             return
-        task = asyncio.create_task(self.report_dsc_stats())
-        self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
+        self.background_tasks.spawn(self.report_dsc_stats())
 
     async def dsc_stats_loop(self) -> None:
         """Refresh dsc.sh periodically so the public listing stays current."""
@@ -600,13 +597,9 @@ class Runtime:
             raise
         self.relay.queue = asyncio.Queue(maxsize=self.settings.delivery_queue_size)
         for worker_number in range(1, self.settings.delivery_workers + 1):
-            worker = asyncio.create_task(self.delivery_worker(worker_number))
+            worker = self.background_tasks.spawn(self.delivery_worker(worker_number))
             self.delivery_workers.append(worker)
-            self.background_tasks.add(worker)
-            worker.add_done_callback(self.background_tasks.discard)
-        self.cleanup_task = asyncio.create_task(self.expire_jobs_loop())
-        self.background_tasks.add(self.cleanup_task)
-        self.cleanup_task.add_done_callback(self.background_tasks.discard)
+        self.cleanup_task = self.background_tasks.spawn(self.expire_jobs_loop())
         logger.info(
             "Private browser compressor listening at %s", self.settings.public_base_url
         )
@@ -692,23 +685,17 @@ class Runtime:
         if not self.commands_synced and (
             self.command_sync_task is None or self.command_sync_task.done()
         ):
-            self.command_sync_task = asyncio.create_task(
+            self.command_sync_task = self.background_tasks.spawn(
                 self.sync_commands_with_retry()
             )
-            self.background_tasks.add(self.command_sync_task)
-            self.command_sync_task.add_done_callback(self.background_tasks.discard)
         if self.settings.dsc_api_token and (
             self.dsc_stats_task is None or self.dsc_stats_task.done()
         ):
-            self.dsc_stats_task = asyncio.create_task(self.dsc_stats_loop())
-            self.background_tasks.add(self.dsc_stats_task)
-            self.dsc_stats_task.add_done_callback(self.background_tasks.discard)
+            self.dsc_stats_task = self.background_tasks.spawn(self.dsc_stats_loop())
         if self.topgg_stats.token and (
             self.topgg_stats_task is None or self.topgg_stats_task.done()
         ):
-            self.topgg_stats_task = asyncio.create_task(self.topgg_stats.run())
-            self.background_tasks.add(self.topgg_stats_task)
-            self.topgg_stats_task.add_done_callback(self.background_tasks.discard)
+            self.topgg_stats_task = self.background_tasks.spawn(self.topgg_stats.run())
         logger.info(
             "Logged in as %s in %d server(s)", self.client.user, len(self.client.guilds)
         )

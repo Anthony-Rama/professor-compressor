@@ -10,6 +10,7 @@ from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
 from professor_compressor.application import Runtime
+from professor_compressor.background_tasks import BackgroundTasks
 from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
 
@@ -143,7 +144,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(self.runtime, "web_runner", None),
             patch.object(self.runtime, "jobs", {}),
-            patch.object(self.runtime, "background_tasks", set()),
+            patch.object(self.runtime, "background_tasks", BackgroundTasks()),
             patch.object(self.runtime, "delivery_workers", []),
             patch.object(self.runtime, "draining", False),
             patch.object(
