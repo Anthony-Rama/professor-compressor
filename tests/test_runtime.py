@@ -65,7 +65,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
             async with asyncio.TaskGroup() as tasks:
                 workers = [
-                    tasks.create_task(runtime.delivery_worker(1)) for runtime in (a, b)
+                    tasks.create_task(runtime.delivery.run_worker(1))
+                    for runtime in (a, b)
                 ]
                 try:
                     response = await http_a.post(path, headers=headers, data=data)
@@ -95,15 +96,15 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         response = Mock(status=503, reason="Unavailable")
         error = discord.HTTPException(response, {"code": 0, "message": "Temporary"})
         with (
-            patch.object(self.runtime, "commands_synced", False),
+            patch.object(self.runtime.command_sync, "synced", False),
             patch.object(
                 self.runtime.tree, "sync", AsyncMock(side_effect=[error, []])
             ) as sync,
             patch.object(asyncio, "sleep", AsyncMock()),
         ):
-            await self.runtime.sync_commands_with_retry()
+            await self.runtime.command_sync.sync_with_retry()
             self.assertEqual(sync.await_count, 2)
-            self.assertTrue(self.runtime.commands_synced)
+            self.assertTrue(self.runtime.command_sync.synced)
 
     async def test_startup_and_signal_shutdown_close_http_and_workers(self):
         signals = {}
@@ -124,9 +125,9 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
             async def start(self, token):
                 test.assertEqual(token, "test-only")
-                test.assertIsNotNone(test.runtime.web_runner)
+                test.assertIsNotNone(test.runtime.lifecycle.web_runner)
                 test.assertEqual(
-                    len(test.runtime.delivery_workers),
+                    len(test.runtime.delivery.workers),
                     test.runtime.settings.delivery_workers,
                 )
                 signals[signal.SIGTERM]()
@@ -138,14 +139,16 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         loop = asyncio.get_running_loop()
         with (
-            patch.object(self.runtime, "client", Client()),
+            patch.object(self.runtime.lifecycle, "client", Client()),
             patch.object(
-                self.runtime, "settings", replace(self.runtime.settings, web_port=0)
+                self.runtime.lifecycle,
+                "settings",
+                replace(self.runtime.settings, web_port=0),
             ),
-            patch.object(self.runtime, "web_runner", None),
+            patch.object(self.runtime.lifecycle, "web_runner", None),
             patch.object(self.runtime.sessions, "jobs", {}),
-            patch.object(self.runtime, "background_tasks", BackgroundTasks()),
-            patch.object(self.runtime, "delivery_workers", []),
+            patch.object(self.runtime.lifecycle, "tasks", BackgroundTasks()),
+            patch.object(self.runtime.delivery, "workers", []),
             patch.object(self.runtime.sessions, "draining", False),
             patch.object(
                 loop,
@@ -155,8 +158,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(loop, "remove_signal_handler"),
         ):
             await asyncio.wait_for(self.runtime.serve("test-only"), 3)
-            self.assertIsNone(self.runtime.web_runner)
-            self.assertTrue(self.runtime.client.is_closed())
+            self.assertIsNone(self.runtime.lifecycle.web_runner)
+            self.assertTrue(self.runtime.lifecycle.client.is_closed())
             self.assertTrue(
-                all(worker.done() for worker in self.runtime.delivery_workers)
+                all(worker.done() for worker in self.runtime.delivery.workers)
             )

@@ -152,17 +152,17 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
         stats.run = AsyncMock(side_effect=blocker.wait)
         tasks = BackgroundTasks()
         with (
-            patch.object(self.runtime, "topgg_stats", stats),
-            patch.object(self.runtime, "topgg_stats_task", None),
-            patch.object(self.runtime, "background_tasks", tasks),
-            patch.object(self.runtime, "commands_synced", True),
-            patch.object(self.runtime, "start_upload_server", AsyncMock()),
+            patch.object(self.runtime.lifecycle, "topgg_stats", stats),
+            patch.object(self.runtime.lifecycle, "topgg_stats_task", None),
+            patch.object(self.runtime.lifecycle, "tasks", tasks),
+            patch.object(self.runtime.command_sync, "synced", True),
+            patch.object(self.runtime.lifecycle, "start_upload_server", AsyncMock()),
         ):
             try:
-                await self.runtime.on_ready()
-                first = self.runtime.topgg_stats_task
-                await self.runtime.on_ready()
-                self.assertIs(self.runtime.topgg_stats_task, first)
+                await self.runtime.lifecycle.on_ready()
+                first = self.runtime.lifecycle.topgg_stats_task
+                await self.runtime.lifecycle.on_ready()
+                self.assertIs(self.runtime.lifecycle.topgg_stats_task, first)
                 await asyncio.sleep(0)
                 stats.run.assert_awaited_once()
             finally:
@@ -173,10 +173,10 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
     async def test_guild_events_signal_worker(self):
         guild = SimpleNamespace(id=123, name="Test", member_count=3)
         with (
-            patch.object(self.runtime, "topgg_stats") as stats,
+            patch.object(self.runtime.guild_events, "topgg_stats") as stats,
             patch.object(self.runtime.alerts, "schedule"),
             patch.object(self.runtime.dsc_stats, "schedule_update"),
         ):
-            await self.runtime.on_guild_join(guild)
-            await self.runtime.on_guild_remove(guild)
+            await self.runtime.guild_events.on_guild_join(guild)
+            await self.runtime.guild_events.on_guild_remove(guild)
         self.assertEqual(stats.notify_change.call_count, 2)

@@ -541,7 +541,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(self.runtime.alerts, "schedule") as schedule_alert,
             patch.object(self.runtime.dsc_stats, "schedule_update") as schedule_stats,
         ):
-            await self.runtime.on_guild_join(guild)
+            await self.runtime.guild_events.on_guild_join(guild)
 
         schedule_alert.assert_called_once()
         schedule_stats.assert_called_once_with()

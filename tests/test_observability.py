@@ -794,7 +794,7 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
             latency=0.042,
             is_ready=Mock(return_value=True),
         )
-        with patch.object(self.runtime, "client", fake):
+        with patch.object(self.runtime.health, "client", fake):
             response = await self.client.get(
                 "/ops/data?reference=PC-NONE&tests=0", auth=BasicAuth("admin", self.key)
             )
@@ -805,15 +805,19 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["runtime"]["gateway_latency_ms"], 42)
             self.assertNotIn("private-guild", json.dumps(result))
             fake.guilds.pop()
-            self.assertEqual(self.runtime.dashboard_runtime()["connected_servers"], 1)
+            self.assertEqual(
+                self.runtime.health.dashboard_snapshot()["connected_servers"], 1
+            )
             fake.is_ready.return_value = False
             fake.latency = float("nan")
-            cached = self.runtime.dashboard_runtime()
+            cached = self.runtime.health.dashboard_snapshot()
             self.assertEqual(cached["connected_servers"], 1)
             self.assertFalse(cached["server_count_current"])
             self.assertIsNone(cached["gateway_latency_ms"])
             fake.guilds.clear()
-            self.assertIsNone(self.runtime.dashboard_runtime()["connected_servers"])
+            self.assertIsNone(
+                self.runtime.health.dashboard_snapshot()["connected_servers"]
+            )
 
     async def test_dashboard_auth_attempts_are_bounded(self):
         for _ in range(10):

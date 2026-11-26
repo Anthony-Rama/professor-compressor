@@ -7,7 +7,7 @@ import discord
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor import application, upload_relay
+from professor_compressor import bot_delivery, upload_relay
 from professor_compressor.application import Runtime
 from professor_compressor.assets import ASSET_PREFIX
 from professor_compressor.config import Settings
@@ -378,11 +378,13 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(upload_relay, "DELIVERY_RESPONSE_WAIT_SECONDS", 0.01),
             patch.object(
-                self.runtime, "deliver_browser_results", AsyncMock(side_effect=deliver)
+                self.runtime.delivery,
+                "deliver_browser_results",
+                AsyncMock(side_effect=deliver),
             ) as sender,
             patch.object(self.runtime.alerts, "schedule") as alert,
         ):
-            worker = asyncio.create_task(self.runtime.delivery_worker(1))
+            worker = asyncio.create_task(self.runtime.delivery.run_worker(1))
             try:
                 response = await self.post_video()
                 self.assertEqual(response.status, 202)
@@ -419,13 +421,13 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.job()
         with (
             patch.object(
-                self.runtime,
+                self.runtime.delivery,
                 "deliver_browser_results",
                 AsyncMock(side_effect=RuntimeError("Permission changed")),
             ) as sender,
             patch.object(self.runtime.alerts, "schedule"),
         ):
-            worker = asyncio.create_task(self.runtime.delivery_worker(1))
+            worker = asyncio.create_task(self.runtime.delivery.run_worker(1))
             try:
                 response = await self.post_video()
                 self.assertEqual(response.status, 502)
@@ -492,8 +494,8 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(
                     self.runtime.client, "is_ready", return_value=discord_ready
                 ),
-                patch.object(self.runtime, "commands_synced", synced),
-                patch.object(self.runtime, "delivery_workers", workers),
+                patch.object(self.runtime.command_sync, "synced", synced),
+                patch.object(self.runtime.delivery, "workers", workers),
                 patch.object(self.runtime.sessions, "draining", draining),
             ):
                 response = await self.http.get("/readyz")
@@ -514,7 +516,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_drain_waits_for_active_work_and_respects_deadline(self):
         job = self.job(JobState.QUEUED)
-        task = asyncio.create_task(self.runtime.drain_sessions(timeout=1))
+        task = asyncio.create_task(self.runtime.lifecycle.drain_sessions(timeout=1))
         await asyncio.sleep(0.01)
         self.assertTrue(self.runtime.sessions.draining)
         self.assertFalse(task.done())
@@ -522,7 +524,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(task, 1)
         self.runtime.sessions.jobs[job.token] = job
         started = time.monotonic()
-        await self.runtime.drain_sessions(timeout=0.01)
+        await self.runtime.lifecycle.drain_sessions(timeout=0.01)
         self.assertLess(time.monotonic() - started, 0.5)
 
     async def test_delivery_rechecks_permissions_and_current_limit(self):
@@ -534,18 +536,20 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             view_channel=True, send_messages=True, attach_files=False
         )
         with (
-            patch.object(self.runtime, "get_channel", AsyncMock(return_value=channel)),
+            patch.object(
+                self.runtime.delivery, "get_channel", AsyncMock(return_value=channel)
+            ),
             patch.object(self.runtime.client, "get_guild", return_value=guild),
         ):
             with self.assertRaisesRegex(RuntimeError, "Attach Files"):
-                await self.runtime.deliver_browser_results(
+                await self.runtime.delivery.deliver_browser_results(
                     job, [BrowserResult("a.mp4", mp4())]
                 )
             channel.send.assert_not_awaited()
             channel.permissions_for.return_value.attach_files = True
-            with patch.object(application, "bot_upload_limit", return_value=1):
+            with patch.object(bot_delivery, "bot_upload_limit", return_value=1):
                 with self.assertRaisesRegex(RuntimeError, "allowance changed"):
-                    await self.runtime.deliver_browser_results(
+                    await self.runtime.delivery.deliver_browser_results(
                         job, [BrowserResult("a.mp4", mp4())]
                     )
             channel.send.assert_not_awaited()

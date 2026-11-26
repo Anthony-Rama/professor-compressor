@@ -5,11 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
-from professor_compressor.application import (
-    BrowserResult,
-    Runtime,
-    UploadJob,
-)
+from professor_compressor.application import Runtime
 from professor_compressor.config import Settings
 from professor_compressor.delivery_policy import (
     UNCONFIRMED_DELIVERY_MESSAGE,
@@ -17,6 +13,7 @@ from professor_compressor.delivery_policy import (
     compression_target,
     delivery_failure,
 )
+from professor_compressor.domain import BrowserResult, UploadJob
 from professor_compressor.upload_relay import safe_result_name
 
 
@@ -54,12 +51,12 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(self.runtime.alerts, "schedule"),
                 patch.object(self.runtime.sessions, "outcomes", {}),
                 patch.object(
-                    self.runtime,
+                    self.runtime.delivery,
                     "deliver_browser_results",
                     AsyncMock(return_value="sent", side_effect=failure),
                 ),
             ):
-                worker = asyncio.create_task(self.runtime.delivery_worker(1))
+                worker = asyncio.create_task(self.runtime.delivery.run_worker(1))
                 try:
                     await asyncio.wait_for(queue.join(), 2)
                     self.assertEqual(self.runtime.relay.buffered_bytes, 0)
@@ -104,7 +101,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
         in_flight = runtime.sessions.jobs["in-flight"]
-        worker = asyncio.create_task(runtime.delivery_worker(1))
+        worker = asyncio.create_task(runtime.delivery.run_worker(1))
         try:
             await asyncio.wait_for(sending.wait(), 2)
         finally:
@@ -151,9 +148,11 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             discord_limit=1000,
             interaction=Mock(),
         )
-        with patch.object(self.runtime, "get_channel", AsyncMock(return_value=None)):
+        with patch.object(
+            self.runtime.delivery, "get_channel", AsyncMock(return_value=None)
+        ):
             with self.assertRaises(DeliveryFailure) as caught:
-                await self.runtime.deliver_browser_results(
+                await self.runtime.delivery.deliver_browser_results(
                     job, [BrowserResult("clip.mp4", b"video")]
                 )
         self.assertEqual(caught.exception.error_code, "DELIVERY_ACCESS_DENIED")
@@ -198,7 +197,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             with (
                 self.subTest(code=code, error=type(error).__name__),
                 patch.object(
-                    self.runtime,
+                    self.runtime.delivery,
                     "get_channel",
                     AsyncMock(return_value=Mock()),
                 ),
@@ -208,13 +207,13 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                     return_value=Mock(filesize_limit=20_000_000),
                 ),
                 patch.object(
-                    self.runtime,
+                    self.runtime.delivery,
                     "send_result_batch",
                     AsyncMock(side_effect=error),
                 ),
             ):
                 with self.assertRaises(DeliveryFailure) as caught:
-                    await self.runtime.deliver_browser_results(
+                    await self.runtime.delivery.deliver_browser_results(
                         job, [BrowserResult("clip.mp4", b"video")]
                     )
                 self.assertEqual(caught.exception.error_code, code)
@@ -249,17 +248,17 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 return_value=Mock(filesize_limit=20_000_000),
             ),
             patch.object(
-                self.runtime,
+                self.runtime.delivery,
                 "get_channel",
                 AsyncMock(return_value=channel),
             ),
             patch.object(
-                self.runtime,
+                self.runtime.delivery,
                 "send_result_batch",
                 AsyncMock(),
             ) as send_batch,
         ):
-            response = await self.runtime.deliver_browser_results(job, results)
+            response = await self.runtime.delivery.deliver_browser_results(job, results)
 
         send_batch.assert_awaited_once_with(
             channel.send,
@@ -295,7 +294,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 return_value=Mock(filesize_limit=20_000_000),
             ),
             patch.object(
-                self.runtime,
+                self.runtime.delivery,
                 "get_channel",
                 AsyncMock(return_value=channel),
             ),
@@ -309,7 +308,9 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 ("x" * 1000, "> " + "x" * 1000),
             ):
                 with self.subTest(caption_length=len(caption)):
-                    await self.runtime.deliver_browser_results(job, results, caption)
+                    await self.runtime.delivery.deliver_browser_results(
+                        job, results, caption
+                    )
                     sent = channel.send.await_args.kwargs
                     self.assertEqual(
                         sent["content"], "🎬 **Clips from** <@123>\n\n" + quoted
