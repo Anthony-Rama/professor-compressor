@@ -143,79 +143,98 @@ export function createFileSelection({
 
   function renderSelectedFiles(files) {
     filesElement.replaceChildren();
-    selectedFiles = files.map((file, index) => {
-      const card = document.createElement("div");
-      card.className = "file-card";
-      const head = document.createElement("div");
-      head.className = "file-head";
-      const name = document.createElement("span");
-      name.className = "file-name";
-      name.textContent = file.name;
-      const status = document.createElement("span");
-      status.className = "file-status";
-      const identity = fileIdentity(file);
-      let copy = inputCopies.get(identity);
-      if (!copy) {
-        copy = {
-          identity,
-          source: file,
-          file,
-          phase: "preparing",
-          fraction: 0,
-          removed: false,
-          report: preparationReport(index + 1, file.size),
-        };
-        inputCopies.set(identity, copy);
-        void prepareInputCopy(copy);
-      }
-      status.textContent =
-        copy.phase === "ready"
-          ? "Ready"
-          : copy.phase === "failed"
-            ? "Reselect file"
-            : "Preparing local copy…";
-      const actions = document.createElement("div");
-      actions.className = "file-actions";
-      const remove = document.createElement("button");
-      remove.className = "remove-file";
-      remove.type = "button";
-      remove.setAttribute("aria-label", "Remove " + file.name);
-      remove.title = "Remove " + file.name;
-      const icon = clearSelectionButton.querySelector("svg").cloneNode(true);
-      icon.setAttribute("width", "18");
-      icon.setAttribute("height", "18");
-      remove.append(icon);
-      remove.addEventListener("click", () => removeSelectedFile(index));
-      const reselect = document.createElement("button");
-      reselect.type = "button";
-      reselect.className = "secondary reselect-file";
-      reselect.textContent = "Reselect";
-      reselect.setAttribute("aria-label", "Reselect " + file.name);
-      reselect.hidden = copy.phase !== "failed";
-      reselect.addEventListener("click", () => reselectFile(index));
-      actions.append(status, reselect, remove);
-      head.append(name, actions);
-      const progress = document.createElement("progress");
-      progress.max = 100;
-      progress.value = copy.phase === "preparing" ? copy.fraction * 100 : 0;
-      const meta = document.createElement("div");
-      meta.className = "file-meta";
-      meta.textContent = copy.error || readableSize(file.size) + " original";
-      card.append(head, progress, meta);
-      filesElement.append(card);
-      return {
-        file: copy.file,
-        identity,
-        index: index + 1,
-        card,
-        status,
-        progress,
-        meta,
-        reselect,
-        finalSize: 0,
-      };
-    });
+    selectedFiles = files.map((file, index) => fileCard(file, index));
     filesElement.hidden = files.length === 0;
+  }
+
+  // Build one selected-file row and return its per-file state.
+  function fileCard(file, index) {
+    const card = document.createElement("div");
+    card.className = "file-card";
+    const head = document.createElement("div");
+    head.className = "file-head";
+    const name = document.createElement("span");
+    name.className = "file-name";
+    name.textContent = file.name;
+    const status = document.createElement("span");
+    status.className = "file-status";
+    const identity = fileIdentity(file);
+    const copy = inputCopyFor(file, identity, index);
+    status.textContent =
+      copy.phase === "ready"
+        ? "Ready"
+        : copy.phase === "failed"
+          ? "Reselect file"
+          : "Preparing local copy…";
+    const actions = document.createElement("div");
+    actions.className = "file-actions";
+    const remove = removeButton(file, index);
+    const reselect = reselectButton(file, index, copy);
+    actions.append(status, reselect, remove);
+    head.append(name, actions);
+    const progress = document.createElement("progress");
+    progress.max = 100;
+    progress.value = copy.phase === "preparing" ? copy.fraction * 100 : 0;
+    const meta = document.createElement("div");
+    meta.className = "file-meta";
+    meta.textContent = copy.error || readableSize(file.size) + " original";
+    card.append(head, progress, meta);
+    filesElement.append(card);
+    return {
+      file: copy.file,
+      identity,
+      index: index + 1,
+      card,
+      status,
+      progress,
+      meta,
+      reselect,
+      finalSize: 0,
+    };
+  }
+
+  // Reuse the local copy of an already selected file, or start preparing one.
+  function inputCopyFor(file, identity, index) {
+    let copy = inputCopies.get(identity);
+    if (!copy) {
+      copy = {
+        identity,
+        source: file,
+        file,
+        phase: "preparing",
+        fraction: 0,
+        removed: false,
+        report: preparationReport(index + 1, file.size),
+      };
+      inputCopies.set(identity, copy);
+      void prepareInputCopy(copy);
+    }
+    return copy;
+  }
+
+  function removeButton(file, index) {
+    const remove = document.createElement("button");
+    remove.className = "remove-file";
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove " + file.name);
+    remove.title = "Remove " + file.name;
+    const icon = clearSelectionButton.querySelector("svg").cloneNode(true);
+    icon.setAttribute("width", "18");
+    icon.setAttribute("height", "18");
+    remove.append(icon);
+    remove.addEventListener("click", () => removeSelectedFile(index));
+    return remove;
+  }
+
+  function reselectButton(file, index, copy) {
+    const reselect = document.createElement("button");
+    reselect.type = "button";
+    reselect.className = "secondary reselect-file";
+    reselect.textContent = "Reselect";
+    reselect.setAttribute("aria-label", "Reselect " + file.name);
+    reselect.hidden = copy.phase !== "failed";
+    reselect.addEventListener("click", () => reselectFile(index));
+    return reselect;
   }
 
   function refreshPreparation() {
@@ -368,6 +387,10 @@ export function createFileSelection({
     clips.files = transfer.files;
   }
 
+  function totalSize(files) {
+    return files.reduce((sum, file) => sum + file.size, 0);
+  }
+
   function fileIdentity(file) {
     return [file.name, file.size, file.lastModified, file.type].join("\u0000");
   }
@@ -395,6 +418,39 @@ export function createFileSelection({
       });
   }
 
+  // Incoming files not already selected, without duplicates within the drop.
+  function newFiles(current, incoming) {
+    const existing = new Set(current.map(fileIdentity));
+    return incoming.filter((file) => {
+      const identity = fileIdentity(file);
+      if (existing.has(identity)) return false;
+      existing.add(identity);
+      return true;
+    });
+  }
+
+  // The selection error for additions over the clip or size limits, or null.
+  // Oversized additions are reported to preparation telemetry.
+  function rejectedAdditionMessage(current, additions) {
+    if (current.length + additions.length > MAX_CLIPS)
+      return "Choose no more than " + MAX_CLIPS + " videos total. Remove some before adding more.";
+    if (!additions.length) return "Those videos are already selected.";
+    if (additions.some((file) => file.size > INPUT_FILE_LIMIT)) {
+      preparationReport(0, totalSize(additions))("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
+      return "Each video must be 1 GiB or smaller. Existing clips were kept.";
+    }
+    const totalBytes = totalSize([...current, ...additions]);
+    if (totalBytes > INPUT_BATCH_LIMIT) {
+      preparationReport(0, totalBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
+      return (
+        "This selection would total " +
+        bytesToGiB(totalBytes).toFixed(2) +
+        " GiB, above the 4 GiB batch limit. Existing clips were kept. Add fewer videos or remove some first."
+      );
+    }
+    return null;
+  }
+
   async function acceptSelectedFiles(incoming) {
     if (isRunning() || clips.disabled) return;
     if (sessionExpired()) {
@@ -409,61 +465,21 @@ export function createFileSelection({
       setSelectedFiles(current);
       return;
     }
-    const existing = new Set(current.map(fileIdentity));
-    const additions = incoming.filter((file) => {
-      const identity = fileIdentity(file);
-      if (existing.has(identity)) return false;
-      existing.add(identity);
-      return true;
-    });
-    if (current.length + additions.length > MAX_CLIPS) {
+    const additions = newFiles(current, incoming);
+    const rejection = rejectedAdditionMessage(current, additions);
+    if (rejection) {
       setSelectedFiles(current);
-      events.emit(
-        "selectionError",
-        "Choose no more than " + MAX_CLIPS + " videos total. Remove some before adding more.",
-      );
-      return;
-    }
-    if (!additions.length) {
-      setSelectedFiles(current);
-      events.emit("selectionError", "Those videos are already selected.");
-      return;
-    }
-    if (additions.some((file) => file.size > INPUT_FILE_LIMIT)) {
-      preparationReport(
-        0,
-        additions.reduce((sum, file) => sum + file.size, 0),
-      )("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
-      setSelectedFiles(current);
-      events.emit(
-        "selectionError",
-        "Each video must be 1 GiB or smaller. Existing clips were kept.",
-      );
-      return;
-    }
-    const totalBytes = [...current, ...additions].reduce((sum, file) => sum + file.size, 0);
-    if (totalBytes > INPUT_BATCH_LIMIT) {
-      preparationReport(0, totalBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
-      setSelectedFiles(current);
-      events.emit(
-        "selectionError",
-        "This selection would total " +
-          bytesToGiB(totalBytes).toFixed(2) +
-          " GiB, above the 4 GiB batch limit. Existing clips were kept. Add fewer videos or remove some first.",
-      );
+      events.emit("selectionError", rejection);
       return;
     }
     // Serialize admissions so rapid drops cannot race the same quota estimate.
     // Removal/clear during an estimate must not resurrect the prior selection.
     const snapshot = selectedFiles;
-    const report = preparationReport(
-      0,
-      additions.reduce((sum, file) => sum + file.size, 0),
-    );
+    const report = preparationReport(0, totalSize(additions));
     let store;
     try {
       store = await preservation;
-      await store.checkAvailable(additions.reduce((sum, file) => sum + file.size, 0));
+      await store.checkAvailable(totalSize(additions));
     } catch (error) {
       if (selectedFiles === snapshot && !isRunning() && !clips.disabled) {
         report("failed", error);
