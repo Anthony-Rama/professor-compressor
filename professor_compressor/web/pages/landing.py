@@ -19,6 +19,7 @@ from .site import (
     site_footer,
     site_header,
 )
+from .theme import THEME_BOOT_SCRIPT, THEME_TOGGLE_LOADER
 
 
 def _document(
@@ -64,6 +65,7 @@ def _document(
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  {THEME_BOOT_SCRIPT}
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape(title)}</title>
   <link rel="icon" type="image/png" href="/brand/professor-compressor.png">
@@ -91,6 +93,7 @@ def _document(
   {site_header(current)}
   <main>{body}</main>
   {site_footer()}
+  {THEME_TOGGLE_LOADER}
 </body>
 </html>"""
 

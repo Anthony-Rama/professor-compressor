@@ -1,8 +1,85 @@
 """Shared colour tokens and base styles inlined into every rendered page."""
 
+import re
+
 from ...paths import TEMPLATES
 
-THEME_CSS = (TEMPLATES / "theme.css").read_text(encoding="utf-8").rstrip("\n")
+_LIGHT_RULE = re.compile(r'    :root\[data-theme="light"\] \{\n(.*?)\n    \}\n', re.S)
+
+
+def _theme_css() -> str:
+    """Tokens with the light palette applied by choice or by the device setting.
+
+    theme.css writes the light palette once, for an explicit Light choice. The
+    same declarations also apply when no theme is chosen and the device
+    prefers light, so the System choice keeps following the device.
+    """
+    css = (TEMPLATES / "theme.css").read_text(encoding="utf-8").rstrip("\n")
+    match = _LIGHT_RULE.search(css)
+    if match is None:
+        raise RuntimeError("theme.css is missing its light palette")
+    declarations = "\n".join("  " + line for line in match.group(1).split("\n"))
+    followed = (
+        "    @media (prefers-color-scheme: light) {\n"
+        "      :root:not([data-theme]) {\n"
+        f"{declarations}\n"
+        "      }\n"
+        "    }\n"
+    )
+    return css[: match.end()] + followed + css[match.end() :]
+
+
+THEME_CSS = _theme_css()
+
+# Runs first in <head> so a saved Light or Dark choice applies before the first
+# paint. The choice stays in this browser; storage errors fall back to System.
+THEME_BOOT_SCRIPT = (
+    '<script>try{var t=localStorage.getItem("pc-theme");'
+    'if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}'
+    "catch(e){}</script>"
+)
+
+_THEME_OPTIONS = (("system", "System"), ("light", "Light"), ("dark", "Dark"))
+
+# Footer control on session pages: a radio group of the three choices. Shown by
+# /brand/theme-toggle.js once it has loaded; it does nothing without it.
+THEME_SWITCH = (
+    '<fieldset class="theme-switch" hidden>'
+    '<legend class="visually-hidden">Theme</legend>'
+    + "".join(
+        f'<label title="{name}"><input type="radio" name="theme-choice"'
+        f' value="{value}"{" checked" if value == "system" else ""}>'
+        f'<span class="icon icon-theme-{value}" aria-hidden="true"></span>'
+        f'<span class="visually-hidden">{name}</span></label>'
+        for value, name in _THEME_OPTIONS
+    )
+    + "</fieldset>"
+)
+
+# Header control on the public website: a menu button listing the choices.
+THEME_MENU = (
+    '<div class="theme-menu" hidden>'
+    '<button type="button" class="theme-menu-button" data-choice="system"'
+    ' aria-haspopup="menu" aria-expanded="false" aria-controls="theme-menu-list"'
+    ' aria-label="Theme: System" title="Theme: System">'
+    '<span class="icon" aria-hidden="true"></span></button>'
+    '<div class="theme-menu-list" id="theme-menu-list" role="menu"'
+    ' aria-label="Theme" hidden>'
+    + "".join(
+        f'<button type="button" role="menuitemradio" tabindex="-1"'
+        f' data-choice="{value}"'
+        f' aria-checked="{str(value == "system").lower()}">'
+        f'<span class="icon icon-theme-{value}" aria-hidden="true"></span>{name}'
+        '<span class="icon icon-check menu-check" aria-hidden="true"></span></button>'
+        for value, name in _THEME_OPTIONS
+    )
+    + "</div></div>"
+)
+
+# Loaded independently of the compressor: a failure here is caught and ignored.
+THEME_TOGGLE_LOADER = (
+    '<script type="module">import("/brand/theme-toggle.js").catch(() => {});</script>'
+)
 
 BRAND_MARK = (
     '<span class="brandmark"><img src="/brand/professor-compressor.png" alt=""'
@@ -43,4 +120,5 @@ def with_shared_markup(fragment: str) -> str:
         fragment.replace("__BRAND__", BRAND_MARK)
         .replace("__DISCORD_ICON__", DISCORD_ICON)
         .replace("__MAIL_ICON__", MAIL_ICON)
+        .replace("__THEME_SWITCH__", THEME_SWITCH)
     )

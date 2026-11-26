@@ -5,6 +5,7 @@ from html import escape
 
 from ...paths import TEMPLATES
 from .site import SITE_CSS, site_footer, site_header
+from .theme import THEME_BOOT_SCRIPT, THEME_TOGGLE_LOADER
 
 EFFECTIVE_DATE = "October 31, 2026"
 
@@ -31,6 +32,7 @@ def _document(title: str, content: str) -> str:
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  {THEME_BOOT_SCRIPT}
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="description" content="{escape(title)} for Professor Compressor">
@@ -64,6 +66,7 @@ def _document(title: str, content: str) -> str:
     </main>
   </div>
   {site_footer()}
+  {THEME_TOGGLE_LOADER}
 </body>
 </html>"""
 

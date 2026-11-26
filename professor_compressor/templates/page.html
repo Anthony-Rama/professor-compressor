@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  __THEME_BOOT__
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>__TITLE__</title>
@@ -24,8 +25,11 @@ __THEME_CSS__
          font-weight: 800; letter-spacing: -.02em; }
     p { margin: 0; }
     .intro { margin-top: 8px; color: var(--muted); font-size: 15px; line-height: 1.5; }
-    .page-footer { padding: 16px 20px 24px; border-top: 1px solid var(--border);
-                   color: var(--faint); font-size: 13px; text-align: center; }
+    .page-footer { display: flex; flex-wrap: wrap; align-items: center;
+                   justify-content: center; gap: 8px 16px; padding: 12px 20px 20px;
+                   border-top: 1px solid var(--border); color: var(--faint);
+                   font-size: 13px; text-align: center; }
+    .theme-footer { border-top: 0; padding-top: 0; }
     .message { padding: 13px 14px; border: 1px solid var(--border); border-radius: 14px;
                background: var(--surface); color: var(--text); font-size: 14px;
                line-height: 1.45; }
@@ -429,5 +433,6 @@ __THEME_CSS__
                     text-align: center; font-size: 14px; }
   </style>
 </head>
-<body>__BODY__</body>
+<body>__BODY__
+__THEME_LOADER__</body>
 </html>

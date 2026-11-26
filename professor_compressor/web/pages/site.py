@@ -4,7 +4,7 @@ from html import escape
 
 from ...branding import BOT_INVITE_URL, PROJECT_URL
 from ...paths import TEMPLATES
-from .theme import THEME_CSS
+from .theme import THEME_CSS, THEME_MENU
 
 GUIDE_PATH = "/guide/compress-video-for-discord"
 SUPPORT_EMAIL_URL = "mailto:professorcompressor.support@gmail.com"
@@ -26,6 +26,7 @@ def site_header(current: str = "") -> str:
       <a href="{PROJECT_URL}">GitHub</a>
       <a class="btn btn-primary" href="{invite_url}">Add to Discord</a>
     </nav>
+    {THEME_MENU}
   </div></header>"""
 
 

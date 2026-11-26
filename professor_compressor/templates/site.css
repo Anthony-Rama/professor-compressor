@@ -7,6 +7,8 @@
            justify-content: space-between; gap: 12px 28px; min-height: 76px;
            padding: 14px 0; }
     .wordmark { font-size: 17px; }
+    .nav .theme-menu { order: 3; }
+    .nav .wordmark { margin-right: auto; }
     .wordmark img { width: 38px; height: 38px; border-radius: 10px; }
     .nav-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 24px;
                  font-size: 15px; font-weight: 600; }
@@ -30,6 +32,8 @@
     body { min-height: 100vh; display: flex; flex-direction: column; }
     @media (max-width: 720px) {
       .nav { padding: 12px 0; }
+      .nav .theme-menu { order: 2; }
+      .nav-links { order: 3; flex-basis: 100%; }
       .nav-links { gap: 0 18px; }
       .wordmark { font-size: 15px; }
       .wordmark img { width: 32px; height: 32px; border-radius: 9px; }

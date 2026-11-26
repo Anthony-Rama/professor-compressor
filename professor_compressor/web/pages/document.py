@@ -5,13 +5,15 @@ from html import escape
 from aiohttp import web
 
 from ...paths import TEMPLATES
-from .theme import THEME_CSS
+from .theme import THEME_BOOT_SCRIPT, THEME_CSS, THEME_TOGGLE_LOADER
 
 _PAGE_TEMPLATE = (
     (TEMPLATES / "page.html")
     .read_text(encoding="utf-8")
     .rstrip("\n")
     .replace("__THEME_CSS__", THEME_CSS)
+    .replace("__THEME_BOOT__", THEME_BOOT_SCRIPT)
+    .replace("__THEME_LOADER__", THEME_TOGGLE_LOADER)
 )
 
 

@@ -9,10 +9,18 @@ from unittest.mock import AsyncMock, Mock
 from aiohttp import web
 
 from professor_compressor.web.pages.compressor import (
+    LINK_UNAVAILABLE_BODY,
+    MAINTENANCE_BODY,
     browser_compressor,
     browser_delivery_status,
+    rate_limited_body,
 )
 from professor_compressor.web.pages.document import page
+from professor_compressor.web.pages.landing import guide_html, home_html
+from professor_compressor.web.pages.legal import (
+    privacy_policy_html,
+    terms_of_service_html,
+)
 from professor_compressor.web.security import browser_security_headers
 
 
@@ -171,3 +179,78 @@ class OutputSizeTargetingTests(unittest.TestCase):
             "state.file.size > encoder.unchangedLimitBytes()", self.controller
         )
         self.assertIn("file.size <= unchangedLimitBytes()", self.encoder)
+
+
+class ThemeChoiceMarkupTests(unittest.TestCase):
+    """Every page applies a saved theme before paint and offers the toggle."""
+
+    def documents(self) -> dict[str, str]:
+        session_bodies = {
+            "compressor": browser_compressor(10, 1, 1, "secret", 60),
+            "delivery status": browser_delivery_status("secret"),
+            "unavailable": LINK_UNAVAILABLE_BODY,
+            "maintenance": MAINTENANCE_BODY,
+            "rate limited": rate_limited_body(5),
+        }
+        documents = {
+            name: page("Test", body).text or "" for name, body in session_bodies.items()
+        }
+        documents.update(
+            home=home_html("https://example.test"),
+            guide=guide_html("https://example.test"),
+            privacy=privacy_policy_html(),
+            terms=terms_of_service_html(),
+        )
+        return documents
+
+    def test_saved_theme_applies_first_and_controls_load_separately(self) -> None:
+        for name, document in self.documents().items():
+            with self.subTest(page=name):
+                head = document.split("<head>", 1)[1].lstrip()
+                self.assertTrue(
+                    head.startswith(
+                        '<meta charset="utf-8">\n  <script>try{var t=localStorage'
+                        '.getItem("pc-theme");'
+                    )
+                )
+                self.assertIn(
+                    'import("/brand/theme-toggle.js").catch(() => {});', document
+                )
+                self.assertNotIn("__THEME", document)
+
+    def test_session_pages_offer_a_theme_radio_group_in_the_footer(self) -> None:
+        documents = self.documents()
+        for name in (
+            "compressor",
+            "delivery status",
+            "unavailable",
+            "maintenance",
+            "rate limited",
+        ):
+            with self.subTest(page=name):
+                body = documents[name].split("<body>", 1)[1]
+                header, _, rest = body.partition("</header>")
+                self.assertNotIn("theme-", header)
+                footer = rest.split('<footer class="page-footer', 1)[1]
+                footer = footer.split("</footer>", 1)[0]
+                self.assertIn('<fieldset class="theme-switch" hidden>', footer)
+                self.assertIn('<legend class="visually-hidden">Theme</legend>', footer)
+                for value in ("system", "light", "dark"):
+                    self.assertIn(
+                        f'type="radio" name="theme-choice" value="{value}"', footer
+                    )
+                self.assertNotIn("theme-menu", body)
+        # Enter on a radio button can submit its form; keep them out of it.
+        form = documents["compressor"].split('<form id="upload"', 1)[1]
+        self.assertNotIn("theme-choice", form.split("</form>", 1)[0])
+
+    def test_website_pages_offer_a_theme_menu_in_the_header(self) -> None:
+        documents = self.documents()
+        for name in ("home", "guide", "privacy", "terms"):
+            with self.subTest(page=name):
+                body = documents[name].split("<body>", 1)[1]
+                header = body.split("</header>", 1)[0]
+                self.assertIn('aria-haspopup="menu" aria-expanded="false"', header)
+                self.assertIn('aria-label="Theme: System"', header)
+                self.assertEqual(header.count('role="menuitemradio"'), 3)
+                self.assertNotIn("theme-switch", body)
