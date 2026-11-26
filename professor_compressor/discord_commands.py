@@ -4,6 +4,7 @@ import io
 import math
 import secrets
 import time
+from dataclasses import dataclass
 from urllib.parse import quote
 
 import discord
@@ -25,6 +26,26 @@ from .tracking import SessionTracker
 PAGE_EXIT_GRACE_SECONDS = 5
 # Longer status reports are attached as a file, below Discord's 2000 limit.
 MAX_INLINE_REPORT_CHARACTERS = 1900
+
+
+def cooldown_key(interaction: discord.Interaction) -> tuple[int, int]:
+    return (interaction.guild_id or 0, interaction.user.id)
+
+
+@dataclass(frozen=True, slots=True)
+class Refusal:
+    """An ephemeral reply explaining why /compress did not create a link."""
+
+    message: str
+    view: discord.ui.View | None = None
+
+    async def send(self, interaction: discord.Interaction) -> None:
+        if self.view is None:
+            await interaction.response.send_message(self.message, ephemeral=True)
+        else:
+            await interaction.response.send_message(
+                self.message, view=self.view, ephemeral=True
+            )
 
 
 class Commands:
@@ -67,68 +88,72 @@ class Commands:
         return self.application_operator_ids
 
     async def compress(self, interaction: discord.Interaction) -> None:
-        if self.sessions.draining:
-            await interaction.response.send_message(
-                "Professor Compressor is finishing existing work before maintenance. "
-                "Please try again shortly.",
-                ephemeral=True,
-            )
-            return
-        if (
-            self.settings.allowed_guild_ids
-            and interaction.guild_id not in self.settings.allowed_guild_ids
-        ):
-            await interaction.response.send_message(
-                "Professor Compressor is not enabled in this server.",
-                ephemeral=True,
-            )
-            return
-        if interaction.channel_id is None:
-            await interaction.response.send_message(
-                "Use this command inside a server channel.",
-                ephemeral=True,
-            )
-            return
         guild = (
             self.client.get_guild(interaction.guild_id)
             if interaction.guild_id is not None
             else None
         )
+        refusal = self.channel_refusal(interaction, guild)
+        if refusal is None:
+            self.sessions.discard_expired_jobs()
+            now = time.time()
+            refusal = self.member_refusal(interaction, now)
+        if refusal is not None:
+            await refusal.send(interaction)
+            return
+        assert guild is not None
+        await self.open_session(interaction, guild, now)
+
+    def channel_refusal(
+        self, interaction: discord.Interaction, guild: discord.Guild | None
+    ) -> Refusal | None:
+        """Checks on the service, server, and channel, in the order users see them."""
+        if self.sessions.draining:
+            return Refusal(
+                "Professor Compressor is finishing existing work before maintenance. "
+                "Please try again shortly."
+            )
+        if (
+            self.settings.allowed_guild_ids
+            and interaction.guild_id not in self.settings.allowed_guild_ids
+        ):
+            return Refusal("Professor Compressor is not enabled in this server.")
+        if interaction.channel_id is None:
+            return Refusal("Use this command inside a server channel.")
         if guild is None:
             view = discord.ui.View(timeout=None)
             view.add_item(
                 discord.ui.Button(label="Add bot to server", url=BOT_INVITE_URL)
             )
-            await interaction.response.send_message(
+            return Refusal(
                 "Professor Compressor must be installed in this server to send "
                 "your videos back here. Ask a server admin or someone with Manage "
                 "Server permission to add the bot to this server, then run "
                 "/compress again.",
                 view=view,
-                ephemeral=True,
             )
-            return
         problem = channel_delivery_problem(
             interaction.channel, interaction.app_permissions
         )
         if problem:
-            await interaction.response.send_message(problem, ephemeral=True)
-            return
-        self.sessions.discard_expired_jobs()
+            return Refusal(problem)
+        return None
+
+    def member_refusal(
+        self, interaction: discord.Interaction, now: float
+    ) -> Refusal | None:
+        """Checks on the member's existing sessions, cooldown, and global capacity."""
         user_jobs = [
             job
             for job in self.sessions.jobs.values()
             if job.user_id == interaction.user.id
         ]
         if any(job.state in {JobState.UPLOADING, JobState.QUEUED} for job in user_jobs):
-            await interaction.response.send_message(
+            return Refusal(
                 "Your existing session is sending files to Discord. Check the original "
                 "channel for the result before starting another session. "
-                "It has not been replaced.",
-                ephemeral=True,
+                "It has not been replaced."
             )
-            return
-        now = time.time()
         waiting_jobs = [
             job
             for job in user_jobs
@@ -140,9 +165,8 @@ class Commands:
             )
         ]
         if waiting_jobs:
-            cooldown_key = (interaction.guild_id or 0, interaction.user.id)
             cooldown_ends = (
-                self.sessions.last_job_at.get(cooldown_key, 0.0)
+                self.sessions.last_job_at.get(cooldown_key(interaction), 0.0)
                 + self.settings.user_cooldown_seconds
             )
             wait_until = max(
@@ -158,32 +182,30 @@ class Commands:
                 ),
             )
             seconds = max(1, math.ceil(wait_until - now))
-            await interaction.response.send_message(
+            return Refusal(
                 "Your existing compressor session may still be active. "
                 "Return to its tab "
                 f"or wait {seconds} seconds and run /compress again. The current "
-                "session has not been replaced.",
-                ephemeral=True,
+                "session has not been replaced."
             )
-            return
-        cooldown_key = (interaction.guild_id or 0, interaction.user.id)
-        previous_job_at = self.sessions.last_job_at.get(cooldown_key, 0.0)
+        previous_job_at = self.sessions.last_job_at.get(cooldown_key(interaction), 0.0)
         remaining = self.settings.user_cooldown_seconds - (now - previous_job_at)
         if remaining > 0:
-            await interaction.response.send_message(
+            return Refusal(
                 f"Please wait {max(1, int(remaining + 0.999))} seconds before "
-                "creating another upload link.",
-                ephemeral=True,
+                "creating another upload link."
             )
-            return
         if len(self.sessions.jobs) >= self.settings.max_active_jobs:
-            await interaction.response.send_message(
+            return Refusal(
                 "Professor Compressor is handling too many upload sessions right "
-                "now. Please try again in a few minutes.",
-                ephemeral=True,
+                "now. Please try again in a few minutes."
             )
-            return
+        return None
 
+    async def open_session(
+        self, interaction: discord.Interaction, guild: discord.Guild, now: float
+    ) -> None:
+        """Replace the member's older link, create a new one, and send it."""
         # One active link per member. A new command invalidates their older link.
         for old_token, old_job in list(self.sessions.jobs.items()):
             if old_job.user_id == interaction.user.id:
@@ -196,7 +218,7 @@ class Commands:
                         "A new /compress command replaced this unfinished link.",
                     )
                 )
-        self.sessions.last_job_at[cooldown_key] = now
+        self.sessions.last_job_at[cooldown_key(interaction)] = now
 
         token = secrets.token_urlsafe(32)
         self.sessions.jobs[token] = UploadJob(
