@@ -14,7 +14,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from professor_compressor import application as app
 from professor_compressor.domain import JobState, UploadJob
-from professor_compressor.observability import EventStore, sanitize
+from professor_compressor.observability import EventStore
+from professor_compressor.observability_contract import sanitize
 
 
 class StoreTests(unittest.TestCase):

@@ -71,8 +71,15 @@ responsibilities:
 - `domain.py` defines upload jobs, delivery requests, browser results, and the
   explicit job-state machine.
 - `application.py` integrates Discord and aiohttp and owns process lifecycle.
-- `web_ui.py` renders the browser compression client and serializes dynamic
-  values safely into JavaScript.
+- `web_pages.py` registers public pages and owns document and security headers.
+- `web_ui.py` renders private session templates with a safely serialized JSON
+  configuration. Browser controllers in `static/` contain no session-specific
+  values; they read configuration from the private, non-cacheable document.
+- `relay_diagnostics.py` validates optional per-batch and per-file measurements
+  independently of the relay HTTP handler. These do not determine delivery.
+- `observability_contract.py` defines allowed event names and values;
+  `observability.py` owns the SQLite writer, and `observability_queries.py`
+  builds dashboard reports from one bounded, read-only snapshot.
 - `media_validation.py` validates untrusted MP4 structure without trusting
   filenames or MIME headers.
 - `notifications.py` formats operator messages with escaped Discord usernames

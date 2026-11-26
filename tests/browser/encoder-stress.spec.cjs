@@ -69,6 +69,7 @@ for(const [name] of samples) for(const decoderThreads of [null,1]) {
     },decoderThreads);
     const session=await(await request.post('/test/session')).json();
     await page.goto(session.path);
+    await expect(page.locator('#clips')).toBeEnabled();
     await page.locator('#clips').setInputFiles(join(fixtures,name+'.mp4'));
     const started=Date.now();
     await page.locator('#submit').click();

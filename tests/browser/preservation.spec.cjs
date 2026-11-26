@@ -19,7 +19,7 @@ test.afterAll(() => rmSync(fixtures, {recursive:true, force:true}));
 async function open(page, request) {
   const result = await (await request.post('/test/session')).json();
   await page.goto(result.path);
-  await expect(page.locator('#submit')).toBeVisible();
+  await expect(page.locator('#clips')).toBeEnabled();
   return result;
 }
 async function ready(page) {

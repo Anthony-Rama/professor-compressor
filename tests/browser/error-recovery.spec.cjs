@@ -79,9 +79,9 @@ test('stalled startup times out and late imports cannot revive the picker', asyn
   expect(preparationRequests).toBe(0);
 });
 
-test('syntax error in the main inline module is caught by the independent guard', async ({page, request}) => {
+test('syntax error in the compressor asset is caught by the independent guard', async ({page, request}) => {
   const session = await (await request.post('/test/session')).json();
-  await page.route('**' + session.path, async route => {
+  await page.route('**/brand/compressor.js', async route => {
     const response = await route.fetch();
     const body = (await response.text()).replace('async function initializeCompressor() {', 'async function initializeCompressor( {');
     await route.fulfill({response, body});
@@ -127,6 +127,7 @@ test('required error handling classifies failures without optional diagnostics',
     return result;
   });
   expect(codes).toEqual([['WASM_TRAP', 1], ['BROWSER_MEMORY', 1], ['CANCELLED', 1]]);
+  await expect(page.locator('#clips')).toBeEnabled();
   await page.locator('#clips').setInputFiles(join(fixtures, 'large-av1.mp4'));
   await page.locator('#submit').click();
   await expect(page.locator('#message')).toContainText('H.264 MP4 with AAC audio');
@@ -137,6 +138,7 @@ for (const outcome of ['unknown', 'rejected']) {
   test(`refreshed delivery status preserves ${outcome} recovery instructions`, async ({page, request}) => {
     const session = await (await request.post('/test/session?slow=1')).json();
     await page.goto(session.path);
+    await expect(page.locator('#clips')).toBeEnabled();
     await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
     await page.locator('#submit').click();
     await expect(page.locator('#page-heading')).toHaveText('Sending to Discord');
@@ -167,7 +169,9 @@ async function open(page,request,metadata=null){
     };
   },metadata);
   const session=await(await request.post('/test/session')).json();
-  await page.goto(session.path);return session;
+  await page.goto(session.path);
+  await expect(page.locator('#clips')).toBeEnabled();
+  return session;
 }
 for (const diagnostics of [true, false]) {
   test(`activity warning survives backgrounding and clears on progress, diagnostics=${diagnostics}`, async ({page, request}) => {

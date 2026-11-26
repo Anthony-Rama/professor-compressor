@@ -23,7 +23,7 @@ async function open(page, request) {
   const session = await (await request.post('/test/session')).json();
   const loaded=page.waitForResponse(r => r.url().endsWith('/brand/diagnostics.js'));
   await page.goto(session.path);
-  await expect(page.locator('#submit')).toBeVisible();
+  await expect(page.locator('#clips')).toBeEnabled();
   await loaded;
   return session;
 }
@@ -84,6 +84,7 @@ test('optional diagnostics module can be unavailable without breaking compressio
   await page.route('**/brand/diagnostics.js', route=>route.abort());
   const session=await (await request.post('/test/session')).json();
   await page.goto(session.path);
+  await expect(page.locator('#clips')).toBeEnabled();
   await page.locator('#clips').setInputFiles(join(fixtures,'oversized.mp4'));
   await page.locator('#submit').click();
   await expect(page.locator('#page-heading')).toHaveText('Delivered to Discord');
@@ -102,6 +103,7 @@ for(const failAll of [false,true])test(`null engine startup rejection without di
   },failAll);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   const session=await(await request.post('/test/session')).json();await page.goto(session.path);
+  await expect(page.locator('#clips')).toBeEnabled();
   await page.locator('#clips').setInputFiles(join(fixtures,'oversized.mp4'));await page.locator('#submit').click();
   if(failAll){
     await expect(page.locator('#phase-title')).toHaveText('Action needed');

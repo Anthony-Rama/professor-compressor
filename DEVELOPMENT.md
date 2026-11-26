@@ -7,7 +7,7 @@ accepted. See the README for the original code's reuse terms.
 ## Maintainer development workflow
 
 1. Create a focused branch from `main`.
-2. Create a private `.env` using the configuration below and a separate development Discord application.
+2. Create a private `dev.env` for the separate development Discord application.
 3. Install Python and browser dependencies.
 4. Add or update tests for behavior changes.
 5. Run the complete local quality suite before opening a pull request.
@@ -18,7 +18,7 @@ npm ci
 python -m ruff check .
 python -m ruff format --check .
 python -m pip_audit --requirement requirements.txt
-python -m unittest discover -s tests -v
+PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
 python -m compileall -q bot.py professor_compressor tests
 npm audit --omit=dev
 npx playwright install chromium
@@ -27,6 +27,13 @@ docker build --tag professor-compressor:local .
 ```
 
 Browser tests also require `ffmpeg` on PATH and simulate Discord delivery.
+
+Use the protected local `qa` branch with the isolated dev bot for manual tests.
+Start from the current `main` and test only the candidate changes you intend to
+release. Merge the reviewed feature branch, not the entire QA branch. Before
+deploying session, relay, or delivery changes, run a live `/compress` on the dev
+bot and check delivery status after an interruption. For browser changes, include
+a Safari smoke test and a Windows SteelSeries batch when those devices are available.
 
 Keep pull requests small enough to review. Explain the user-visible behavior,
 the security or privacy impact, and how the change was verified.

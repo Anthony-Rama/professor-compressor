@@ -1,5 +1,4 @@
 import asyncio
-import html
 import io
 import ipaddress
 import json
@@ -39,14 +38,7 @@ from .domain import (
     JobState,
     UploadJob,
 )
-from .landing_pages import (
-    BOT_INVITE_URL,
-    guide_html,
-    home_html,
-    robots_txt,
-    sitemap_xml,
-)
-from .legal_pages import privacy_policy_html, terms_of_service_html
+from .landing_pages import BOT_INVITE_URL
 from .media_validation import valid_mp4_signature
 from .metrics import RuntimeMetrics
 from .notifications import (
@@ -56,8 +48,11 @@ from .notifications import (
     guild_alert_message,
     safe_alert_text,
 )
-from .observability import CLIENT_EVENTS, EventStore, sanitize, valid_id
+from .observability import EventStore
+from .observability_contract import CLIENT_EVENTS, sanitize, valid_id
+from .relay_diagnostics import parse_compression_diagnostics, sanitize_telemetry
 from .topgg import TopGGStats
+from .web_pages import browser_security_headers, page, register_public_pages
 from .web_ui import browser_compressor, browser_delivery_status
 
 logger = logging.getLogger(__name__)
@@ -72,7 +67,6 @@ BOTSTATS_GUILD_ID = settings.botstats_guild_id
 WEB_HOST = settings.web_host
 WEB_PORT = settings.web_port
 PUBLIC_BASE_URL = settings.public_base_url
-GOOGLE_VERIFICATION_FILENAME = "googlec910ef324dae35ac.html"
 JOB_TTL_SECONDS = settings.job_ttl_seconds
 ACTIVE_SESSION_TTL_SECONDS = settings.active_session_ttl_seconds
 USER_COOLDOWN_SECONDS = settings.user_cooldown_seconds
@@ -260,358 +254,6 @@ def compression_target(discord_limit: int) -> int:
     return max(1 * MIB, int(discord_limit * 0.98))
 
 
-def sanitize_telemetry(value: object) -> dict:
-    """Allow only bounded measurements and fixed categories, never arbitrary text."""
-    if not isinstance(value, dict):
-        return {}
-    clean = {}
-    batch_id = value.get("batch_id")
-    if (
-        isinstance(batch_id, str)
-        and len(batch_id) == 32
-        and all(c in "0123456789abcdef" for c in batch_id)
-    ):
-        clean["batch_id"] = batch_id
-    for key in (
-        "engine_seconds",
-        "pre_upload_seconds",
-        "hidden_seconds",
-        "upload_attempts",
-        "encoding_attempts",
-        "input_width",
-        "input_height",
-        "output_width",
-        "output_height",
-        "input_fps",
-        "output_fps",
-        "total_seconds",
-        "upload_seconds",
-        "processing_failures",
-        "delivery_failures",
-    ):
-        number = value.get(key)
-        if type(number) in (int, float) and 0 <= number <= 86400:
-            clean[key] = number
-    for key, allowed in {
-        "path": {"unchanged", "remuxed", "converted", "compressed"},
-        "engine": {"unused", "single-threaded", "multithreaded"},
-    }.items():
-        item = value.get(key)
-        if isinstance(item, str) and item in allowed:
-            clean[key] = item
-    return clean
-
-
-def parse_compression_diagnostics(raw: bytes) -> list[CompressionDiagnostic]:
-    """Accept optional, bounded browser measurements; never trust them for delivery."""
-    allowed_formats = {
-        "mp4",
-        "mov",
-        "3gp",
-        "webm",
-        "mkv",
-        "webm/mkv",
-        "avi",
-        "ogg",
-        "flv",
-        "asf/wmv",
-        "mpeg",
-        "ts",
-        "m2ts",
-    }
-    try:
-        values = json.loads(raw)
-        if not isinstance(values, list) or not 1 <= len(values) <= MAX_CLIPS:
-            return []
-        diagnostics = []
-        for value in values:
-            if not isinstance(value, dict):
-                return []
-            input_bytes = value.get("input_bytes")
-            duration = value.get("duration_seconds")
-            video_kbps = value.get("video_kbps")
-            copied = value.get("copied")
-            input_format = value.get("input_format")
-            encoding_seconds = value.get("encoding_seconds")
-            if encoding_seconds is not None and (
-                type(encoding_seconds) not in (int, float)
-                or not 0 <= encoding_seconds <= 86400
-            ):
-                encoding_seconds = None
-            if input_format is not None and input_format not in allowed_formats:
-                return []
-            if (
-                type(input_bytes) is not int
-                or not 0 < input_bytes <= 10**12
-                or type(copied) is not bool
-            ):
-                return []
-            if copied:
-                if video_kbps is not None or (
-                    duration is not None
-                    and (
-                        type(duration) not in (int, float) or not 0 < duration <= 86400
-                    )
-                ):
-                    return []
-            elif (
-                type(duration) not in (int, float)
-                or not 0 < duration <= 86400
-                or (
-                    video_kbps is not None
-                    and (
-                        type(video_kbps) is not int
-                        or not 100 <= video_kbps <= 1_000_000_000
-                    )
-                )
-            ):
-                return []
-            diagnostics.append(
-                CompressionDiagnostic(
-                    input_bytes,
-                    float(duration) if duration is not None else None,
-                    video_kbps,
-                    copied,
-                    input_format,
-                    float(encoding_seconds) if encoding_seconds is not None else None,
-                    sanitize_telemetry(value.get("telemetry")),
-                )
-            )
-        return diagnostics
-    except (ValueError, TypeError, UnicodeDecodeError):
-        return []
-
-
-@web.middleware
-async def browser_security_headers(
-    request: web.Request,
-    handler: Any,
-) -> web.StreamResponse:
-    response = await handler(request)
-    # SharedArrayBuffer is available only in a cross-origin-isolated page.
-    # FFmpeg's multithreaded WebAssembly core uses it to share memory between
-    # encoder worker threads.
-    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
-    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
-    response.headers["Permissions-Policy"] = (
-        "camera=(), microphone=(), geolocation=(), payment=(), screen-wake-lock=(self)"
-    )
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "base-uri 'none'; "
-        "connect-src 'self' blob:; "
-        "font-src 'self'; "
-        "form-action 'self'; "
-        "frame-ancestors 'none'; "
-        "img-src 'self' data:; "
-        "media-src 'self' blob:; "
-        "object-src 'none'; "
-        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; "
-        "style-src 'self' 'unsafe-inline'; "
-        "worker-src 'self' blob:"
-    )
-    response.headers["X-Frame-Options"] = "DENY"
-    if (
-        isinstance(request.path, str)
-        and request.path.startswith(ASSET_PREFIX + "/")
-        and response.status == 200
-    ):
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    if request.path.startswith("/upload/") or request.path in {
-        "/healthz",
-        "/readyz",
-        "/metricsz",
-    }:
-        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
-    return response
-
-
-def page(title: str, body: str) -> web.Response:
-    page_title = (
-        title if title == "Professor Compressor" else f"Professor Compressor | {title}"
-    )
-    document = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{html.escape(page_title)}</title>
-  <link rel="icon" type="image/png" href="/brand/professor-compressor.png">
-  <link rel="apple-touch-icon" href="/brand/professor-compressor.png">
-  <style>
-    :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui,
-             -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; display: flex; justify-content: center;
-            align-items: flex-start;
-            padding: 24px; background:
-            radial-gradient(circle at 50% 0%, #1c2941 0, #0d1422 42%, #090e18 100%);
-            color: #f8fafc; }}
-    main {{ width: min(560px, 100%); min-width: 0; margin-block: auto; padding: 36px;
-            border: 1px solid #2b3a50; border-radius: 22px;
-            background: rgba(23, 33, 49, .96);
-            box-shadow: 0 24px 70px rgba(0, 0, 0, .38); }}
-    .brand {{ width: 78px; height: 78px; display: block; object-fit: cover;
-              margin-bottom: 20px; border: 1px solid #5265ff;
-              border-radius: 22px; box-shadow: 0 10px 30px rgba(34, 91, 255, .3); }}
-    h1 {{ margin: 0; font-size: clamp(28px, 6vw, 38px); line-height: 1.12;
-          letter-spacing: -.035em; }}
-    p {{ line-height: 1.55; color: #b8c2d1; }}
-    .intro {{ margin: 14px 0 22px; font-size: 16px; }}
-    .intro strong {{ color: #e6e9ff; }}
-    .stay-open {{ display: flex; gap: 12px; align-items: flex-start;
-                  margin-bottom: 24px; padding: 14px 16px;
-                  border: 1px solid #3b4860; border-radius: 13px;
-                  background: #202c40; color: #c8d1df; font-size: 14px;
-                  line-height: 1.45; }}
-    .stay-open > span:first-child {{ font-size: 20px; line-height: 1.2; }}
-    .stay-open strong {{ color: #f8fafc; }}
-    .processing-view .stay-open {{ margin-top: 20px; }}
-    .performance-help {{ margin: 16px 0 0; padding: 12px 14px;
-                         border: 1px solid #344158; border-radius: 12px;
-                         background: #151f30; color: #aeb9c9; font-size: 13px; }}
-    .performance-help summary {{ color: #dbe2ed; font-weight: 700; cursor: pointer; }}
-    .performance-help p {{ margin: 10px 0 0; font-size: 13px; }}
-    .performance-help code {{ color: #cbd2ff; overflow-wrap: anywhere; }}
-    .file-input {{ position: absolute; width: 1px; height: 1px; padding: 0;
-                   margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
-                   white-space: nowrap; border: 0; }}
-    .picker-row {{ display: flex; gap: 10px; align-items: stretch; }}
-    .file-picker {{ display: flex; flex: 1; min-width: 0; gap: 14px; align-items: center; padding: 18px;
-                    border: 1px dashed #59677d; border-radius: 14px;
-                    background: #111a2a; cursor: pointer; transition: .18s ease; }}
-    .file-picker:hover {{ border-color: #8991ff; background: #151f33; }}
-    .file-picker.drag-over {{ border-color: #a5b4fc; background: #26345b;
-      outline: 3px solid rgba(124, 131, 255, .35); }}
-    .file-input:focus + .picker-row .file-picker {{ outline: 3px solid rgba(124, 131, 255, .28);
-                                                   outline-offset: 2px; }}
-    .picker-plus {{ width: 38px; height: 38px; display: grid; place-items: center;
-                    flex: 0 0 auto; border-radius: 10px; background: #283452;
-                    color: #aeb4ff; font-size: 26px; line-height: 1; }}
-    .file-picker strong {{ display: block; color: #f8fafc; font-size: 16px; }}
-    .file-picker small {{ display: block; margin-top: 3px; color: #8e9bad;
-                         font-size: 13px; }}
-    .selection {{ min-height: 22px; margin: 10px 2px 0; font-size: 13px;
-                  color: #93a0b2; }}
-    .caption-label {{ display: block; margin: 18px 2px 8px; color: #e6e9ff;
-                      font-size: 14px; font-weight: 700; }}
-    #caption {{ display: block; width: 100%; min-height: 70px; padding: 12px 14px;
-                resize: vertical; border: 1px solid #59677d; border-radius: 11px;
-                background: #111a2a; color: #f8fafc; font: inherit; line-height: 1.4; }}
-    #caption:focus-visible {{ outline: 3px solid rgba(124, 131, 255, .35);
-                              outline-offset: 2px; }}
-    #caption::placeholder {{ color: #8290a4; }}
-    .caption-help {{ margin: 6px 2px 0; color: #93a0b2; font-size: 12px; }}
-    .reselect-file {{ padding: 5px 8px; min-height: 32px; font-size: 12px; }}
-    button {{ margin-top: 16px; width: 100%; padding: 14px 18px; border: 0;
-              border-radius: 12px; background: linear-gradient(135deg, #6873ff, #5865f2);
-              color: white; font-size: 15px; font-weight: 750; cursor: pointer;
-              box-shadow: 0 10px 28px rgba(88, 101, 242, .24); }}
-    button:hover:not(:disabled) {{ filter: brightness(1.08); }}
-    button:disabled {{ opacity: .45; cursor: not-allowed; box-shadow: none; }}
-    .clear-selection {{ flex: 0 0 54px; width: 54px; margin: 0; padding: 0;
-                        display: grid; place-items: center; border: 1px solid #59677d;
-                        border-radius: 14px; background: #1c2940; color: #dbe2ed;
-                        box-shadow: none; }}
-    .clear-selection:focus-visible {{ outline: 3px solid rgba(124, 131, 255, .5);
-                                     outline-offset: 2px; }}
-    .work {{ margin-top: 20px; }}
-    progress {{ width: 100%; height: 10px; overflow: hidden;
-                border: 0; border-radius: 999px; accent-color: #6873ff; }}
-    progress::-webkit-progress-bar {{ background: #101827; border-radius: 999px; }}
-    progress::-webkit-progress-value {{ background: #6873ff; border-radius: 999px; }}
-    #status {{ min-height: 22px; margin: 9px 0 0; font-size: 14px; }}
-    .session-note {{ display: flex; justify-content: space-between; gap: 12px;
-                     margin: 10px 2px 20px; color: #8290a4; font-size: 12px; }}
-    .file-list {{ display: grid; grid-template-columns: minmax(0, 1fr);
-                  min-width: 0; gap: 10px; margin: 16px 0; }}
-    .file-card {{ width: 100%; min-width: 0; padding: 13px 14px;
-                  border: 1px solid #354258;
-                  border-radius: 12px; background: #131d2d; }}
-    .file-head, .file-meta, .run-meta {{ display: flex; align-items: center;
-                                        justify-content: space-between; gap: 12px; }}
-    .file-head {{ min-width: 0; }}
-    .file-name {{ display: block; flex: 1 1 auto; min-width: 0;
-                  overflow: hidden; text-overflow: ellipsis;
-                  white-space: nowrap; font-size: 14px; font-weight: 700; }}
-    .file-status {{ flex: 0 0 auto; color: #aab5c5; font-size: 12px; }}
-    .file-actions {{ display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }}
-    .remove-file {{ width: 40px; height: 40px; margin: 0; padding: 0;
-                    display: grid; place-items: center; border: 1px solid #59677d;
-                    border-radius: 8px; background: #1c2940; color: #dbe2ed;
-                    box-shadow: none; }}
-    .remove-file:focus-visible {{ outline: 3px solid rgba(124, 131, 255, .5);
-                                  outline-offset: 2px; }}
-    .file-card progress {{ height: 7px; margin-top: 10px; }}
-    .completed .file-card progress {{ display: none; }}
-    .completed .file-status {{ color: #9ce8d2; }}
-    .completion-summary {{ margin: 0 0 20px; color: #9ce8d2; font-size: 13px; }}
-    .file-meta {{ margin-top: 7px; color: #7f8da1; font-size: 11px; }}
-    .phase-panel {{ padding: 16px; border: 1px solid #3a4861; border-radius: 14px;
-                    background: #111a2a; }}
-    .background-warning {{ margin-bottom: 12px; padding: 12px 14px;
-                           border: 1px solid #8a652c; border-radius: 11px;
-                           background: #332714; color: #f5d58f; font-size: 13px;
-                           line-height: 1.45; }}
-    .phase-title {{ margin: 0; color: #f8fafc; font-size: 16px; }}
-    .phase-copy {{ margin: 5px 0 12px; color: #93a0b2; font-size: 13px; }}
-    .phase-track {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-                    margin-bottom: 14px; }}
-    .phase-step {{ padding: 8px 10px; border-radius: 9px; background: #1b2739;
-                   color: #718096; text-align: center; font-size: 12px;
-                   font-weight: 700; }}
-    .phase-step.active {{ background: #29376a; color: #dfe3ff; }}
-    .phase-step.done {{ background: #173b35; color: #8ce5c8; }}
-    .run-meta {{ margin-top: 10px; color: #9aa7b9; font-size: 12px; }}
-    .controls {{ display: grid; grid-template-columns: 1fr auto; gap: 10px; }}
-    .controls button {{ margin-top: 16px; }}
-    .processing .controls {{ display: flex; justify-content: center; }}
-    .processing .controls button {{ width: auto; min-width: 120px; }}
-    .secondary {{ width: auto; background: #303c50; box-shadow: none; }}
-    #cancel {{ background: #b42336; border: 1px solid #dc4053; color: #fff;
-               box-shadow: none; }}
-    .message {{ margin-top: 14px; padding: 13px 14px; border-radius: 11px;
-                font-size: 13px; line-height: 1.45; }}
-    .message.error {{ border: 1px solid #733648; background: #321b27; }}
-    .message.success {{ border: 1px solid #276052; background: #16362f;
-                        color: #9ce8d2; text-align: center; }}
-    .feedback-actions {{ display: flex; flex-wrap: wrap; align-items: center;
-                         gap: 10px; margin-top: 14px; }}
-    .contact-actions {{ justify-content: center; text-align: center; }}
-    .feedback-actions a {{ display: inline-flex; align-items: center;
-                           justify-content: center; min-height: 42px;
-                           padding: 10px 14px; border-radius: 10px;
-                           font-size: 13px; font-weight: 700; text-decoration: none; }}
-    .feedback-link {{ color: #fff; background: #5865f2; }}
-    .support-link {{ color: #cbd2ff; border: 1px solid #59677d; }}
-    .feedback-actions a:hover {{ filter: brightness(1.12); }}
-    .feedback-actions p {{ flex-basis: 100%; margin: 0; font-size: 12px; }}
-    .privacy {{ margin: 18px 0 0; text-align: center; color: #8794a7;
-                font-size: 13px; }}
-    .privacy a {{ color: #aeb4ff; }}
-    .error {{ color: #fda4af !important; }}
-    [hidden] {{ display: none !important; }}
-    @media (max-width: 560px) {{
-      body {{ padding: 14px; }}
-      main {{ padding: 26px 22px; border-radius: 18px; }}
-      .brand {{ margin-bottom: 18px; }}
-    }}
-  </style>
-</head>
-<body><main>{body}</main></body>
-</html>"""
-    return web.Response(
-        text=document,
-        content_type="text/html",
-        headers={
-            "Cache-Control": "no-store",
-            "Referrer-Policy": "no-referrer",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
-
-
 def active_job(token: str) -> UploadJob | None:
     job = jobs.get(token)
     if (
@@ -792,65 +434,6 @@ async def aggregate_metrics(request: web.Request) -> web.Response:
         },
         headers={"Cache-Control": "no-store"},
     )
-
-
-def legal_response(document: str) -> web.Response:
-    return web.Response(
-        text=document,
-        content_type="text/html",
-        headers={
-            "Cache-Control": "public, max-age=3600",
-            "Referrer-Policy": "no-referrer",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
-
-
-async def home(request: web.Request) -> web.Response:
-    del request
-    return legal_response(home_html(PUBLIC_BASE_URL))
-
-
-async def video_guide(request: web.Request) -> web.Response:
-    del request
-    return legal_response(guide_html(PUBLIC_BASE_URL))
-
-
-async def robots(request: web.Request) -> web.Response:
-    del request
-    return web.Response(
-        text=robots_txt(PUBLIC_BASE_URL),
-        content_type="text/plain",
-        headers={"Cache-Control": "public, max-age=3600"},
-    )
-
-
-async def sitemap(request: web.Request) -> web.Response:
-    del request
-    return web.Response(
-        text=sitemap_xml(PUBLIC_BASE_URL),
-        content_type="application/xml",
-        headers={"Cache-Control": "public, max-age=3600"},
-    )
-
-
-async def google_site_verification(request: web.Request) -> web.Response:
-    del request
-    return web.Response(
-        text=f"google-site-verification: {GOOGLE_VERIFICATION_FILENAME}",
-        content_type="text/html",
-        headers={"Cache-Control": "public, max-age=3600"},
-    )
-
-
-async def privacy_policy(request: web.Request) -> web.Response:
-    del request
-    return legal_response(privacy_policy_html())
-
-
-async def terms_of_service(request: web.Request) -> web.Response:
-    del request
-    return legal_response(terms_of_service_html())
 
 
 def browser_cookie_matches(request: web.Request, secret: str | None) -> bool:
@@ -1350,7 +933,9 @@ async def receive_results(request: web.Request) -> web.Response:
                     last_chunk_at = time.monotonic()
                     if len(raw_diagnostics) > 16384:
                         raise ValueError("The diagnostics field is too long.")
-                diagnostics = parse_compression_diagnostics(bytes(raw_diagnostics))
+                diagnostics = parse_compression_diagnostics(
+                    bytes(raw_diagnostics), max_clips=MAX_CLIPS
+                )
                 continue
             if field.name != "clips" or not field.filename:
                 raise ValueError("Only video file fields are accepted.")
@@ -2216,18 +1801,10 @@ def create_web_application() -> web.Application:
         request_ip,
         runtime_snapshot=dashboard_runtime,
     )
-    application.router.add_get("/", home)
-    application.router.add_get("/guide/compress-video-for-discord", video_guide)
-    application.router.add_get("/robots.txt", robots)
-    application.router.add_get("/sitemap.xml", sitemap)
-    application.router.add_get(
-        f"/{GOOGLE_VERIFICATION_FILENAME}", google_site_verification
-    )
+    register_public_pages(application, PUBLIC_BASE_URL)
     application.router.add_get("/healthz", health)
     application.router.add_get("/readyz", readiness)
     application.router.add_get("/metricsz", aggregate_metrics)
-    application.router.add_get("/privacy", privacy_policy)
-    application.router.add_get("/terms", terms_of_service)
     application.router.add_get("/upload/{token}", upload_form)
     application.router.add_post("/upload/{token}", receive_results)
     application.router.add_get("/upload/{token}/status", session_status)

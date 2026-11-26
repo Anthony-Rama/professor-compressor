@@ -1,7 +1,7 @@
 import unittest
 
-from professor_compressor.application import legal_response
 from professor_compressor.legal_pages import privacy_policy_html, terms_of_service_html
+from professor_compressor.web_pages import legal_response
 
 
 class LegalPageTests(unittest.TestCase):

@@ -14,13 +14,15 @@ from professor_compressor.application import (
     interaction_guild_name,
     jobs,
     on_guild_join,
-    parse_compression_diagnostics,
     receive_browser_failure,
     report_dsc_stats,
     safe_alert_text,
-    sanitize_telemetry,
 )
 from professor_compressor.domain import BrowserResult, CompressionDiagnostic
+from professor_compressor.relay_diagnostics import (
+    parse_compression_diagnostics,
+    sanitize_telemetry,
+)
 
 
 class NotificationTests(unittest.IsolatedAsyncioTestCase):
@@ -133,12 +135,13 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(value=value):
                 diagnostic = parse_compression_diagnostics(
-                    json.dumps([{**base, "encoding_seconds": value}]).encode()
+                    json.dumps([{**base, "encoding_seconds": value}]).encode(),
+                    max_clips=10,
                 )[0]
                 self.assertEqual(diagnostic.encoding_seconds, expected)
                 self.assertEqual(diagnostic.duration_seconds, 74.3)
         self.assertIsNone(
-            parse_compression_diagnostics(json.dumps([base]).encode())[
+            parse_compression_diagnostics(json.dumps([base]).encode(), max_clips=10)[
                 0
             ].encoding_seconds
         )
@@ -176,33 +179,44 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_invalid_browser_diagnostics_are_ignored(self) -> None:
-        self.assertEqual(parse_compression_diagnostics(b"not json"), [])
-        self.assertEqual(parse_compression_diagnostics(b"[]"), [])
-        self.assertEqual(parse_compression_diagnostics(b'[{"copied":true}]'), [])
+        self.assertEqual(parse_compression_diagnostics(b"not json", max_clips=10), [])
+        self.assertEqual(parse_compression_diagnostics(b"[]", max_clips=10), [])
+        self.assertEqual(
+            parse_compression_diagnostics(b'[{"copied":true}]', max_clips=10), []
+        )
         self.assertEqual(
             parse_compression_diagnostics(
-                b'[{"input_bytes":10,"duration_seconds":NaN,"video_kbps":100,"copied":false}]'
+                b'[{"input_bytes":10,"duration_seconds":NaN,"video_kbps":100,"copied":false}]',
+                max_clips=10,
             ),
             [],
         )
         self.assertEqual(
             parse_compression_diagnostics(
-                b'[{"input_bytes":10,"duration_seconds":1.5,"video_kbps":null,"copied":false}]'
+                b'[{"input_bytes":10,"duration_seconds":1.5,"video_kbps":null,"copied":false}]',
+                max_clips=10,
             )[0].video_kbps,
             None,
         )
         self.assertEqual(
             parse_compression_diagnostics(
-                b'[{"input_bytes":10,"duration_seconds":null,"video_kbps":null,"copied":true,"input_format":"mov"}]'
+                b'[{"input_bytes":10,"duration_seconds":null,"video_kbps":null,"copied":true,"input_format":"mov"}]',
+                max_clips=10,
             )[0].input_format,
             "mov",
         )
         self.assertEqual(
             parse_compression_diagnostics(
-                b'[{"input_bytes":10,"duration_seconds":null,"video_kbps":null,"copied":true,"input_format":"secret.mp4"}]'
+                b'[{"input_bytes":10,"duration_seconds":null,"video_kbps":null,"copied":true,"input_format":"secret.mp4"}]',
+                max_clips=10,
             ),
             [],
         )
+
+    def test_relay_diagnostics_honor_the_configured_batch_limit(self) -> None:
+        raw = json.dumps([{"input_bytes": 10, "copied": True}] * 2).encode()
+        self.assertEqual(parse_compression_diagnostics(raw, max_clips=1), [])
+        self.assertEqual(len(parse_compression_diagnostics(raw, max_clips=2)), 2)
 
     def test_safe_alert_text_escapes_markdown_and_backticks(self) -> None:
         self.assertEqual(safe_alert_text("**name** `ping`"), "\\*\\*name\\*\\* 'ping'")

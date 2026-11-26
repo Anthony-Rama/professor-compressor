@@ -55,9 +55,10 @@ test.afterAll(() => rmSync(fixtures, { recursive: true, force: true }));
 async function openSession(page, request) {
   const response = await request.post('/test/session');
   await page.goto((await response.json()).path);
-  await expect(page.locator('#submit')).toBeVisible();
+  await expect(page.locator('#clips')).toBeEnabled();
 }
 async function deliver(page, files) {
+  await expect(page.locator('#clips')).toBeEnabled();
   await page.locator('#clips').setInputFiles(files);
   await page.locator('#submit').click();
   await expect.poll(async () => {
@@ -802,6 +803,7 @@ test('refresh during local compression restarts with explicit file re-selection'
 test('refresh while Discord delivery is pending shows receipt status, not uploader', async ({ page, request }) => {
   const response = await request.post('/test/session?slow=1');
   await page.goto((await response.json()).path);
+  await expect(page.locator('#clips')).toBeEnabled();
   await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
   await page.locator('#submit').click();
   await expect(page.locator('#phase-copy')).toContainText('relay is processing this batch', {timeout:30000});
@@ -881,6 +883,7 @@ test('lost success response is recovered without another upload', async ({page, 
 test('slow delivery is polled rather than reported failed or resent', async ({page, request}) => {
   const session = await (await request.post('/test/session?slow=1')).json();
   await page.goto(session.path);
+  await expect(page.locator('#clips')).toBeEnabled();
   let uploads=0;
   let pending=0;
   page.on('request', r=> {if(r.method()==='POST' && new URL(r.url()).pathname===session.path) uploads++;});

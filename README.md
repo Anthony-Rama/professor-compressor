@@ -67,7 +67,9 @@ For maintainers, the test commands and development workflow are in [DEVELOPMENT.
 | --- | --- |
 | `professor_compressor/application.py` | Discord commands, HTTP relay, delivery workers, and lifecycle |
 | `professor_compressor/domain.py` | Upload jobs, delivery models, and job states |
-| `professor_compressor/web_ui.py` | Browser interface and FFmpeg workflow |
+| `professor_compressor/web_pages.py` and `templates/` | Public routes, document responses, and markup |
+| `professor_compressor/web_ui.py` and `static/compressor.js` | Private page configuration and browser FFmpeg workflow |
+| `professor_compressor/observability*.py` | Diagnostic event contract, SQLite writer, and dashboard queries |
 | `professor_compressor/media_validation.py` | MP4 structure validation before delivery |
 | `professor_compressor/config.py` | Environment parsing and bounds checks |
 | `professor_compressor/notifications.py` and `metrics.py` | Operator alerts and aggregate counters |

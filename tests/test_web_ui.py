@@ -1,13 +1,20 @@
 import asyncio
+import json
 import shutil
 import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 from aiohttp import web
 
-from professor_compressor.application import browser_security_headers, page
-from professor_compressor.web_ui import browser_compressor
+from professor_compressor.web_pages import browser_security_headers, page
+from professor_compressor.web_ui import browser_compressor, browser_delivery_status
+
+
+def page_config(document: str, element_id: str) -> dict:
+    marker = f'<script type="application/json" id="{element_id}">'
+    return json.loads(document.split(marker, 1)[1].split("</script>", 1)[0])
 
 
 class BrowserPageTests(unittest.TestCase):
@@ -21,12 +28,22 @@ class BrowserPageTests(unittest.TestCase):
         )
 
     def test_replaces_private_page_values(self) -> None:
-        self.assertIn("const MAX_CLIPS = 10;", self.page)
-        self.assertIn("const TARGET_BYTES = 19000000;", self.page)
-        self.assertIn("const DISCORD_LIMIT_BYTES = 19000000;", self.page)
-        self.assertIn("const MAX_BATCH_BYTES = 220000000;", self.page)
-        self.assertIn('const SESSION_SECRET = "session_secret-123";', self.page)
-        self.assertNotIn("__SESSION_SECRET__", self.page)
+        config = page_config(self.page, "compressor-config")
+        self.assertEqual(config["MAX_CLIPS"], 10)
+        self.assertEqual(config["TARGET_BYTES"], 19_000_000)
+        self.assertEqual(config["DISCORD_LIMIT_BYTES"], 19_000_000)
+        self.assertEqual(config["MAX_BATCH_BYTES"], 220_000_000)
+        self.assertEqual(config["SESSION_SECRET"], "session_secret-123")
+        self.assertNotIn("__CONFIG_JSON__", self.page)
+
+    def test_delivery_page_serializes_private_configuration_safely(self):
+        secret = "</script><script>not executable</script>"
+        document = browser_delivery_status(secret, diagnostic_reference="PC-TEST")
+        self.assertEqual(
+            page_config(document, "delivery-config"),
+            {"SESSION_SECRET": secret, "DIAGNOSTIC_REFERENCE": "PC-TEST"},
+        )
+        self.assertNotIn(secret, document)
 
     def test_escapes_session_secret_as_javascript_data(self) -> None:
         page = browser_compressor(
@@ -53,9 +70,6 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('aria-label="Clear selected videos"', self.page)
         self.assertNotIn("a new selection replaces the previous one", self.page)
         self.assertIn("Add videos in batches, up to 10 total", self.page)
-        self.assertIn(
-            'remove.setAttribute("aria-label", "Remove " + file.name)', self.page
-        )
 
     def test_feedback_is_optional_and_has_a_support_link(self) -> None:
         self.assertIn(
@@ -66,80 +80,30 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn("Join Discord Server", self.page)
         self.assertIn("https://discord.com/invite/32RWwNWyEH", self.page)
         self.assertIn("mailto:professorcompressor.support@gmail.com", self.page)
-        self.assertIn('showFeedback("success")', self.page)
-        self.assertIn('showFeedback("failure")', self.page)
 
-    def test_optional_caption_is_bounded_and_sent_with_batch(self) -> None:
+    def test_optional_caption_has_visible_limit(self) -> None:
         self.assertIn('id="caption" name="caption" maxlength="1000"', self.page)
-        self.assertIn('data.append("caption", caption.value.trim())', self.page)
-        self.assertIn("caption.disabled = true", self.page)
-        self.assertIn("caption.hidden = true", self.page)
-        self.assertIn('data.append("diagnostics", JSON.stringify(', self.page)
         self.assertIn('class="caption-help">1,000-character limit.</p>', self.page)
         self.assertNotIn("Plain @names are text", self.page)
 
-    def test_processing_view_keeps_progress_and_restores_recoverable_controls(self):
-        self.assertIn("function setProcessingView(active)", self.page)
-        self.assertIn('"Compression in progress"', self.page)
-        self.assertIn('pageHeading.textContent = "Sending to Discord"', self.page)
-        self.assertIn("setProcessingView(preparedResults !== null)", self.page)
+    def test_progress_and_cancel_are_in_reading_order(self):
         self.assertIn("Keep this page open and active until it finishes.", self.page)
         self.assertLess(self.page.index('id="work"'), self.page.index('id="cancel"'))
 
-    def test_includes_retry_cancel_and_metrics(self) -> None:
-        self.assertIn("Cancel", self.page)
-        self.assertIn("Retrying automatically", self.page)
-        self.assertIn("% smaller", self.page)
-        self.assertIn("Video ", self.page)
-        self.assertIn("Sending ", self.page)
-        self.assertNotIn("Estimating time remaining", self.page)
-
-    def test_reports_browser_failures_privately(self) -> None:
-        self.assertIn('X-Upload-Session": SESSION_SECRET', self.page)
-        self.assertIn('"/failure"', self.page)
-        self.assertIn('runStage = "Browser compression"', self.page)
-        self.assertIn('runStage = "Relay upload or Discord delivery"', self.page)
-        self.assertIn("void reportBrowserFailure(runStage, error)", self.page)
-
-    def test_targets_most_of_discords_safe_upload_size(self) -> None:
-        self.assertIn("const OUTPUT_TARGET_RATIO = 0.97;", self.page)
-        self.assertIn(
-            "effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO",
-            self.page,
-        )
-
-    def test_caps_each_output_to_the_batch_relay_limit(self) -> None:
-        self.assertIn(
-            "MAX_BATCH_BYTES / Math.max(1, selectedFiles.length)",
-            self.page,
-        )
-        self.assertIn(
-            "return Math.min(TARGET_BYTES, batchTargetBytes)",
-            self.page,
-        )
-        self.assertIn("state.file.size > unchangedLimitBytes()", self.page)
-        self.assertIn("file.size <= unchangedLimitBytes()", self.page)
-
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
-    def test_generated_module_has_valid_javascript(self) -> None:
-        script = (
-            self.page.split('<script type="module"', 1)[1]
-            .split(">", 1)[1]
-            .split("</script>", 1)[0]
-        )
-        subprocess.run(
-            ["node", "--input-type=module", "--check"],
-            input=script,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
+    def test_external_modules_have_valid_javascript(self) -> None:
+        static = Path(__file__).resolve().parents[1] / "professor_compressor" / "static"
+        for name in ("compressor.js", "delivery-status.js"):
+            with self.subTest(asset=name):
+                subprocess.run(
+                    ["node", "--input-type=module", "--check"],
+                    input=(static / name).read_text(encoding="utf-8"),
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
 
-    def test_protects_active_compression_from_sleep_and_hidden_tabs(self) -> None:
-        self.assertIn('navigator.wakeLock.request("screen")', self.page)
-        self.assertIn('document.addEventListener("visibilitychange"', self.page)
-        self.assertIn("Compression may slow down or pause", self.page)
-        self.assertIn("Return to compressor", self.page)
+    def test_explains_how_to_keep_compression_active(self) -> None:
         self.assertIn("chrome://settings/performance", self.page)
         self.assertIn("Always keep these", self.page)
         self.assertIn("Energy Saver", self.page)
