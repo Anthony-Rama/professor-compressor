@@ -260,8 +260,3 @@ still necessary to evaluate cross-device performance and perceptual quality.
 Container CI runs `tests/container_observability.py` twice against the same
 disposable named volume (`seed`, then `verify`) to check authentication,
 non-root access, filtering, and persistence across container recreation.
-
-The implementation audit also identified the existing `certifi` pin as affected
-by [GHSA-6q48-6c7w-9gw2](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2).
-This branch updates it to `2026.10.19`; production receives that fix only after
-the relevant release is approved, rebuilt, and deployed.
