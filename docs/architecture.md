@@ -77,6 +77,9 @@ responsibilities:
   injects a fake sender rather than mutating application globals.
   Run independent instances with distinct diagnostic database paths when
   persistence is enabled.
+- `discord_commands.py` implements the registered command workflows.
+  `sessions.py` handles browser claims, authentication, leases, and receipts;
+  `browser_reports.py` accepts progress and diagnostic reports separately.
 - `upload_relay.py` validates completed multipart uploads and owns buffer
   reservations until enqueue. `delivery_worker.py` takes queued batches,
   records delivery outcomes, and releases their reservations through the
