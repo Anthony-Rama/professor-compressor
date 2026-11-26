@@ -18,6 +18,7 @@ from discord import app_commands
 
 from . import browser_reports, discord_commands, sessions
 from .assets import ASSET_PACKAGES, ASSET_PREFIX
+from .branding import USER_AGENT
 from .config import MIB, Settings
 from .dashboard import register_dashboard
 from .delivery_policy import (
@@ -167,12 +168,7 @@ class Runtime:
             async with ClientSession(timeout=timeout) as session:
                 async with session.post(
                     self.settings.alert_webhook_url,
-                    headers={
-                        "User-Agent": (
-                            "ProfessorCompressor/1.0 "
-                            "(+https://github.com/Anthony-Rama/professor-compressor)"
-                        )
-                    },
+                    headers={"User-Agent": USER_AGENT},
                     json={
                         "content": message,
                         "allowed_mentions": {"parse": []},
@@ -202,10 +198,7 @@ class Runtime:
                     headers={
                         "Authorization": self.settings.dsc_api_token,
                         "Content-Type": "application/json",
-                        "User-Agent": (
-                            "ProfessorCompressor/1.0 "
-                            "(+https://github.com/Anthony-Rama/professor-compressor)"
-                        ),
+                        "User-Agent": USER_AGENT,
                     },
                     json={"server_count": len(self.client.guilds)},
                 ) as response:

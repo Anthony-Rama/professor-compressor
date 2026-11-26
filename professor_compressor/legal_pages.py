@@ -2,8 +2,9 @@
 
 from html import escape
 
+from .branding import PROJECT_URL
+
 EFFECTIVE_DATE = "October 31, 2026"
-PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
 
 
 def _document(title: str, content: str) -> str:

@@ -3,14 +3,14 @@
 import json
 from html import escape
 
-BOT_INVITE_URL = (
-    "https://discord.com/oauth2/authorize?client_id=1550752400271351839"
-    "&permissions=277025426432&integration_type=0&scope=bot+applications.commands"
+from .branding import (
+    BOT_INVITE_URL,
+    DISCORD_BOT_LIST_URL,
+    DISCORD_BOTS_URL,
+    DSC_LISTING_URL,
+    PROJECT_URL,
 )
-PROJECT_URL = "https://github.com/Anthony-Rama/professor-compressor"
-DSC_LISTING_URL = "https://dsc.sh/bot/1550752400271351839"
-DISCORD_BOT_LIST_URL = "https://discordbotlist.com/bots/professor-compressor"
-DISCORD_BOTS_URL = "https://discord.bots.gg/bots/1550752400271351839"
+
 GUIDE_PATH = "/guide/compress-video-for-discord"
 
 

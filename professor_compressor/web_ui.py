@@ -2,15 +2,16 @@ import json
 from html import escape
 
 from .assets import ASSET_PREFIX
+from .branding import TOPGG_LISTING_URL
 from .paths import TEMPLATES
 
 _COMPRESSOR_TEMPLATE = (TEMPLATES / "compressor.html").read_text(encoding="utf-8")
 _DELIVERY_TEMPLATE = (TEMPLATES / "delivery-status.html").read_text(encoding="utf-8")
 
-REVIEW_PROMPT = """<p id="review-prompt" class="privacy" hidden>
+REVIEW_PROMPT = f"""<p id="review-prompt" class="privacy" hidden>
   If you're enjoying Professor Compressor, please consider leaving a review and/or
   upvoting on
-  <a href="https://top.gg/bot/1550752400271351839"
+  <a href="{TOPGG_LISTING_URL}"
     target="_blank" rel="noopener noreferrer">Top.gg</a>!
 </p>"""
 

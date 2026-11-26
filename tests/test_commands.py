@@ -8,9 +8,9 @@ os.environ.setdefault("DISCORD_TOKEN", "test-token")
 import discord
 
 from professor_compressor.application import Runtime
+from professor_compressor.branding import BOT_INVITE_URL
 from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
-from professor_compressor.landing_pages import BOT_INVITE_URL
 
 
 class CompressCommandTests(unittest.IsolatedAsyncioTestCase):

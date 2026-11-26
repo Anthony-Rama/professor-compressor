@@ -9,10 +9,10 @@ from urllib.parse import quote
 
 import discord
 
+from .branding import BOT_INVITE_URL
 from .config import Settings
 from .delivery_policy import bot_upload_limit, channel_delivery_problem
 from .domain import JobState, UploadJob
-from .landing_pages import BOT_INVITE_URL
 from .metrics import RuntimeMetrics
 from .notifications import botstats_report, compression_progress_alert, safe_alert_text
 

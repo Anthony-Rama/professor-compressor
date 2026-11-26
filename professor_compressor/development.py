@@ -15,10 +15,11 @@ import certifi
 from aiohttp import ClientError, ClientSession, ClientTimeout
 from dotenv import dotenv_values
 
+from .branding import APPLICATION_ID
 from .paths import REPOSITORY_ROOT
 
 ROOT = REPOSITORY_ROOT
-PRODUCTION_APPLICATION_ID = "1550752400271351839"
+PRODUCTION_APPLICATION_ID = APPLICATION_ID
 PRODUCTION_HOST = "professor-compressor.duckdns.org"
 DEV_KEYS = frozenset(
     {
