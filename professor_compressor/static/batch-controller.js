@@ -286,16 +286,6 @@ export function startBatchController(config, modules) {
     }
   }
 
-  window.addEventListener("pagehide", () => {
-    fileSelection.flushPreparationReports();
-    diagnostic.flush();
-    pageIsLeaving = true;
-    if (!deliveryComplete && !sessionExpired()) reportProgress("page_left");
-  });
-  window.addEventListener("pageshow", () => {
-    pageIsLeaving = false;
-  });
-
   // The selection, encoder and relay modules report UI changes as events; the page applies them.
   const events = createEmitter();
   events.on("fileStatus", updateFile);
@@ -417,6 +407,18 @@ export function startBatchController(config, modules) {
     sessionExpired,
     reportProgress,
     events,
+  });
+
+  // Registered after file selection, whose own pagehide listener closes local
+  // storage first, matching the original order of these handlers.
+  window.addEventListener("pagehide", () => {
+    fileSelection.flushPreparationReports();
+    diagnostic.flush();
+    pageIsLeaving = true;
+    if (!deliveryComplete && !sessionExpired()) reportProgress("page_left");
+  });
+  window.addEventListener("pageshow", () => {
+    pageIsLeaving = false;
   });
 
   const encoder = createVideoEncoder({
