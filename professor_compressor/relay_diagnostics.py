@@ -3,6 +3,10 @@
 import json
 
 from .domain import CompressionDiagnostic
+from .observability_contract import ENUMS, valid_id
+
+# Relay diagnostics name a detected container; "unknown" is never accepted here.
+INPUT_FORMATS = ENUMS["input_format"] - {"unknown"}
 
 
 def sanitize_telemetry(value: object) -> dict:
@@ -10,12 +14,8 @@ def sanitize_telemetry(value: object) -> dict:
     if not isinstance(value, dict):
         return {}
     clean = {}
-    batch_id = value.get("batch_id")
-    if (
-        isinstance(batch_id, str)
-        and len(batch_id) == 32
-        and all(c in "0123456789abcdef" for c in batch_id)
-    ):
+    batch_id = valid_id(value.get("batch_id"))
+    if batch_id:
         clean["batch_id"] = batch_id
     for key in (
         "engine_seconds",
@@ -37,12 +37,9 @@ def sanitize_telemetry(value: object) -> dict:
         number = value.get(key)
         if type(number) in (int, float) and 0 <= number <= 86400:
             clean[key] = number
-    for key, allowed in {
-        "path": {"unchanged", "remuxed", "converted", "compressed"},
-        "engine": {"unused", "single-threaded", "multithreaded"},
-    }.items():
+    for key in ("path", "engine"):
         item = value.get(key)
-        if isinstance(item, str) and item in allowed:
+        if isinstance(item, str) and item in ENUMS[key]:
             clean[key] = item
     return clean
 
@@ -51,21 +48,6 @@ def parse_compression_diagnostics(
     raw: bytes, *, max_clips: int
 ) -> list[CompressionDiagnostic]:
     """Accept optional, bounded browser measurements; never trust them for delivery."""
-    allowed_formats = {
-        "mp4",
-        "mov",
-        "3gp",
-        "webm",
-        "mkv",
-        "webm/mkv",
-        "avi",
-        "ogg",
-        "flv",
-        "asf/wmv",
-        "mpeg",
-        "ts",
-        "m2ts",
-    }
     try:
         values = json.loads(raw)
         if not isinstance(values, list) or not 1 <= len(values) <= max_clips:
@@ -85,7 +67,7 @@ def parse_compression_diagnostics(
                 or not 0 <= encoding_seconds <= 86400
             ):
                 encoding_seconds = None
-            if input_format is not None and input_format not in allowed_formats:
+            if input_format is not None and input_format not in INPUT_FORMATS:
                 return []
             if (
                 type(input_bytes) is not int
