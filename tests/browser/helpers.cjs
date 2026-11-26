@@ -11,9 +11,17 @@ async function openSession(page, request) {
   return session;
 }
 
-// Run ffmpeg with errors-only logging.
+// Run ffmpeg with errors-only logging; `timeout` (ms) bounds slow encodes.
+function runFfmpeg(args, { timeout } = {}) {
+  execFileSync(
+    "ffmpeg",
+    ["-hide_banner", "-loglevel", "error", ...args],
+    timeout ? { timeout } : undefined,
+  );
+}
+
 function ffmpeg(...args) {
-  execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", ...args]);
+  runFfmpeg(args);
 }
 
 // Encode a lavfi test pattern. `options` follow the video codec, before the output path.
@@ -35,13 +43,31 @@ function testPatternClip(
   );
 }
 
-// Copy an MP4 with a trailing `free` box so the result is exactly `bytes` long and still valid.
-function padWithFreeBox(input, output, bytes) {
-  const source = readFileSync(input);
-  const padding = Buffer.alloc(bytes - source.length);
+// Write `source` followed by a `free` box of `size` bytes; the MP4 stays valid.
+function writeWithFreeBox(source, output, size) {
+  const padding = Buffer.alloc(size);
   padding.writeUInt32BE(padding.length);
   padding.write("free", 4);
   writeFileSync(output, Buffer.concat([source, padding]));
 }
 
-module.exports = { openSession, ffmpeg, testPatternClip, padWithFreeBox };
+// Copy an MP4 with a trailing `free` box so the result is exactly `bytes` long.
+function padWithFreeBox(input, output, bytes) {
+  const source = readFileSync(input);
+  writeWithFreeBox(source, output, bytes - source.length);
+}
+
+// Pad an MP4 in place to at least `minimum` bytes, always adding a box.
+function padToAtLeast(file, minimum) {
+  const source = readFileSync(file);
+  writeWithFreeBox(source, file, Math.max(8, minimum - source.length));
+}
+
+module.exports = {
+  openSession,
+  ffmpeg,
+  runFfmpeg,
+  testPatternClip,
+  padWithFreeBox,
+  padToAtLeast,
+};

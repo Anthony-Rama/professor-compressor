@@ -2,17 +2,10 @@
 // RUN_ENCODER_STRESS=1 npm run test:browser -- encoder-stress.spec.cjs
 const { test, expect } = require("@playwright/test");
 const { execFileSync } = require("node:child_process");
-const {
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-  rmSync,
-  existsSync,
-  statSync,
-  readdirSync,
-} = require("node:fs");
+const { mkdtempSync, rmSync, existsSync, statSync, readdirSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
+const { padToAtLeast, runFfmpeg } = require("./helpers.cjs");
 test.skip(
   process.env.RUN_ENCODER_STRESS !== "1",
   "Explicit opt-in required for high-memory encoding tests",
@@ -41,12 +34,8 @@ test.beforeAll(() => {
     if (existsSync(file)) continue;
     const seed = long ? join(fixtures, pixels + "-seed.mp4") : file;
     if (!existsSync(seed))
-      execFileSync(
-        "ffmpeg",
+      runFfmpeg(
         [
-          "-hide_banner",
-          "-loglevel",
-          "error",
           "-f",
           "lavfi",
           "-i",
@@ -74,34 +63,15 @@ test.beforeAll(() => {
     // Repeat a moving three-second source: exercises sustained decoding but
     // is not a claim to reproduce the original user's content or HEVC profile.
     if (long)
-      execFileSync(
-        "ffmpeg",
-        [
-          "-hide_banner",
-          "-loglevel",
-          "error",
-          "-stream_loop",
-          "-1",
-          "-i",
-          seed,
-          "-t",
-          String(duration),
-          "-c",
-          "copy",
-          file,
-        ],
-        { timeout: 30000 },
-      );
-    const input = readFileSync(file);
+      runFfmpeg(["-stream_loop", "-1", "-i", seed, "-t", String(duration), "-c", "copy", file], {
+        timeout: 30000,
+      });
     // A valid free box forces the production MP4 encode path above the
     // harness's 1.1 MB limit, without needing a large/long source video.
     // For 43s tests, match the incident's byte footprint using a free box.
     // This padding stresses file copying, not compressed picture complexity.
     const minimum = long ? (duration === 43 ? 298_363_705 : 21 * 1024 * 1024) : 1_200_000;
-    const padding = Buffer.alloc(Math.max(8, minimum - input.length));
-    padding.writeUInt32BE(padding.length);
-    padding.write("free", 4);
-    writeFileSync(file, Buffer.concat([input, padding]));
+    padToAtLeast(file, minimum);
   }
 });
 test.afterAll(() => {
