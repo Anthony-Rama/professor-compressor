@@ -21,6 +21,8 @@ from .web_ui import browser_compressor, browser_delivery_status
 OUTCOME_TTL_SECONDS = 3600
 RESUME_COOKIE_NAME = "__Secure-pc-browser"
 RESUME_COOKIE_MAX_AGE_SECONDS = 3 * 3600
+# Activity renews a claimed link, but never beyond this long after it was opened.
+HARD_SESSION_LIFETIME_SECONDS = 7200
 
 
 class SessionContext(Protocol):
@@ -43,6 +45,14 @@ class SessionContext(Protocol):
     def session_access(
         self, request: web.Request
     ) -> tuple[UploadJob | None, web.Response | None]: ...
+
+
+def extend_claimed_session(job: UploadJob, ttl_seconds: int) -> None:
+    """Slide a claimed link's expiry forward, but never past its hard lifetime."""
+    hard_deadline = (job.claimed_at or job.created_at) + max(
+        HARD_SESSION_LIFETIME_SECONDS, ttl_seconds
+    )
+    job.expires_at = min(time.time() + ttl_seconds, hard_deadline)
 
 
 def browser_cookie_matches(request: web.Request, secret: str | None) -> bool:
@@ -236,13 +246,7 @@ async def upload_form(context: SessionContext, request: web.Request) -> web.Resp
             job.page_left = False
             job.page_left_at = None
             job.processing_until = 0
-            hard_deadline = (job.claimed_at or job.created_at) + max(
-                7200, context.settings.active_session_ttl_seconds
-            )
-            job.expires_at = min(
-                time.time() + context.settings.active_session_ttl_seconds,
-                hard_deadline,
-            )
+            extend_claimed_session(job, context.settings.active_session_ttl_seconds)
             return compressor_page(context, job, reopened=True)
         return page(
             "Delivery status",
@@ -345,13 +349,7 @@ async def renew_session(context: SessionContext, request: web.Request) -> web.Re
     assert job is not None
     if job.state is JobState.CLAIMED:
         if not context.draining:
-            hard_deadline = (job.claimed_at or job.created_at) + max(
-                7200, context.settings.active_session_ttl_seconds
-            )
-            job.expires_at = min(
-                time.time() + context.settings.active_session_ttl_seconds,
-                hard_deadline,
-            )
+            extend_claimed_session(job, context.settings.active_session_ttl_seconds)
         job.processing_until = min(time.time() + 90, job.expires_at)
     return await session_status(context, request)
 
