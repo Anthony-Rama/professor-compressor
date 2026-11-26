@@ -43,6 +43,10 @@ async def browser_security_headers(
         and response.status == 200
     ):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif request.path.startswith("/brand/") and response.status in {200, 304}:
+        # Unversioned browser modules import each other; revalidating keeps a
+        # browser from combining cached files with newly deployed ones.
+        response.headers["Cache-Control"] = "no-cache"
     if request.path.startswith("/upload/") or request.path in {
         "/healthz",
         "/readyz",

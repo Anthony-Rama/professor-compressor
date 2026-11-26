@@ -165,3 +165,20 @@ class AssetCacheTests(RelayTestCase):
             self.assertEqual(
                 "immutable" in response.headers.get("Cache-Control", ""), immutable
             )
+
+    async def test_unversioned_browser_modules_revalidate_before_reuse(self):
+        # /brand/ URLs carry no version, so a browser must not mix cached and
+        # freshly deployed modules that import each other.
+        for path in (
+            "/brand/compressor.js",
+            "/brand/batch-controller.js",
+            "/brand/shared.js",
+            "/brand/dashboard.css",
+        ):
+            with self.subTest(path=path):
+                response = await self.client.get(path)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("Cache-Control"), "no-cache")
+                validator = {"If-None-Match": response.headers["ETag"]}
+                revalidated = await self.client.get(path, headers=validator)
+                self.assertEqual(revalidated.status, 304)
