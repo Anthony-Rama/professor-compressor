@@ -29,7 +29,16 @@ test("the private compressor page loads its dependencies without putting session
   expect((await controller.text()).includes(config.SESSION_SECRET)).toBe(false);
 });
 
-for (const asset of ["compressor.js", "file-selection.js", "video-encoder.js", "relay-client.js"]) {
+for (const asset of [
+  "compressor.js",
+  "batch-controller.js",
+  "compressor-view.js",
+  "shared.js",
+  "prepared-downloads.js",
+  "file-selection.js",
+  "video-encoder.js",
+  "relay-client.js",
+]) {
   test(`missing ${asset} leaves the picker disabled with recovery instructions`, async ({
     page,
     request,
