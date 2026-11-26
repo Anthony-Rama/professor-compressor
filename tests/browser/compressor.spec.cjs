@@ -1129,6 +1129,7 @@ test("refresh during local compression restarts with explicit file re-selection"
   await expect(page.getByRole("status")).toContainText("Choose them again");
   await expect(page.locator("#selection")).toHaveText("No videos selected");
   await deliver(page, join(fixtures, "small.mp4"));
+  await expect(page.locator("#recovery-notice")).toBeHidden();
 });
 
 test("refresh while Discord delivery is pending shows receipt status, not uploader", async ({

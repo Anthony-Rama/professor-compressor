@@ -121,4 +121,5 @@ def with_shared_markup(fragment: str) -> str:
         .replace("__DISCORD_ICON__", DISCORD_ICON)
         .replace("__MAIL_ICON__", MAIL_ICON)
         .replace("__THEME_SWITCH__", THEME_SWITCH)
+        .replace("__THEME_MENU__", THEME_MENU)
     )

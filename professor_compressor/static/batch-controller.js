@@ -597,6 +597,8 @@ export function startBatchController(config, modules) {
     reportProgress("started");
     cancelled = false;
     running = true;
+    const recoveryNotice = document.getElementById("recovery-notice");
+    if (recoveryNotice) recoveryNotice.hidden = true;
     setProcessingView(true);
     pageHeading.focus({ preventScroll: true });
     document.querySelector("main").scrollIntoView({ block: "start" });

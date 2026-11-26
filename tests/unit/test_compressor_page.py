@@ -218,10 +218,9 @@ class ThemeChoiceMarkupTests(unittest.TestCase):
                 )
                 self.assertNotIn("__THEME", document)
 
-    def test_session_pages_offer_a_theme_radio_group_in_the_footer(self) -> None:
+    def test_session_pages_offer_a_theme_radio_group_outside_forms(self) -> None:
         documents = self.documents()
         for name in (
-            "compressor",
             "delivery status",
             "unavailable",
             "maintenance",
@@ -230,23 +229,23 @@ class ThemeChoiceMarkupTests(unittest.TestCase):
             with self.subTest(page=name):
                 body = documents[name].split("<body>", 1)[1]
                 header, _, rest = body.partition("</header>")
-                self.assertNotIn("theme-", header)
+                switch = '<fieldset class="theme-switch" hidden>'
+                self.assertNotIn(switch, header)
                 footer = rest.split('<footer class="page-footer', 1)[1]
-                footer = footer.split("</footer>", 1)[0]
-                self.assertIn('<fieldset class="theme-switch" hidden>', footer)
-                self.assertIn('<legend class="visually-hidden">Theme</legend>', footer)
+                container = footer.split("</footer>", 1)[0]
+                self.assertIn(switch, container)
+                self.assertIn(
+                    '<legend class="visually-hidden">Theme</legend>', container
+                )
                 for value in ("system", "light", "dark"):
                     self.assertIn(
-                        f'type="radio" name="theme-choice" value="{value}"', footer
+                        f'type="radio" name="theme-choice" value="{value}"', container
                     )
                 self.assertNotIn("theme-menu", body)
-        # Enter on a radio button can submit its form; keep them out of it.
-        form = documents["compressor"].split('<form id="upload"', 1)[1]
-        self.assertNotIn("theme-choice", form.split("</form>", 1)[0])
 
-    def test_website_pages_offer_a_theme_menu_in_the_header(self) -> None:
+    def test_compressor_and_website_offer_a_theme_menu_in_the_header(self) -> None:
         documents = self.documents()
-        for name in ("home", "guide", "privacy", "terms"):
+        for name in ("compressor", "home", "guide", "privacy", "terms"):
             with self.subTest(page=name):
                 body = documents[name].split("<body>", 1)[1]
                 header = body.split("</header>", 1)[0]

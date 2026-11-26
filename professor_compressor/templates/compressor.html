@@ -1,10 +1,11 @@
-<header class="topbar">
+<header class="topbar compressor-topbar">
   __BRAND__
   <div class="session-note" id="session-note">
     <span class="icon icon-clock" aria-hidden="true"></span>
     <span class="session-label">Private session, bound to this browser ·</span>
     <span id="expires">Expires in --:--</span>
   </div>
+  __THEME_MENU__
 </header>
 <main class="compressor">
 <div class="page-head">
@@ -129,14 +130,15 @@
         <strong>Energy Saver</strong> while processing.</p>
     </details>
     <p class="privacy"><span id="processing-privacy"><span class="icon icon-lock" aria-hidden="true"></span>Compression runs on
-      this device. Only finished files are sent to Discord; MP4s that already fit may be sent unchanged.<br></span>
-      <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
-      <span aria-hidden="true"> · </span>
-      <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></p>
+      this device. Only finished files are sent to Discord; MP4s that already fit may be sent unchanged.</span>
+      <span class="legal-links">
+        <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+        <span aria-hidden="true"> · </span>
+        <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>
+      </span></p>
   </div>
 </form>
 </main>
-<footer class="page-footer theme-footer">__THEME_SWITCH__</footer>
 
 <script>
 // Independent of module imports: a failed dependency must not leave a silent form.

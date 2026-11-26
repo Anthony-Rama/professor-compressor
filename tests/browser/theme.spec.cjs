@@ -10,8 +10,12 @@ async function expectPalette(page, palette) {
 
 const storedTheme = (page) => page.evaluate(() => localStorage.getItem("pc-theme"));
 const themeAttribute = (page) => page.evaluate(() => document.documentElement.dataset.theme);
-const themeRadio = (page, name) =>
-  page.getByRole("group", { name: "Theme" }).getByRole("radio", { name, exact: true });
+const themeButton = (page, name) => page.getByRole("button", { name: "Theme: " + name });
+const themeMenu = (page) => page.getByRole("menu", { name: "Theme" });
+async function chooseTheme(page, current, next) {
+  await themeButton(page, current).click();
+  await themeMenu(page).getByRole("menuitemradio", { name: next, exact: true }).click();
+}
 
 test("System follows the device setting on session and website pages", async ({
   page,
@@ -20,7 +24,7 @@ test("System follows the device setting on session and website pages", async ({
   for (const scheme of ["dark", "light"]) {
     await page.emulateMedia({ colorScheme: scheme });
     await openSession(page, request);
-    await expect(themeRadio(page, "System")).toBeChecked();
+    await expect(themeButton(page, "System")).toBeVisible();
     await expectPalette(page, scheme);
     await page.goto("/");
     await expect(page.getByRole("button", { name: "Theme: System" })).toBeVisible();
@@ -29,31 +33,32 @@ test("System follows the device setting on session and website pages", async ({
   }
 });
 
-test("the footer radio group chooses each theme and the choice persists", async ({
+test("the compressor header menu chooses each theme and the choice persists", async ({
   page,
   request,
 }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await openSession(page, request);
-  const group = page.getByRole("group", { name: "Theme" });
-  await expect(group.getByRole("radio")).toHaveCount(3);
+  const header = page.getByRole("banner");
+  const button = header.getByRole("button", { name: "Theme: System" });
+  await expect(button).toBeVisible();
+  const session = await header.locator("#session-note").boundingBox();
+  expect((await button.boundingBox()).x).toBeGreaterThanOrEqual(session.x + session.width);
 
   // An explicit Light choice wins over a dark device setting.
-  await themeRadio(page, "Light").check();
+  await chooseTheme(page, "System", "Light");
   await expectPalette(page, "light");
   expect(await storedTheme(page)).toBe("light");
   await page.reload();
   await expect(page.locator("#clips")).toBeEnabled();
   expect(await themeAttribute(page)).toBe("light");
-  await expect(themeRadio(page, "Light")).toBeChecked();
+  await expect(themeButton(page, "Light")).toBeVisible();
   await expectPalette(page, "light");
 
-  // Arrow keys move through the native radio group; Dark wins over a light device.
+  // Dark wins over a light device setting.
   await page.emulateMedia({ colorScheme: "light" });
-  await themeRadio(page, "Light").focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(themeRadio(page, "Dark")).toBeChecked();
-  await expect(themeRadio(page, "Dark")).toBeFocused();
+  await chooseTheme(page, "Light", "Dark");
+  await expect(themeButton(page, "Dark")).toBeFocused();
   await expectPalette(page, "dark");
   expect(await storedTheme(page)).toBe("dark");
 
@@ -67,8 +72,7 @@ test("the footer radio group chooses each theme and the choice persists", async 
 
   // System forgets the choice and keeps following the device as it changes.
   await openSession(page, request);
-  await expect(themeRadio(page, "Dark")).toBeChecked();
-  await themeRadio(page, "System").check();
+  await chooseTheme(page, "Dark", "System");
   expect(await storedTheme(page)).toBeNull();
   expect(await themeAttribute(page)).toBeUndefined();
   await expectPalette(page, "light");
@@ -138,6 +142,25 @@ test("the header menu is keyboard operable and chooses each theme", async ({ pag
   await expectPalette(page, "dark");
 });
 
+test("the compressor header fits on a narrow phone", async ({ page, request }) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await openSession(page, request);
+  const header = page.getByRole("banner");
+  const button = header.getByRole("button", { name: "Theme: System" });
+  await expect(button).toBeVisible();
+  await expect(header.locator("#expires")).toBeVisible();
+  const control = await button.boundingBox();
+  const session = await header.locator("#session-note").boundingBox();
+  expect(control.y + control.height).toBeLessThanOrEqual(session.y);
+  await button.click();
+  const menu = await themeMenu(page).boundingBox();
+  expect(menu.x).toBeGreaterThanOrEqual(0);
+  expect(menu.x + menu.width).toBeLessThanOrEqual(320);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await themeMenu(page).getByRole("menuitemradio", { name: "Light" }).click();
+  await expectPalette(page, "light");
+});
+
 test("the header menu stays inside a 360px viewport", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 740 });
   await page.goto("/privacy");
@@ -161,10 +184,10 @@ test("blocked storage keeps pages working on the System theme", async ({ page, r
   await openSession(page, request);
   await expect(page.locator("#startup-error")).toBeHidden();
   expect(await page.evaluate(() => window.compressorStartup.pending())).toBe(false);
-  await expect(themeRadio(page, "System")).toBeChecked();
+  await expect(themeButton(page, "System")).toBeVisible();
   await expectPalette(page, "dark");
   // The choice still applies for this page even though it cannot be saved.
-  await themeRadio(page, "Light").check();
+  await chooseTheme(page, "System", "Light");
   await expectPalette(page, "light");
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Theme: System" })).toBeVisible();

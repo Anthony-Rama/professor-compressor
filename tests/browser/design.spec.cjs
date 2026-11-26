@@ -51,6 +51,23 @@ for (const scheme of ["dark", "light"]) {
     await page.emulateMedia({ colorScheme: scheme });
     await openSession(page, request);
     await expectTheme(page, scheme);
+    const clear = page.getByRole("button", { name: "Clear selected videos" });
+    await expect(clear).toBeDisabled();
+    for (const property of ["color", "background-color", "border-top-color"]) {
+      const cancelColor = await page
+        .locator("#cancel")
+        .evaluate((button, name) => getComputedStyle(button).getPropertyValue(name), property);
+      await expect(clear).toHaveCSS(property, cancelColor);
+    }
+    await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+    const remove = page.locator(".remove-file");
+    const neutralColor = await remove.evaluate((button) => getComputedStyle(button).color);
+    const dangerColor = await clear.evaluate((button) => getComputedStyle(button).color);
+    expect(neutralColor).not.toBe(dangerColor);
+    await remove.hover();
+    await expect(remove).toHaveCSS("color", dangerColor);
+    await page.locator("#page-heading").hover();
+    await expect(remove).toHaveCSS("color", neutralColor);
     for (const path of ["/", "/guide/compress-video-for-discord", "/privacy", "/terms"]) {
       await page.goto(path);
       await expectTheme(page, scheme);
@@ -101,6 +118,16 @@ test("home page lists Professor Compressor on Top.gg with the other directories"
   ]) {
     await expect(listings.getByRole("link", { name, exact: true })).toHaveAttribute("href", href);
   }
+});
+
+test("the Ready tip only shows when videos are selected", async ({ page, request }) => {
+  await openSession(page, request);
+  const tip = page.locator("#preparation-help");
+  await expect(tip).toBeHidden();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await expect(tip).toBeVisible();
+  await page.getByRole("button", { name: "Clear selected videos" }).click();
+  await expect(tip).toBeHidden();
 });
 
 test("the action bar explains why sending is unavailable", async ({ page, request }) => {
