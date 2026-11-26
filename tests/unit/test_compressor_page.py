@@ -143,3 +143,31 @@ class BrowserPageTests(unittest.TestCase):
         policy = secured.headers["Content-Security-Policy"]
         self.assertIn("frame-ancestors 'none'", policy)
         self.assertIn("object-src 'none'", policy)
+
+
+class OutputSizeTargetingTests(unittest.TestCase):
+    """Size targeting lives in the browser modules; these pin its rules."""
+
+    STATIC = Path(__file__).resolve().parents[2] / "professor_compressor" / "static"
+
+    def setUp(self) -> None:
+        self.encoder = (self.STATIC / "video-encoder.js").read_text()
+        self.controller = (self.STATIC / "batch-controller.js").read_text()
+
+    def test_targets_most_of_discords_safe_upload_size(self) -> None:
+        self.assertIn("const OUTPUT_TARGET_RATIO = 0.97;", self.encoder)
+        self.assertIn("effectiveTargetBytes * 8 * OUTPUT_TARGET_RATIO", self.encoder)
+
+    def test_caps_each_output_to_the_batch_relay_limit(self) -> None:
+        # Each file gets an equal share of the relay's combined batch limit.
+        self.assertEqual(
+            self.encoder.count("MAX_BATCH_BYTES / Math.max(1, getFiles().length)"), 2
+        )
+        self.assertIn("return Math.min(TARGET_BYTES, batchTargetBytes)", self.encoder)
+        self.assertIn(
+            "return Math.min(DISCORD_LIMIT_BYTES, batchTargetBytes)", self.encoder
+        )
+        self.assertIn(
+            "state.file.size > encoder.unchangedLimitBytes()", self.controller
+        )
+        self.assertIn("file.size <= unchangedLimitBytes()", self.encoder)
