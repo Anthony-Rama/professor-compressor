@@ -257,6 +257,6 @@ persistence, retention, and failure isolation. Browser tests use an ephemeral
 database and test-only credentials and never connect to Discord. Real usage is
 still necessary to evaluate cross-device performance and perceptual quality.
 
-Container CI runs `tests/container_observability.py` twice against the same
+Container CI runs `tests/harness/container_observability.py` twice against the same
 disposable named volume (`seed`, then `verify`) to check authentication,
 non-root access, filtering, and persistence across container recreation.

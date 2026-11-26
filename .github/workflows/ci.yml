@@ -93,7 +93,7 @@ jobs:
           for phase in seed verify; do
             docker run --rm --network none --env PYTHONPATH=/app \
               --mount type=volume,src=compressor-diagnostics-smoke,dst=/data/observability \
-              --mount type=bind,src="$PWD/tests/container_observability.py",dst=/verification/smoke.py,readonly \
+              --mount type=bind,src="$PWD/tests/harness/container_observability.py",dst=/verification/smoke.py,readonly \
               --entrypoint python professor-compressor:ci /verification/smoke.py "$phase"
           done
 

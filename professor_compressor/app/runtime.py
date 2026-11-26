@@ -141,7 +141,7 @@ class Runtime:
             tasks=self.background_tasks,
             create_application=self.create_web_application,
         )
-        # Entry points that tests/browser_server.py and the container smoke test
+        # Entry points that tests/harness/browser_server.py and the container smoke test
         # drive directly, without a Discord connection.
         self.jobs = self.sessions.jobs
         self.request_times = self.rate_limiter.request_times

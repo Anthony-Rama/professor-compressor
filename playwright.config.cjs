@@ -10,7 +10,7 @@ module.exports = defineConfig({
       ? { executablePath: process.env.CHROME_EXECUTABLE } : {},
   },
   webServer: {
-    command: `${process.env.TEST_PYTHON || 'python3'} tests/browser_server.py`,
+    command: `"${process.env.TEST_PYTHON || 'python3'}" tests/harness/browser_server.py`,
     url: 'http://127.0.0.1:18764/healthz',
     reuseExistingServer: false,
   },
