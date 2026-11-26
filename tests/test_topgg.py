@@ -5,12 +5,14 @@ from email.utils import format_datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from professor_compressor import application as app
+from professor_compressor.application import Runtime
+from professor_compressor.config import Settings
 from professor_compressor.topgg import METRICS_URL, TopGGStats, retry_delay
 
 
 class TopGGTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.runtime = Runtime(Settings(discord_token=""))
         self.client = Mock()
         self.client.user = SimpleNamespace(id=123)
         self.client.guilds = [object(), object()]
@@ -149,18 +151,17 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
         stats.run = AsyncMock(side_effect=blocker.wait)
         tasks = set()
         with (
-            patch.object(app, "topgg_stats", stats),
-            patch.object(app, "topgg_stats_task", None),
-            patch.object(app, "background_tasks", tasks),
-            patch.object(app, "commands_synced", True),
-            patch.object(app, "DSC_API_TOKEN", ""),
-            patch.object(app, "start_upload_server", AsyncMock()),
+            patch.object(self.runtime, "topgg_stats", stats),
+            patch.object(self.runtime, "topgg_stats_task", None),
+            patch.object(self.runtime, "background_tasks", tasks),
+            patch.object(self.runtime, "commands_synced", True),
+            patch.object(self.runtime, "start_upload_server", AsyncMock()),
         ):
             try:
-                await app.on_ready()
-                first = app.topgg_stats_task
-                await app.on_ready()
-                self.assertIs(app.topgg_stats_task, first)
+                await self.runtime.on_ready()
+                first = self.runtime.topgg_stats_task
+                await self.runtime.on_ready()
+                self.assertIs(self.runtime.topgg_stats_task, first)
                 await asyncio.sleep(0)
                 stats.run.assert_awaited_once()
             finally:
@@ -171,10 +172,10 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
     async def test_guild_events_signal_worker(self):
         guild = SimpleNamespace(id=123, name="Test", member_count=3)
         with (
-            patch.object(app, "topgg_stats") as stats,
-            patch.object(app, "schedule_owner_alert"),
-            patch.object(app, "schedule_dsc_stats_update"),
+            patch.object(self.runtime, "topgg_stats") as stats,
+            patch.object(self.runtime, "schedule_owner_alert"),
+            patch.object(self.runtime, "schedule_dsc_stats_update"),
         ):
-            await app.on_guild_join(guild)
-            await app.on_guild_remove(guild)
+            await self.runtime.on_guild_join(guild)
+            await self.runtime.on_guild_remove(guild)
         self.assertEqual(stats.notify_change.call_count, 2)

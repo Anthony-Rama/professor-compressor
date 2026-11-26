@@ -6,6 +6,7 @@ import secrets
 import sys
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,20 +24,21 @@ os.environ["DIAGNOSTIC_TEST_GUILD_IDS"] = "999"
 
 from aiohttp import web  # noqa: E402 - configure the isolated harness before app imports
 
-from professor_compressor import application as app  # noqa: E402
+from professor_compressor.application import Runtime  # noqa: E402
+from professor_compressor.config import Settings  # noqa: E402
 from professor_compressor.domain import UploadJob  # noqa: E402
+from professor_compressor.media_validation import valid_mp4_signature  # noqa: E402
 
 delivery_delays = {}
 test_discord_limit = int(os.environ.get("BROWSER_TEST_DISCORD_LIMIT_BYTES", "1100000"))
 if not 1_100_000 <= test_discord_limit <= 20 * 1024 * 1024:
     raise ValueError("Browser test upload limit is outside the supported test range")
 capture_directory = os.environ.get("BROWSER_TEST_CAPTURE_DIR")
-real_runtime_snapshot = app.dashboard_runtime
 
 
 def test_runtime_snapshot():
     # Explicitly simulated Discord cache, only in this credential-free harness.
-    snapshot = real_runtime_snapshot()
+    snapshot = runtime.dashboard_runtime()
     snapshot.update(
         connected_servers=57,
         server_count_current=True,
@@ -48,18 +50,15 @@ def test_runtime_snapshot():
     return snapshot
 
 
-app.dashboard_runtime = test_runtime_snapshot
-
-
 async def test_session(request: web.Request) -> web.Response:
     # Independent browser tests share one loopback IP. Do not let an earlier
     # test consume a later test's diagnostic request budget. HTTP rate-limit
     # enforcement is tested separately against the unmodified production route.
-    for key in tuple(app.request_times):
+    for key in tuple(runtime.request_times):
         if key[0] == "diagnostic_events":
-            app.request_times.pop(key, None)
+            runtime.request_times.pop(key, None)
     token = secrets.token_urlsafe(16)
-    app.jobs[token] = UploadJob(
+    runtime.jobs[token] = UploadJob(
         token=token,
         user_id=1,
         channel_id=2,
@@ -71,16 +70,19 @@ async def test_session(request: web.Request) -> web.Response:
     )
     if request.query.get("slow") == "1":
         delivery_delays[token] = 3
-    app.track(app.jobs[token], "created")
+    runtime.track(runtime.jobs[token], "created")
     return web.json_response(
-        {"path": f"/upload/{token}", "reference": app.jobs[token].diagnostic_reference}
+        {
+            "path": f"/upload/{token}",
+            "reference": runtime.jobs[token].diagnostic_reference,
+        }
     )
 
 
 async def capture_delivery(job: UploadJob, results: list, caption: str = "") -> str:
     del caption
     await asyncio.sleep(delivery_delays.pop(job.token, 0))
-    if not results or not all(app.valid_mp4_signature(item.data) for item in results):
+    if not results or not all(valid_mp4_signature(item.data) for item in results):
         raise RuntimeError("Invalid browser output")
     if any(len(item.data) > job.discord_limit for item in results):
         raise RuntimeError("Output exceeds target")
@@ -95,17 +97,22 @@ async def capture_delivery(job: UploadJob, results: list, caption: str = "") -> 
 
 
 async def workers(application: web.Application):
-    app.delivery_queue = asyncio.Queue(maxsize=8)
-    app.deliver_browser_results = capture_delivery
-    task = asyncio.create_task(app.delivery_worker(1))
-    yield
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
+    runtime.delivery_queue = asyncio.Queue(maxsize=runtime.settings.delivery_queue_size)
+    task = asyncio.create_task(runtime.delivery_worker(1))
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 if __name__ == "__main__":
-    app.UPLOAD_RATE_LIMIT_PER_MINUTE = 1000
-    application = app.create_web_application()
+    settings = replace(
+        Settings.from_environment(require_token=False),
+        upload_rate_limit_per_minute=1000,
+    )
+    runtime = Runtime(settings, deliver_results=capture_delivery)
+    application = runtime.create_web_application(runtime_snapshot=test_runtime_snapshot)
     application.router.add_post("/test/session", test_session)
     application.cleanup_ctx.append(workers)
     web.run_app(application, host="127.0.0.1", port=18764, access_log=None)

@@ -7,11 +7,16 @@ os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
 import discord
 
-from professor_compressor import application as app
+from professor_compressor.application import Runtime
+from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
+from professor_compressor.landing_pages import BOT_INVITE_URL
 
 
 class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = Runtime(Settings(discord_token=""))
+
     def make_interaction(self) -> Mock:
         interaction = Mock()
         interaction.guild_id = 123
@@ -30,14 +35,14 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_server_install_does_not_create_session(self) -> None:
         interaction = self.make_interaction()
         with (
-            patch.object(app.client, "get_guild", return_value=None),
-            patch.object(app, "jobs", {}),
-            patch.object(app, "last_job_at", {}),
-            patch.object(app, "schedule_owner_alert") as alert,
+            patch.object(self.runtime.client, "get_guild", return_value=None),
+            patch.object(self.runtime, "jobs", {}),
+            patch.object(self.runtime, "last_job_at", {}),
+            patch.object(self.runtime, "schedule_owner_alert") as alert,
         ):
-            await app.compress.callback(interaction)
-            self.assertEqual(app.jobs, {})
-            self.assertEqual(app.last_job_at, {})
+            await self.runtime.compress(interaction)
+            self.assertEqual(self.runtime.jobs, {})
+            self.assertEqual(self.runtime.last_job_at, {})
 
         message = interaction.response.send_message.await_args.args[0]
         self.assertIn("installed in this server", message)
@@ -46,23 +51,27 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             interaction.response.send_message.await_args.kwargs["ephemeral"]
         )
         view = interaction.response.send_message.await_args.kwargs["view"]
-        self.assertEqual(view.children[0].url, app.BOT_INVITE_URL)
+        self.assertEqual(view.children[0].url, BOT_INVITE_URL)
         alert.assert_not_called()
 
     async def test_server_install_creates_session(self) -> None:
         interaction = self.make_interaction()
         with (
-            patch.object(app.client, "get_guild", return_value=interaction.guild),
-            patch.object(app, "jobs", {}),
-            patch.object(app, "last_job_at", {}),
-            patch.object(app, "schedule_owner_alert") as alert,
+            patch.object(
+                self.runtime.client, "get_guild", return_value=interaction.guild
+            ),
+            patch.object(self.runtime, "jobs", {}),
+            patch.object(self.runtime, "last_job_at", {}),
+            patch.object(self.runtime, "schedule_owner_alert") as alert,
         ):
-            await app.compress.callback(interaction)
-            self.assertEqual(len(app.jobs), 1)
-            self.assertEqual(next(iter(app.jobs.values())).guild_id, 123)
+            await self.runtime.compress(interaction)
+            self.assertEqual(len(self.runtime.jobs), 1)
+            self.assertEqual(next(iter(self.runtime.jobs.values())).guild_id, 123)
             self.assertIn("Username: **@clip\\_creator**", alert.call_args.args[0])
             self.assertIn("User ID: `789`", alert.call_args.args[0])
-            self.assertEqual(next(iter(app.jobs.values())).username, "clip_creator")
+            self.assertEqual(
+                next(iter(self.runtime.jobs.values())).username, "clip_creator"
+            )
             self.assertNotIn("<@789>", alert.call_args.args[0])
 
         interaction.response.send_message.assert_awaited_once()
@@ -74,14 +83,16 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
         interaction = self.make_interaction()
         interaction.filesize_limit = 500_000_000
         with (
-            patch.object(app.client, "get_guild", return_value=interaction.guild),
-            patch.object(app, "jobs", {}),
-            patch.object(app, "last_job_at", {}),
-            patch.object(app, "schedule_owner_alert"),
+            patch.object(
+                self.runtime.client, "get_guild", return_value=interaction.guild
+            ),
+            patch.object(self.runtime, "jobs", {}),
+            patch.object(self.runtime, "last_job_at", {}),
+            patch.object(self.runtime, "schedule_owner_alert"),
         ):
-            await app.compress.callback(interaction)
+            await self.runtime.compress(interaction)
             self.assertEqual(
-                next(iter(app.jobs.values())).discord_limit, 20 * 1024 * 1024
+                next(iter(self.runtime.jobs.values())).discord_limit, 20 * 1024 * 1024
             )
 
     async def test_missing_channel_permissions_prevent_session(self):
@@ -89,11 +100,13 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             interaction = self.make_interaction()
             setattr(interaction.app_permissions, permission, False)
             with (
-                patch.object(app.client, "get_guild", return_value=interaction.guild),
-                patch.object(app, "jobs", {}),
+                patch.object(
+                    self.runtime.client, "get_guild", return_value=interaction.guild
+                ),
+                patch.object(self.runtime, "jobs", {}),
             ):
-                await app.compress.callback(interaction)
-                self.assertFalse(app.jobs)
+                await self.runtime.compress(interaction)
+                self.assertFalse(self.runtime.jobs)
                 self.assertIn(
                     "permissions", interaction.response.send_message.await_args.args[0]
                 )
@@ -112,13 +125,15 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
                 processing_until=time.time() + 90 if active else 0,
             )
             with (
-                patch.object(app.client, "get_guild", return_value=interaction.guild),
-                patch.object(app, "jobs", {job.token: job}),
-                patch.object(app, "last_job_at", {}),
-                patch.object(app, "schedule_owner_alert"),
+                patch.object(
+                    self.runtime.client, "get_guild", return_value=interaction.guild
+                ),
+                patch.object(self.runtime, "jobs", {job.token: job}),
+                patch.object(self.runtime, "last_job_at", {}),
+                patch.object(self.runtime, "schedule_owner_alert"),
             ):
-                await app.compress.callback(interaction)
-                self.assertEqual(job.token in app.jobs, active)
+                await self.runtime.compress(interaction)
+                self.assertEqual(job.token in self.runtime.jobs, active)
 
     async def test_page_exit_grace_unlocks_stale_processing_session(self):
         for seconds_since_exit, blocked in ((1, True), (6, False)):
@@ -135,13 +150,15 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
                 page_left_at=time.time() - seconds_since_exit,
             )
             with (
-                patch.object(app.client, "get_guild", return_value=interaction.guild),
-                patch.object(app, "jobs", {job.token: job}),
-                patch.object(app, "last_job_at", {}),
-                patch.object(app, "schedule_owner_alert"),
+                patch.object(
+                    self.runtime.client, "get_guild", return_value=interaction.guild
+                ),
+                patch.object(self.runtime, "jobs", {job.token: job}),
+                patch.object(self.runtime, "last_job_at", {}),
+                patch.object(self.runtime, "schedule_owner_alert"),
             ):
-                await app.compress.callback(interaction)
-                self.assertEqual(job.token in app.jobs, blocked)
+                await self.runtime.compress(interaction)
+                self.assertEqual(job.token in self.runtime.jobs, blocked)
                 if blocked:
                     self.assertIn(
                         "wait 4 seconds",
@@ -161,12 +178,14 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             page_left_at=time.time() - 60,
         )
         with (
-            patch.object(app.client, "get_guild", return_value=interaction.guild),
-            patch.object(app, "jobs", {job.token: job}),
-            patch.object(app, "last_job_at", {}),
+            patch.object(
+                self.runtime.client, "get_guild", return_value=interaction.guild
+            ),
+            patch.object(self.runtime, "jobs", {job.token: job}),
+            patch.object(self.runtime, "last_job_at", {}),
         ):
-            await app.compress.callback(interaction)
-            self.assertIn("original", app.jobs)
+            await self.runtime.compress(interaction)
+            self.assertIn("original", self.runtime.jobs)
             self.assertIn(
                 "sending files", interaction.response.send_message.await_args.args[0]
             )
@@ -185,27 +204,36 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             page_left_at=time.time() - 1,
         )
         with (
-            patch.object(app.client, "get_guild", return_value=interaction.guild),
-            patch.object(app, "jobs", {job.token: job}),
-            patch.object(app, "last_job_at", {(123, 789): time.time() - 2}),
+            patch.object(
+                self.runtime.client, "get_guild", return_value=interaction.guild
+            ),
+            patch.object(self.runtime, "jobs", {job.token: job}),
+            patch.object(self.runtime, "last_job_at", {(123, 789): time.time() - 2}),
         ):
-            await app.compress.callback(interaction)
+            await self.runtime.compress(interaction)
             self.assertIn(
                 "wait 13 seconds", interaction.response.send_message.await_args.args[0]
             )
 
     async def test_drain_rejects_new_command(self):
         interaction = self.make_interaction()
-        with patch.object(app, "draining", True), patch.object(app, "jobs", {}):
-            await app.compress.callback(interaction)
-            self.assertFalse(app.jobs)
+        with (
+            patch.object(self.runtime, "draining", True),
+            patch.object(self.runtime, "jobs", {}),
+        ):
+            await self.runtime.compress(interaction)
+            self.assertFalse(self.runtime.jobs)
             self.assertIn(
                 "maintenance", interaction.response.send_message.await_args.args[0]
             )
 
     def test_command_is_server_install_only(self) -> None:
-        self.assertTrue(app.compress.allowed_installs.guild)
-        self.assertFalse(app.compress.allowed_installs.user)
+        self.assertTrue(
+            self.runtime.tree.get_command("compress").allowed_installs.guild
+        )
+        self.assertFalse(
+            self.runtime.tree.get_command("compress").allowed_installs.user
+        )
 
 
 if __name__ == "__main__":

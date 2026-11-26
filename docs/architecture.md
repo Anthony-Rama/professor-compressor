@@ -70,7 +70,13 @@ responsibilities:
   representations.
 - `domain.py` defines upload jobs, delivery requests, browser results, and the
   explicit job-state machine.
-- `application.py` integrates Discord and aiohttp and owns process lifecycle.
+- `application.py` integrates Discord and aiohttp. Startup constructs a
+  `Runtime` with validated settings; each runtime owns its sessions, rate
+  limits, delivery queue, metrics, and diagnostic writer. HTTP routes and
+  Discord commands bind to that instance. The loopback browser harness
+  injects a fake sender rather than mutating application globals.
+  Run independent instances with distinct diagnostic database paths when
+  persistence is enabled.
 - `web_pages.py` registers public pages and owns document and security headers.
 - `web_ui.py` renders private session templates with a safely serialized JSON
   configuration. Browser controllers in `static/` contain no session-specific

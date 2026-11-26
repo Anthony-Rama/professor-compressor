@@ -2,18 +2,15 @@ import asyncio
 import json
 import re
 import unittest
+from dataclasses import replace
 from unittest.mock import Mock, patch
 from xml.etree import ElementTree
 
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor.application import (
-    PUBLIC_BASE_URL,
-    create_web_application,
-    jobs,
-    request_times,
-)
+from professor_compressor.application import Runtime, logger
+from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
 
 
@@ -31,8 +28,6 @@ def valid_test_mp4() -> bytes:
 
 class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
     async def test_telemetry_authentication_sanitization_and_receipt(self):
-        import professor_compressor.application as app
-
         job = UploadJob(
             "telemetry-test",
             1,
@@ -43,12 +38,12 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             state=JobState.CLAIMED,
             claim_secret="test-secret",
         )
-        jobs[job.token] = job
+        self.runtime.jobs[job.token] = job
         url = "/upload/telemetry-test/telemetry"
         response = await self.client.post(url, json={"outcome": "delivered"})
         self.assertEqual(response.status, 403)
         headers = {"X-Upload-Session": "test-secret"}
-        with patch.object(app.logger, "info") as log:
+        with patch.object(logger, "info") as log:
             response = await self.client.post(
                 url,
                 headers=headers,
@@ -65,7 +60,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             payload = json.loads(log.call_args.args[1])
             self.assertEqual(payload["total_seconds"], 12.5)
             self.assertNotIn("private", str(payload))
-        app.record_outcome(job, 200, {"ok": True})
+        self.runtime.record_outcome(job, 200, {"ok": True})
         try:
             response = await self.client.post(
                 url, headers=headers, json={"outcome": "delivered"}
@@ -74,21 +69,14 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.post(url, headers=headers, data="x" * 5000)
             self.assertEqual(response.status, 400)
         finally:
-            app.outcomes.pop(job.token, None)
+            self.runtime.outcomes.pop(job.token, None)
 
     async def asyncSetUp(self) -> None:
-        import professor_compressor.application as application
-
-        for name in ("delivery_bytes_held", "active_relay_uploads"):
-            patcher = patch.object(application, name, 0)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        self.client = TestClient(TestServer(create_web_application()))
+        self.runtime = Runtime(Settings(discord_token=""))
+        self.client = TestClient(TestServer(self.runtime.create_web_application()))
         await self.client.start_server()
 
     async def asyncTearDown(self) -> None:
-        jobs.clear()
-        request_times.clear()
         await self.client.close()
 
     async def test_public_routes_and_security_headers(self) -> None:
@@ -137,7 +125,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(home_schema["@graph"][0]["@type"], "WebSite")
         self.assertEqual(
             home_schema["@graph"][0]["url"],
-            f"{PUBLIC_BASE_URL}/",
+            f"{self.runtime.settings.public_base_url}/",
         )
         self.assertIn("Add to Discord", home_html)
         self.assertIn("Written Guide", home_html)
@@ -206,8 +194,6 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("noindex", response.headers["X-Robots-Tag"])
 
     async def test_valid_result_batch_reaches_the_delivery_queue(self) -> None:
-        import professor_compressor.application as application
-
         token = "valid-session"
         job = UploadJob(
             token=token,
@@ -219,7 +205,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             state=JobState.CLAIMED,
             claim_secret="claim-secret",
         )
-        jobs[token] = job
+        self.runtime.jobs[token] = job
         queue = asyncio.Queue(maxsize=1)
         received = []
 
@@ -252,7 +238,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             content_type="video/mp4",
         )
         consumer = asyncio.create_task(accept_delivery())
-        with patch.object(application, "delivery_queue", queue):
+        with patch.object(self.runtime, "delivery_queue", queue):
             response = await self.client.post(
                 f"/upload/{token}",
                 data=form,
@@ -271,8 +257,6 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(job.state, JobState.DONE)
 
     async def test_rejects_oversized_caption_before_delivery(self) -> None:
-        import professor_compressor.application as application
-
         token = "long-caption"
         job = UploadJob(
             token=token,
@@ -284,14 +268,14 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             state=JobState.CLAIMED,
             claim_secret="claim-secret",
         )
-        jobs[token] = job
+        self.runtime.jobs[token] = job
         queue = asyncio.Queue(maxsize=1)
         form = FormData()
         form.add_field("caption", "x" * 1001)
         form.add_field(
             "clips", valid_test_mp4(), filename="clip.mp4", content_type="video/mp4"
         )
-        with patch.object(application, "delivery_queue", queue):
+        with patch.object(self.runtime, "delivery_queue", queue):
             response = await self.client.post(
                 f"/upload/{token}",
                 data=form,
@@ -312,7 +296,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             discord_limit=20_000_000,
             interaction=Mock(),
         )
-        jobs[token] = job
+        self.runtime.jobs[token] = job
         head = await self.client.head(f"/upload/{token}")
         self.assertNotIn("Set-Cookie", head.headers)
         self.assertIs(job.state, JobState.OPEN)
@@ -365,7 +349,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             claim_secret="delivery-secret",
             browser_secret="browser-secret",
         )
-        jobs[token] = job
+        self.runtime.jobs[token] = job
         response = await self.client.get(
             f"/upload/{token}",
             headers={"Cookie": "__Secure-pc-browser=browser-secret"},
@@ -380,7 +364,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_expired_claimed_link_does_not_reopen_with_cookie(self) -> None:
         token = "expired-refresh"
-        jobs[token] = UploadJob(
+        self.runtime.jobs[token] = UploadJob(
             token=token,
             user_id=123,
             channel_id=456,
@@ -396,7 +380,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             headers={"Cookie": "__Secure-pc-browser=browser-secret"},
         )
         self.assertIn("Private link unavailable", await response.text())
-        self.assertNotIn(token, jobs)
+        self.assertNotIn(token, self.runtime.jobs)
 
     async def test_packaged_browser_assets_are_available(self) -> None:
         expected_types = {
@@ -432,8 +416,6 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(expected_text, await response.text())
 
     async def test_rejected_uploads_release_resources_and_allow_retry(self) -> None:
-        import professor_compressor.application as app
-
         job = UploadJob(
             token="limits",
             user_id=1,
@@ -444,7 +426,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             state=JobState.CLAIMED,
             claim_secret="secret",
         )
-        jobs[job.token] = job
+        self.runtime.jobs[job.token] = job
         for limit, data, expected in (
             (1, valid_test_mp4(), 503),
             (10000, b"invalid", 400),
@@ -452,15 +434,19 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             form = FormData()
             form.add_field("clips", data, filename="clip.mp4")
             with (
-                patch.object(app, "delivery_queue", asyncio.Queue(1)),
-                patch.object(app, "MAX_DELIVERY_BUFFER_BYTES", limit),
+                patch.object(self.runtime, "delivery_queue", asyncio.Queue(1)),
+                patch.object(
+                    self.runtime,
+                    "settings",
+                    replace(self.runtime.settings, max_delivery_buffer_bytes=limit),
+                ),
             ):
                 response = await self.client.post(
                     "/upload/limits", data=form, headers={"X-Upload-Session": "secret"}
                 )
             self.assertEqual(response.status, expected)
-            self.assertEqual(app.delivery_bytes_held, 0)
-            self.assertEqual(app.active_relay_uploads, 0)
+            self.assertEqual(self.runtime.delivery_bytes_held, 0)
+            self.assertEqual(self.runtime.active_relay_uploads, 0)
             self.assertIs(job.state, JobState.CLAIMED)
 
     async def test_malformed_secret_and_failure_reports(self) -> None:
@@ -474,7 +460,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             state=JobState.CLAIMED,
             claim_secret="secret",
         )
-        jobs[job.token] = job
+        self.runtime.jobs[job.token] = job
         response = await self.client.post(
             "/upload/reports", headers={"X-Upload-Session": "é"}
         )

@@ -7,13 +7,15 @@ import discord
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor import application as app
+from professor_compressor import application
+from professor_compressor.application import Runtime
 from professor_compressor.assets import ASSET_PREFIX
+from professor_compressor.config import Settings
 from professor_compressor.delivery_policy import (
     bot_upload_limit,
     channel_delivery_problem,
 )
-from professor_compressor.domain import JobState, UploadJob
+from professor_compressor.domain import BrowserResult, JobState, UploadJob
 
 
 def mp4():
@@ -29,6 +31,7 @@ def mp4():
 
 class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.runtime = Runtime(Settings(discord_token=""))
         for key, value in {
             "jobs": {},
             "outcomes": {},
@@ -38,10 +41,10 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             "active_relay_uploads": 0,
             "draining": False,
         }.items():
-            patcher = patch.object(app, key, value)
+            patcher = patch.object(self.runtime, key, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        self.http = TestClient(TestServer(app.create_web_application()))
+        self.http = TestClient(TestServer(self.runtime.create_web_application()))
         await self.http.start_server()
         self.addAsyncCleanup(self.http.close)
 
@@ -58,7 +61,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             claimed_at=time.time(),
             guild_id=3,
         )
-        app.jobs[job.token] = job
+        self.runtime.jobs[job.token] = job
         return job
 
     async def post_video(self):
@@ -95,18 +98,24 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                     monotonic=Mock(side_effect=lambda ticks=ticks: next(ticks, 300))
                 )
                 with (
-                    patch.object(app, "session_access", return_value=(job, None)),
-                    patch.object(app, "rate_limit_retry_after", return_value=None),
-                    patch.object(app, "schedule_owner_alert"),
-                    patch.object(app, "time", clock),
+                    patch.object(
+                        self.runtime, "session_access", return_value=(job, None)
+                    ),
+                    patch.object(
+                        self.runtime, "rate_limit_retry_after", return_value=None
+                    ),
+                    patch.object(self.runtime, "schedule_owner_alert"),
+                    patch.object(application, "time", clock),
                 ):
-                    response = await asyncio.wait_for(app.receive_results(request), 1)
+                    response = await asyncio.wait_for(
+                        self.runtime.receive_results(request), 1
+                    )
                 self.assertEqual(response.status, 408)
                 self.assertIn("upload_timeout", response.text)
                 self.assertTrue(cancelled.is_set())
-                self.assertEqual(app.active_relay_uploads, 0)
-                self.assertEqual(app.delivery_bytes_held, 0)
-                self.assertTrue(app.delivery_queue.empty())
+                self.assertEqual(self.runtime.active_relay_uploads, 0)
+                self.assertEqual(self.runtime.delivery_bytes_held, 0)
+                self.assertTrue(self.runtime.delivery_queue.empty())
                 self.assertIs(job.state, JobState.CLAIMED)
 
     async def test_stalled_metadata_read_has_thirty_second_idle_timeout(self):
@@ -130,20 +139,20 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             return await actual_wait_for(awaitable, timeout)
 
         with (
-            patch.object(app, "session_access", return_value=(job, None)),
-            patch.object(app, "rate_limit_retry_after", return_value=None),
-            patch.object(app, "schedule_owner_alert"),
-            patch.object(app.asyncio, "wait_for", side_effect=wait_for),
+            patch.object(self.runtime, "session_access", return_value=(job, None)),
+            patch.object(self.runtime, "rate_limit_retry_after", return_value=None),
+            patch.object(self.runtime, "schedule_owner_alert"),
+            patch.object(asyncio, "wait_for", side_effect=wait_for),
         ):
-            response = await app.receive_results(request)
+            response = await self.runtime.receive_results(request)
         self.assertEqual(timeouts, [30, 30])
         self.assertEqual(response.status, 408)
-        self.assertEqual(app.active_relay_uploads, 0)
+        self.assertEqual(self.runtime.active_relay_uploads, 0)
 
     async def test_head_does_not_claim_or_extend_link(self):
         job = self.job(JobState.OPEN)
         expiry = job.expires_at
-        with patch.object(app, "schedule_owner_alert") as alert:
+        with patch.object(self.runtime, "schedule_owner_alert") as alert:
             response = await self.http.head("/upload/audit")
             self.assertEqual(response.status, 200)
             self.assertIs(job.state, JobState.OPEN)
@@ -170,12 +179,12 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         )
         request.headers = {}
         with (
-            patch.object(app, "session_access", return_value=(job, None)),
-            patch.object(app, "rate_limit_retry_after", return_value=None),
-            patch.object(app, "schedule_owner_alert"),
-            patch.object(app, "track") as tracked,
+            patch.object(self.runtime, "session_access", return_value=(job, None)),
+            patch.object(self.runtime, "rate_limit_retry_after", return_value=None),
+            patch.object(self.runtime, "schedule_owner_alert"),
+            patch.object(self.runtime, "track") as tracked,
         ):
-            response = await app.receive_results(request)
+            response = await self.runtime.receive_results(request)
         self.assertEqual(response.status, 503)
         self.assertIn("upload_connection_reset", response.text)
         self.assertNotIn("private", response.text)
@@ -188,16 +197,16 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(facts["received_bytes"], 7)
         self.assertEqual(facts["upload_attempts"], 1)
         self.assertGreaterEqual(facts["receive_idle_seconds"], 0)
-        self.assertEqual(app.active_relay_uploads, 0)
-        self.assertEqual(app.delivery_bytes_held, 0)
-        self.assertTrue(app.delivery_queue.empty())
+        self.assertEqual(self.runtime.active_relay_uploads, 0)
+        self.assertEqual(self.runtime.delivery_bytes_held, 0)
+        self.assertTrue(self.runtime.delivery_queue.empty())
         self.assertIs(job.state, JobState.CLAIMED)
 
     async def test_progress_reports_are_authenticated_bounded_and_deduplicated(self):
         job = self.job()
         url = "/upload/audit/progress"
         headers = {"X-Upload-Session": "private"}
-        with patch.object(app, "schedule_owner_alert") as alert:
+        with patch.object(self.runtime, "schedule_owner_alert") as alert:
             self.assertEqual(
                 (await self.http.post(url, json={"event": "started"})).status, 403
             )
@@ -296,10 +305,10 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_expiry_reports_last_confirmed_stage_once(self):
         job = self.job(JobState.OPEN)
-        with patch.object(app, "schedule_owner_alert") as alert:
+        with patch.object(self.runtime, "schedule_owner_alert") as alert:
             job.expires_at = time.time() - 1
-            self.assertIsNone(app.active_job(job.token))
-            app.discard_expired_jobs()
+            self.assertIsNone(self.runtime.active_job(job.token))
+            self.runtime.discard_expired_jobs()
             self.assertEqual(alert.call_count, 1)
             self.assertIn("never opened", alert.call_args.args[0])
 
@@ -307,14 +316,14 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             job.selected_count = 2
             job.compression_started = True
             job.expires_at = time.time() - 1
-            app.discard_expired_jobs()
+            self.runtime.discard_expired_jobs()
             self.assertEqual(alert.call_count, 2)
             self.assertIn("Compress was pressed", alert.call_args.args[0])
 
             job = self.job()
             job.browser_failure_reported = True
             job.expires_at = time.time() - 1
-            app.discard_expired_jobs()
+            self.runtime.discard_expired_jobs()
             self.assertEqual(alert.call_count, 2)
 
     async def test_pending_request_survives_http_wait_and_expiry(self):
@@ -328,13 +337,13 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             return "delivered once"
 
         with (
-            patch.object(app, "DELIVERY_RESPONSE_WAIT_SECONDS", 0.01),
+            patch.object(application, "DELIVERY_RESPONSE_WAIT_SECONDS", 0.01),
             patch.object(
-                app, "deliver_browser_results", AsyncMock(side_effect=deliver)
+                self.runtime, "deliver_browser_results", AsyncMock(side_effect=deliver)
             ) as sender,
-            patch.object(app, "schedule_owner_alert") as alert,
+            patch.object(self.runtime, "schedule_owner_alert") as alert,
         ):
-            worker = asyncio.create_task(app.delivery_worker(1))
+            worker = asyncio.create_task(self.runtime.delivery_worker(1))
             try:
                 response = await self.post_video()
                 self.assertEqual(response.status, 202)
@@ -346,12 +355,12 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 )
                 await started.wait()
                 job.expires_at = time.time() - 1
-                app.discard_expired_jobs()
-                self.assertIn(job.token, app.jobs)
+                self.runtime.discard_expired_jobs()
+                self.assertIn(job.token, self.runtime.jobs)
                 second = await self.post_video()
                 self.assertEqual(second.status, 202)
                 gate.set()
-                await asyncio.wait_for(app.delivery_queue.join(), 2)
+                await asyncio.wait_for(self.runtime.delivery_queue.join(), 2)
                 status = await self.http.get(
                     "/upload/audit/status", headers={"X-Upload-Session": "private"}
                 )
@@ -360,9 +369,9 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 duplicate = await self.post_video()
                 self.assertEqual(duplicate.status, 200)
                 sender.assert_awaited_once()
-                self.assertEqual(app.delivery_bytes_held, 0)
-                self.assertEqual(app.active_relay_uploads, 0)
-                self.assertNotIn(job.token, app.jobs)
+                self.assertEqual(self.runtime.delivery_bytes_held, 0)
+                self.assertEqual(self.runtime.active_relay_uploads, 0)
+                self.assertNotIn(job.token, self.runtime.jobs)
             finally:
                 worker.cancel()
                 await asyncio.gather(worker, return_exceptions=True)
@@ -371,13 +380,13 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.job()
         with (
             patch.object(
-                app,
+                self.runtime,
                 "deliver_browser_results",
                 AsyncMock(side_effect=RuntimeError("Permission changed")),
             ) as sender,
-            patch.object(app, "schedule_owner_alert"),
+            patch.object(self.runtime, "schedule_owner_alert"),
         ):
-            worker = asyncio.create_task(app.delivery_worker(1))
+            worker = asyncio.create_task(self.runtime.delivery_worker(1))
             try:
                 response = await self.post_video()
                 self.assertEqual(response.status, 502)
@@ -393,14 +402,16 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_receipts_expire_and_never_retain_media(self):
         job = self.job()
-        app.record_outcome(job, 200, {"ok": True, "message": "sent", "count": 1})
-        app.jobs.clear()
-        receipt = app.outcomes[job.token]
+        self.runtime.record_outcome(
+            job, 200, {"ok": True, "message": "sent", "count": 1}
+        )
+        self.runtime.jobs.clear()
+        receipt = self.runtime.outcomes[job.token]
         self.assertFalse(hasattr(receipt, "results"))
         self.assertNotIn("private", repr(receipt))
-        with patch.object(app.time, "time", return_value=receipt.expires_at + 1):
-            app.discard_expired_jobs()
-            self.assertFalse(app.outcomes)
+        with patch.object(time, "time", return_value=receipt.expires_at + 1):
+            self.runtime.discard_expired_jobs()
+            self.assertFalse(self.runtime.outcomes)
 
     async def test_heartbeat_requires_secret_and_cannot_revive_expired_job(self):
         job = self.job()
@@ -428,7 +439,8 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_readiness_checks_discord_workers_sync_and_drain(self):
         healthy_workers = [
-            Mock(done=Mock(return_value=False)) for _ in range(app.DELIVERY_WORKERS)
+            Mock(done=Mock(return_value=False))
+            for _ in range(self.runtime.settings.delivery_workers)
         ]
         for discord_ready, synced, workers, draining, expected in (
             (False, True, healthy_workers, False, 503),
@@ -438,10 +450,12 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             (True, True, healthy_workers, False, 200),
         ):
             with (
-                patch.object(app.client, "is_ready", return_value=discord_ready),
-                patch.object(app, "commands_synced", synced),
-                patch.object(app, "delivery_workers", workers),
-                patch.object(app, "draining", draining),
+                patch.object(
+                    self.runtime.client, "is_ready", return_value=discord_ready
+                ),
+                patch.object(self.runtime, "commands_synced", synced),
+                patch.object(self.runtime, "delivery_workers", workers),
+                patch.object(self.runtime, "draining", draining),
             ):
                 response = await self.http.get("/readyz")
                 self.assertEqual(response.status, expected)
@@ -461,15 +475,15 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_drain_waits_for_active_work_and_respects_deadline(self):
         job = self.job(JobState.QUEUED)
-        task = asyncio.create_task(app.drain_sessions(timeout=1))
+        task = asyncio.create_task(self.runtime.drain_sessions(timeout=1))
         await asyncio.sleep(0.01)
-        self.assertTrue(app.draining)
+        self.assertTrue(self.runtime.draining)
         self.assertFalse(task.done())
-        app.jobs.clear()
+        self.runtime.jobs.clear()
         await asyncio.wait_for(task, 1)
-        app.jobs[job.token] = job
+        self.runtime.jobs[job.token] = job
         started = time.monotonic()
-        await app.drain_sessions(timeout=0.01)
+        await self.runtime.drain_sessions(timeout=0.01)
         self.assertLess(time.monotonic() - started, 0.5)
 
     async def test_delivery_rechecks_permissions_and_current_limit(self):
@@ -481,19 +495,19 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             view_channel=True, send_messages=True, attach_files=False
         )
         with (
-            patch.object(app, "get_channel", AsyncMock(return_value=channel)),
-            patch.object(app.client, "get_guild", return_value=guild),
+            patch.object(self.runtime, "get_channel", AsyncMock(return_value=channel)),
+            patch.object(self.runtime.client, "get_guild", return_value=guild),
         ):
             with self.assertRaisesRegex(RuntimeError, "Attach Files"):
-                await app.deliver_browser_results(
-                    job, [app.BrowserResult("a.mp4", mp4())]
+                await self.runtime.deliver_browser_results(
+                    job, [BrowserResult("a.mp4", mp4())]
                 )
             channel.send.assert_not_awaited()
             channel.permissions_for.return_value.attach_files = True
-            with patch.object(app, "bot_upload_limit", return_value=1):
+            with patch.object(application, "bot_upload_limit", return_value=1):
                 with self.assertRaisesRegex(RuntimeError, "allowance changed"):
-                    await app.deliver_browser_results(
-                        job, [app.BrowserResult("a.mp4", mp4())]
+                    await self.runtime.deliver_browser_results(
+                        job, [BrowserResult("a.mp4", mp4())]
                     )
             channel.send.assert_not_awaited()
 

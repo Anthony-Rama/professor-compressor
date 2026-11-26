@@ -1,23 +1,21 @@
 import json
 import os
 import unittest
+from dataclasses import replace
 from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
 from professor_compressor.application import (
     JobState,
+    Runtime,
     UploadJob,
     botstats_report,
     compression_outcome_alert,
     guild_alert_message,
-    interaction_guild_name,
-    jobs,
-    on_guild_join,
-    receive_browser_failure,
-    report_dsc_stats,
     safe_alert_text,
 )
+from professor_compressor.config import Settings
 from professor_compressor.domain import BrowserResult, CompressionDiagnostic
 from professor_compressor.relay_diagnostics import (
     parse_compression_diagnostics,
@@ -26,6 +24,9 @@ from professor_compressor.relay_diagnostics import (
 
 
 class NotificationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = Runtime(Settings(discord_token=""))
+
     def test_telemetry_rejects_sensitive_and_unbounded_fields(self):
         self.assertEqual(
             sanitize_telemetry(
@@ -240,7 +241,9 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         interaction.guild.name = ""
         interaction.guild_id = 123
 
-        self.assertEqual(interaction_guild_name(interaction), "Unknown server")
+        self.assertEqual(
+            self.runtime.interaction_guild_name(interaction), "Unknown server"
+        )
 
     def test_success_alert_contains_delivery_metrics_without_filenames(self) -> None:
         job = UploadJob(
@@ -471,21 +474,19 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             guild_name="Test Server",
             username="clip_creator",
         )
-        jobs[job.token] = job
+        self.runtime.jobs[job.token] = job
         request = Mock()
         request.match_info = {"token": job.token}
         request.headers = {"X-Upload-Session": "claim-secret"}
         request.json = AsyncMock(return_value={"stage": "Browser compression<script>"})
         request.clone.return_value = request
         try:
-            with patch(
-                "professor_compressor.application.schedule_owner_alert"
-            ) as schedule_alert:
-                response = await receive_browser_failure(request)
+            with patch.object(self.runtime, "schedule_owner_alert") as schedule_alert:
+                response = await self.runtime.receive_browser_failure(request)
 
             self.assertEqual(response.status, 200)
             self.assertIs(job.state, JobState.CLAIMED)
-            self.assertIn(job.token, jobs)
+            self.assertIn(job.token, self.runtime.jobs)
             self.assertTrue(job.browser_failure_reported)
             alert = schedule_alert.call_args.args[0]
             self.assertIn("Compression failed", alert)
@@ -494,7 +495,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Browser compressionscript", alert)
             self.assertNotIn("<script>", alert)
         finally:
-            jobs.pop(job.token, None)
+            self.runtime.jobs.pop(job.token, None)
 
     async def test_browser_failure_alert_is_only_sent_once(self) -> None:
         job = UploadJob(
@@ -508,19 +509,17 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             claim_secret="claim-secret",
             browser_failure_reported=True,
         )
-        jobs[job.token] = job
+        self.runtime.jobs[job.token] = job
         request = Mock()
         request.match_info = {"token": job.token}
         request.headers = {"X-Upload-Session": "claim-secret"}
         request.json = AsyncMock(return_value={"stage": "Browser compression"})
         request.clone.return_value = request
         try:
-            with patch(
-                "professor_compressor.application.schedule_owner_alert"
-            ) as schedule_alert:
-                response = await receive_browser_failure(request)
+            with patch.object(self.runtime, "schedule_owner_alert") as schedule_alert:
+                response = await self.runtime.receive_browser_failure(request)
         finally:
-            jobs.pop(job.token, None)
+            self.runtime.jobs.pop(job.token, None)
 
         self.assertEqual(response.status, 200)
         schedule_alert.assert_not_called()
@@ -532,14 +531,10 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         guild.member_count = 42
 
         with (
-            patch(
-                "professor_compressor.application.schedule_owner_alert"
-            ) as schedule_alert,
-            patch(
-                "professor_compressor.application.schedule_dsc_stats_update"
-            ) as schedule_stats,
+            patch.object(self.runtime, "schedule_owner_alert") as schedule_alert,
+            patch.object(self.runtime, "schedule_dsc_stats_update") as schedule_stats,
         ):
-            await on_guild_join(guild)
+            await self.runtime.on_guild_join(guild)
 
         schedule_alert.assert_called_once()
         schedule_stats.assert_called_once_with()
@@ -560,14 +555,18 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         session_context.__aenter__.return_value = session
 
         with (
-            patch("professor_compressor.application.client", mock_client),
-            patch("professor_compressor.application.DSC_API_TOKEN", "test-api-token"),
+            patch.object(self.runtime, "client", mock_client),
+            patch.object(
+                self.runtime,
+                "settings",
+                replace(self.runtime.settings, dsc_api_token="test-api-token"),
+            ),
             patch(
                 "professor_compressor.application.ClientSession",
                 return_value=session_context,
             ),
         ):
-            self.assertTrue(await report_dsc_stats())
+            self.assertTrue(await self.runtime.report_dsc_stats())
 
         session.post.assert_called_once()
         request = session.post.call_args

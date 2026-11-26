@@ -27,7 +27,8 @@ os.environ.update(
 
 from aiohttp import BasicAuth, ClientSession, web
 
-from professor_compressor import application as app
+from professor_compressor.application import Runtime
+from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
 
 SESSION_ID = "0123456789abcdef0123456789abcdef"
@@ -35,6 +36,7 @@ REFERENCE = "PC-0123456789AB"
 
 
 async def main():
+    app = Runtime(Settings.from_environment(require_token=False))
     application = app.create_web_application()
     runner = web.AppRunner(application, access_log=None)
     await runner.setup()
