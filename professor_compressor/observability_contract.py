@@ -38,6 +38,27 @@ EVENTS = frozenset(
         "file_received",
     }
 )
+# Session status recorded after each event. Changing a value changes how
+# existing stored history is summarized, so treat this as part of the schema.
+EVENT_STATUSES = {
+    "created": "created",
+    "opened": "opened",
+    "selected": "selected",
+    "started": "processing",
+    "client_failed": "client_failed",
+    "cancelled": "cancelled",
+    "expired": "expired",
+    "replaced": "replaced",
+    "interrupted": "unknown",
+    "upload_started": "uploading",
+    "received": "queued",
+    "delivery_started": "delivering",
+    "delivered": "delivered",
+    "delivery_failed": "delivery_failed",
+    "upload_failed": "upload_failed",
+    "installed": "installed",
+    "removed": "removed",
+}
 CLIENT_EVENTS = frozenset(
     {
         "stage_started",

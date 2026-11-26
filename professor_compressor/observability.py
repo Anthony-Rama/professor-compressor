@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .observability_contract import (
     CLIENT_EVENTS,
+    EVENT_STATUSES,
     EVENTS,
     MAX_FILE_INDEX,
     diagnostic_reference,
@@ -212,43 +213,13 @@ class EventStore:
             (event_id, now, session_id, run_id, index, event, source, json.dumps(data)),
         )
         if cursor.rowcount == 0:
+            # Already stored. A repeated browser failure report may add detail.
             if event == "client_failed":
-                previous = connection.execute(
-                    "SELECT data FROM events WHERE session_id=? AND event_id=? AND event='client_failed' AND run_id=?",
-                    (session_id, event_id, run_id),
-                ).fetchone()
-                if previous:
-                    existing = json.loads(previous[0])
-                    merged = {**existing, **data}
-                    if data.get("error_code") == "UNKNOWN" and existing.get(
-                        "error_code"
-                    ):
-                        merged["error_code"] = existing["error_code"]
-                    connection.execute(
-                        "UPDATE events SET data=?,file_index=CASE WHEN ?>0 THEN ? ELSE file_index END WHERE session_id=? AND event_id=?",
-                        (json.dumps(merged), index, index, session_id, event_id),
-                    )
+                self._merge_failure_report(
+                    connection, session_id, event_id, run_id, index, data
+                )
             return
-        statuses = {
-            "created": "created",
-            "opened": "opened",
-            "selected": "selected",
-            "started": "processing",
-            "client_failed": "client_failed",
-            "cancelled": "cancelled",
-            "expired": "expired",
-            "replaced": "replaced",
-            "interrupted": "unknown",
-            "upload_started": "uploading",
-            "received": "queued",
-            "delivery_started": "delivering",
-            "delivered": "delivered",
-            "delivery_failed": "delivery_failed",
-            "upload_failed": "upload_failed",
-            "installed": "installed",
-            "removed": "removed",
-        }
-        status = statuses.get(event)
+        status = EVENT_STATUSES.get(event)
         current = connection.execute(
             "SELECT status,started,active_run FROM sessions WHERE id=?", (session_id,)
         ).fetchone()
@@ -300,6 +271,33 @@ class EventStore:
                 session_id,
             ),
         )
+
+    def _merge_failure_report(
+        self,
+        connection: sqlite3.Connection,
+        session_id: str,
+        event_id: str,
+        run_id: str,
+        index: int,
+        data: dict,
+    ) -> None:
+        """Fold a repeated client_failed report into the stored event.
+
+        A later generic UNKNOWN code never replaces a specific one.
+        """
+        previous = connection.execute(
+            "SELECT data FROM events WHERE session_id=? AND event_id=? AND event='client_failed' AND run_id=?",
+            (session_id, event_id, run_id),
+        ).fetchone()
+        if previous:
+            existing = json.loads(previous[0])
+            merged = {**existing, **data}
+            if data.get("error_code") == "UNKNOWN" and existing.get("error_code"):
+                merged["error_code"] = existing["error_code"]
+            connection.execute(
+                "UPDATE events SET data=?,file_index=CASE WHEN ?>0 THEN ? ELSE file_index END WHERE session_id=? AND event_id=?",
+                (json.dumps(merged), index, index, session_id, event_id),
+            )
 
     def _prune(self, connection: sqlite3.Connection) -> None:
         connection.execute(
