@@ -5,10 +5,10 @@ from email.utils import format_datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from professor_compressor.application import Runtime
-from professor_compressor.background_tasks import BackgroundTasks
+from professor_compressor.app.runtime import Runtime
+from professor_compressor.app.tasks import BackgroundTasks
 from professor_compressor.config import Settings
-from professor_compressor.topgg import METRICS_URL, TopGGStats, retry_delay
+from professor_compressor.integrations.topgg import METRICS_URL, TopGGStats, retry_delay
 
 
 class TopGGTests(unittest.IsolatedAsyncioTestCase):
@@ -37,7 +37,7 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_v1_payload_contains_only_aggregate_count(self):
         factory, session = self.session()
-        with patch("professor_compressor.topgg.ClientSession", factory):
+        with patch("professor_compressor.integrations.topgg.ClientSession", factory):
             self.assertEqual(await self.stats.publish(), 60)
         session.patch.assert_called_once_with(
             METRICS_URL,
@@ -50,12 +50,12 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
     async def test_zero_servers_is_reported(self):
         self.client.guilds = []
         factory, session = self.session()
-        with patch("professor_compressor.topgg.ClientSession", factory):
+        with patch("professor_compressor.integrations.topgg.ClientSession", factory):
             await self.stats.publish()
         self.assertEqual(session.patch.call_args.kwargs["json"], {"server_count": 0})
 
     async def test_disabled_or_disconnected_never_calls_api(self):
-        with patch("professor_compressor.topgg.ClientSession") as factory:
+        with patch("professor_compressor.integrations.topgg.ClientSession") as factory:
             self.stats.token = ""
             await self.stats.publish()
             await self.stats.run()
@@ -73,14 +73,14 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
         for status in (301, 401, 403, 500):
             factory, _ = self.session(status)
             with (
-                patch("professor_compressor.topgg.ClientSession", factory),
+                patch("professor_compressor.integrations.topgg.ClientSession", factory),
                 self.assertLogs("professor_compressor.topgg", level="WARNING") as logs,
             ):
                 self.assertEqual(await self.stats.publish(), 3600)
             self.assertNotIn("private-test-token", str(logs.output))
         with (
             patch(
-                "professor_compressor.topgg.ClientSession",
+                "professor_compressor.integrations.topgg.ClientSession",
                 side_effect=TimeoutError("private-test-token"),
             ),
             self.assertLogs("professor_compressor.topgg", level="WARNING") as logs,
@@ -91,7 +91,7 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
     async def test_rate_limit_honors_retry_after(self):
         factory, _ = self.session(429, {"Retry-After": "7200"})
         with (
-            patch("professor_compressor.topgg.ClientSession", factory),
+            patch("professor_compressor.integrations.topgg.ClientSession", factory),
             self.assertLogs("professor_compressor.topgg", level="WARNING"),
         ):
             self.assertEqual(await self.stats.publish(), 7200)
@@ -102,7 +102,7 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancellation_propagates(self):
         with patch(
-            "professor_compressor.topgg.ClientSession",
+            "professor_compressor.integrations.topgg.ClientSession",
             side_effect=asyncio.CancelledError,
         ):
             with self.assertRaises(asyncio.CancelledError):
@@ -122,7 +122,10 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(self.stats, "publish", AsyncMock(side_effect=publish)) as post,
-            patch("professor_compressor.topgg.asyncio.sleep", side_effect=sleep),
+            patch(
+                "professor_compressor.integrations.topgg.asyncio.sleep",
+                side_effect=sleep,
+            ),
         ):
             await self.stats.run()
         self.assertEqual(post.await_count, 1)
@@ -139,8 +142,14 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(self.stats, "publish", AsyncMock(return_value=60)) as post,
-            patch("professor_compressor.topgg.asyncio.wait_for", side_effect=wait_for),
-            patch("professor_compressor.topgg.asyncio.sleep", side_effect=sleep),
+            patch(
+                "professor_compressor.integrations.topgg.asyncio.wait_for",
+                side_effect=wait_for,
+            ),
+            patch(
+                "professor_compressor.integrations.topgg.asyncio.sleep",
+                side_effect=sleep,
+            ),
         ):
             await self.stats.run()
         self.client.wait_until_ready.assert_awaited_once()

@@ -1,7 +1,10 @@
 import tracemalloc
 import unittest
 
-from professor_compressor.media_validation import MAX_FTYP_BYTES, valid_mp4_signature
+from professor_compressor.relay.media_validation import (
+    MAX_FTYP_BYTES,
+    valid_mp4_signature,
+)
 
 
 def box(kind: bytes, payload: bytes = b"") -> bytes:

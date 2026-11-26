@@ -9,8 +9,8 @@ import discord
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor.application import Runtime
-from professor_compressor.background_tasks import BackgroundTasks
+from professor_compressor.app.runtime import Runtime
+from professor_compressor.app.tasks import BackgroundTasks
 from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
 

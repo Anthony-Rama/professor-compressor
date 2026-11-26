@@ -1,0 +1,331 @@
+"""Privacy-safe formatting for operator notifications and status output."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Iterable
+
+import discord
+
+from ..config import MIB
+from ..domain import BrowserResult, CompressionDiagnostic, UploadJob
+
+DISCORD_MESSAGE_LIMIT = 2000
+
+INPUT_FORMAT_LABELS = {
+    "mp4": "MP4",
+    "mov": "MOV",
+    "3gp": "3GP",
+    "webm": "WebM",
+    "mkv": "MKV",
+    "webm/mkv": "WebM/MKV",
+    "avi": "AVI",
+    "ogg": "Ogg",
+    "flv": "FLV",
+    "asf/wmv": "ASF/WMV",
+    "mpeg": "MPEG",
+    "ts": "TS",
+    "m2ts": "M2TS",
+}
+
+
+def safe_alert_text(value: str, limit: int = 100) -> str:
+    """Escape untrusted Discord names before placing them in Markdown."""
+    escaped = discord.utils.escape_markdown(value.replace("`", "'"))
+    return discord.utils.escape_mentions(escaped)[:limit]
+
+
+def encoding_time(seconds: float) -> str:
+    """Format measured encoder wall time to tenths, including minute carry."""
+    minutes, tenths = divmod(round(seconds * 10), 600)
+    return f"{minutes}:{tenths / 10:04.1f}"
+
+
+def identity_lines(
+    *, guild_name: str, guild_id: object, username: str, user_id: int
+) -> list[str]:
+    """Server and member lines shared by session alerts, with names escaped."""
+    return [
+        f"Server: **{safe_alert_text(guild_name)}**",
+        f"Server ID: `{guild_id}`",
+        f"Username: **{safe_alert_text('@' + username)}**",
+        f"User ID: `{user_id}`",
+    ]
+
+
+def job_identity_lines(job: UploadJob) -> list[str]:
+    return identity_lines(
+        guild_name=job.guild_name or "Unknown server",
+        guild_id=job.guild_id if job.guild_id is not None else "Unknown",
+        username=job.username or "unknown",
+        user_id=job.user_id,
+    )
+
+
+def guild_alert_message(
+    action: str,
+    guild: discord.Guild,
+    *,
+    server_count: int,
+) -> str:
+    member_count = guild.member_count if guild.member_count is not None else "Unknown"
+    return (
+        f"{action}\n"
+        f"Server: **{safe_alert_text(guild.name)}**\n"
+        f"Server ID: `{guild.id}`\n"
+        f"Members: `{member_count}`\n"
+        f"Connected servers: `{server_count}`"
+    )
+
+
+def compression_outcome_alert(
+    job: UploadJob,
+    *,
+    succeeded: bool,
+    file_count: int = 0,
+    total_bytes: int = 0,
+    stage: str | None = None,
+    elapsed_seconds: int | None = None,
+    results: list[BrowserResult] | None = None,
+    diagnostics: list[CompressionDiagnostic] | None = None,
+    effective_target: int | None = None,
+    unchanged_limit: int | None = None,
+    timing: dict | None = None,
+    error_code: str | None = None,
+) -> str:
+    """Build an outcome alert without filenames or user mentions."""
+    if elapsed_seconds is None:
+        started_at = job.claimed_at or job.created_at
+        elapsed_seconds = max(0, int(time.time() - started_at))
+    outcome = (
+        "✅ **Compression delivered successfully**"
+        if succeeded
+        else "❌ **Compression failed**"
+    )
+    lines = [
+        outcome,
+        *job_identity_lines(job),
+        f"Files: `{file_count}`",
+        f"Reference: `{job.diagnostic_reference}`",
+    ]
+    has_diagnostics = bool(
+        results
+        and diagnostics
+        and len(results) == len(diagnostics)
+        and effective_target
+        and effective_target > 0
+        and unchanged_limit
+        and unchanged_limit > 0
+    )
+    if total_bytes and (file_count != 1 or not has_diagnostics):
+        lines.append(f"Finished size: `{total_bytes / MIB:.1f} MiB`")
+    if has_diagnostics:
+        assert results and diagnostics and effective_target and unchanged_limit
+        lines.extend(
+            measurement_lines(
+                job, results, diagnostics, effective_target, unchanged_limit
+            )
+        )
+    lines.extend(context_lines(stage, error_code, timing, diagnostics))
+    lines.append(f"Elapsed: `{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}`")
+    message = "\n".join(lines)
+    if len(message) > DISCORD_MESSAGE_LIMIT:
+        # Detailed per-file measurements remain in structured logs.
+        lines = [line for line in lines if not line.startswith("File ")]
+        lines.insert(6, "Per-file diagnostics are available in the server logs.")
+    return "\n".join(lines)
+
+
+def measurement_lines(
+    job: UploadJob,
+    results: list[BrowserResult],
+    diagnostics: list[CompressionDiagnostic],
+    effective_target: int,
+    unchanged_limit: int,
+) -> list[str]:
+    """Targets and per-file size, format, and encoding measurements."""
+    lines = [f"Discord limit: `{job.discord_limit / MIB:.1f} MiB`"]
+    if len(results) > 1:
+        lines.append(f"Encoding target per file: `{effective_target / MIB:.1f} MiB`")
+        lines.append(f"Conversion limit per file: `{unchanged_limit / MIB:.1f} MiB`")
+    else:
+        file_target = (
+            effective_target
+            if diagnostics[0].video_kbps is not None
+            else unchanged_limit
+        )
+        lines.append(f"Effective target per file: `{file_target / MIB:.1f} MiB`")
+    for index, (result, diagnostic) in enumerate(
+        zip(results, diagnostics, strict=True), 1
+    ):
+        file_target = (
+            effective_target if diagnostic.video_kbps is not None else unchanged_limit
+        )
+        if len(results) > 1:
+            lines.append(batch_file_line(index, result, diagnostic, file_target))
+        else:
+            lines.extend(single_file_lines(result, diagnostic, file_target))
+    if all(item.encoding_seconds is not None for item in diagnostics):
+        total_encoding = sum(item.encoding_seconds for item in diagnostics)
+        lines.append(
+            f"Compression time (encoding only): `{encoding_time(total_encoding)}`"
+        )
+    return lines
+
+
+def size_change_percent(
+    result: BrowserResult, diagnostic: CompressionDiagnostic
+) -> float:
+    return (len(result.data) / diagnostic.input_bytes - 1) * 100
+
+
+def batch_file_line(
+    index: int,
+    result: BrowserResult,
+    diagnostic: CompressionDiagnostic,
+    file_target: int,
+) -> str:
+    """One compact line per file when a batch holds several clips."""
+    output_mib = len(result.data) / MIB
+    input_mib = diagnostic.input_bytes / MIB
+    input_format = INPUT_FORMAT_LABELS.get(diagnostic.input_format or "")
+    size_change = size_change_percent(result, diagnostic)
+    size_description = (
+        f"{-size_change:.1f}% smaller"
+        if size_change <= 0
+        else f"{size_change:.1f}% larger"
+    )
+    utilization = len(result.data) / file_target * 100
+    detail = (
+        ("stream-copied to MP4" if diagnostic.duration_seconds else "already fit")
+        if diagnostic.copied
+        else (
+            f"{diagnostic.duration_seconds:.1f}s clip, "
+            + (
+                f"{diagnostic.video_kbps} kbps"
+                if diagnostic.video_kbps
+                else "quality MP4 conversion"
+            )
+        )
+    )
+    return (
+        f"File {index}: "
+        + (f"{input_format}→MP4 · " if input_format else "")
+        + f"`{input_mib:.1f} → {output_mib:.1f} MiB`"
+        + f" · `{size_description}`"
+        f" · `{utilization:.1f}% target` · {detail}"
+        + (
+            f" · encode `{encoding_time(diagnostic.encoding_seconds)}`"
+            if diagnostic.encoding_seconds is not None
+            else ""
+        )
+    )
+
+
+def single_file_lines(
+    result: BrowserResult, diagnostic: CompressionDiagnostic, file_target: int
+) -> list[str]:
+    """Detailed lines for a batch with exactly one clip."""
+    output_mib = len(result.data) / MIB
+    input_mib = diagnostic.input_bytes / MIB
+    input_format = INPUT_FORMAT_LABELS.get(diagnostic.input_format or "")
+    size_change = size_change_percent(result, diagnostic)
+    utilization = len(result.data) / file_target * 100
+    lines = []
+    if input_format:
+        lines.append(f"Format: `{input_format} → MP4`")
+    lines.append(f"Input size: `{input_mib:.1f} MiB`")
+    if diagnostic.copied:
+        lines.append(
+            "Encoding: `stream-copied to MP4 (no re-encode)`"
+            if diagnostic.duration_seconds
+            else "Encoding: `skipped (MP4 already fit)`"
+        )
+    else:
+        lines.append(f"Detected duration: `{diagnostic.duration_seconds:.1f} sec`")
+        if diagnostic.video_kbps is None:
+            lines.append("Encoding: `quality-based MP4 conversion (no size target)`")
+        else:
+            lines.append(f"Calculated video bitrate: `{diagnostic.video_kbps} kbps`")
+    lines.append(f"Actual output: `{output_mib:.1f} MiB`")
+    if size_change <= 0:
+        lines.append(f"Size reduction: `{-size_change:.1f}%`")
+    else:
+        lines.append(f"Size increase: `{size_change:.1f}%`")
+    lines.append(f"Target utilization: `{utilization:.1f}%`")
+    return lines
+
+
+def context_lines(
+    stage: str | None,
+    error_code: str | None,
+    timing: dict | None,
+    diagnostics: list[CompressionDiagnostic] | None,
+) -> list[str]:
+    """Failure stage, error code, delivery timing, and browser engine facts."""
+    lines = []
+    if stage:
+        lines.append(f"Stage: `{safe_alert_text(stage, limit=60)}`")
+    if error_code:
+        lines.append(f"Error code: `{safe_alert_text(error_code, limit=40)}`")
+    if timing:
+        lines.append(
+            "Receive / queue / Discord: "
+            + " / ".join(
+                encoding_time(timing[key])
+                for key in (
+                    "relay_receive_seconds",
+                    "queue_seconds",
+                    "discord_delivery_seconds",
+                )
+            )
+        )
+    if diagnostics and diagnostics[0].telemetry:
+        batch = diagnostics[0].telemetry
+        lines.append(
+            f"Engine: {batch.get('engine', 'unknown')} "
+            f"· load {batch.get('engine_seconds', 0):.1f}s "
+            f"· hidden before upload {batch.get('hidden_seconds', 0):.1f}s"
+        )
+        if "pre_upload_seconds" in batch:
+            lines.append(
+                f"Before upload: {batch['pre_upload_seconds']:.1f}s "
+                f"· upload attempt {batch.get('upload_attempts', 1)}"
+            )
+    return lines
+
+
+def compression_progress_alert(job: UploadJob, title: str, detail: str) -> str:
+    """Report a confirmed session milestone without media or session secrets."""
+    return "\n".join(
+        (
+            f"{title}",
+            *job_identity_lines(job),
+            f"Reference: `{job.diagnostic_reference}`",
+            detail,
+        )
+    )
+
+
+def botstats_report(
+    guilds: Iterable[discord.Guild],
+    snapshot: dict[str, int],
+) -> str:
+    sorted_guilds = sorted(guilds, key=lambda guild: guild.name.casefold())
+    lines = [
+        "**Professor Compressor status**",
+        f"Connected servers: **{len(sorted_guilds)}**",
+        f"Sessions since restart: **{snapshot['sessions_created']}**",
+        f"Successful deliveries since restart: **{snapshot['deliveries_succeeded']}**",
+        "",
+        "**Live server list**",
+    ]
+    for guild in sorted_guilds:
+        member_count = (
+            guild.member_count if guild.member_count is not None else "Unknown"
+        )
+        lines.append(
+            f"- {safe_alert_text(guild.name)} | ID: `{guild.id}` | "
+            f"Members: `{member_count}`"
+        )
+    return "\n".join(lines)

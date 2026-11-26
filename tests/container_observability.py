@@ -27,7 +27,7 @@ os.environ.update(
 
 from aiohttp import BasicAuth, ClientSession, web
 
-from professor_compressor.application import Runtime
+from professor_compressor.app.runtime import Runtime
 from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
 

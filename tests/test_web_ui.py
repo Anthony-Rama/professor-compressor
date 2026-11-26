@@ -8,9 +8,12 @@ from unittest.mock import AsyncMock, Mock
 
 from aiohttp import web
 
-from professor_compressor.web_pages import page
-from professor_compressor.web_security import browser_security_headers
-from professor_compressor.web_ui import browser_compressor, browser_delivery_status
+from professor_compressor.web.pages.compressor import (
+    browser_compressor,
+    browser_delivery_status,
+)
+from professor_compressor.web.pages.document import page
+from professor_compressor.web.security import browser_security_headers
 
 
 def page_config(document: str, element_id: str) -> dict:

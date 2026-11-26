@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
-from professor_compressor.application import Runtime
+from professor_compressor.app.runtime import Runtime
+from professor_compressor.bot.messages import (
+    botstats_report,
+    compression_outcome_alert,
+    guild_alert_message,
+    safe_alert_text,
+)
 from professor_compressor.config import Settings
 from professor_compressor.domain import (
     BrowserResult,
@@ -14,13 +20,7 @@ from professor_compressor.domain import (
     JobState,
     UploadJob,
 )
-from professor_compressor.notifications import (
-    botstats_report,
-    compression_outcome_alert,
-    guild_alert_message,
-    safe_alert_text,
-)
-from professor_compressor.relay_diagnostics import (
+from professor_compressor.relay.diagnostics import (
     parse_compression_diagnostics,
     sanitize_telemetry,
 )
@@ -102,8 +102,8 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         import asyncio
         import time
 
-        from professor_compressor.delivery_worker import log_delivery_diagnostics
         from professor_compressor.domain import DeliveryRequest
+        from professor_compressor.relay.worker import log_delivery_diagnostics
 
         job = UploadJob("x", 1, 2, 9999999999, 20 * 1024 * 1024, Mock())
         delivery = DeliveryRequest(
@@ -112,7 +112,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             asyncio.get_event_loop().create_future(),
             diagnostics=[CompressionDiagnostic(100, 86400, 100, False, "mp4", 1e-320)],
         )
-        with patch("professor_compressor.delivery_worker.logger.info") as log:
+        with patch("professor_compressor.relay.worker.logger.info") as log:
             log_delivery_diagnostics(delivery, time.monotonic(), "delivered")
         payload = json.loads(log.call_args.args[1])
         self.assertNotIn("encoding_speed", payload["files"][0])
@@ -569,7 +569,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
                 replace(self.runtime.settings, dsc_api_token="test-api-token"),
             ),
             patch(
-                "professor_compressor.dsc.ClientSession",
+                "professor_compressor.integrations.dsc.ClientSession",
                 return_value=session_context,
             ),
         ):

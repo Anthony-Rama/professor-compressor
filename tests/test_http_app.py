@@ -9,10 +9,10 @@ from xml.etree import ElementTree
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor.application import Runtime
-from professor_compressor.browser_reports import logger
+from professor_compressor.app.runtime import Runtime
 from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
+from professor_compressor.web.report_routes import logger
 
 
 def box(kind: bytes, payload: bytes = b"") -> bytes:

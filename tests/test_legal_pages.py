@@ -1,7 +1,10 @@
 import unittest
 
-from professor_compressor.legal_pages import privacy_policy_html, terms_of_service_html
-from professor_compressor.web_pages import public_document_response
+from professor_compressor.web.pages.document import public_document_response
+from professor_compressor.web.pages.legal import (
+    privacy_policy_html,
+    terms_of_service_html,
+)
 
 
 class LegalPageTests(unittest.TestCase):

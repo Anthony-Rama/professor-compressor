@@ -10,7 +10,7 @@ from enum import StrEnum
 
 import discord
 
-from .observability_contract import diagnostic_reference
+from .observability.contract import diagnostic_reference
 
 
 class JobState(StrEnum):

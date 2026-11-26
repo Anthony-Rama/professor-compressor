@@ -12,12 +12,12 @@ from unittest.mock import Mock, patch
 from aiohttp import BasicAuth
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor.application import Runtime
+from professor_compressor.app.runtime import Runtime
 from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
-from professor_compressor.observability import EventStore
-from professor_compressor.observability_contract import sanitize
-from professor_compressor.session_routes import (
+from professor_compressor.observability.contract import sanitize
+from professor_compressor.observability.store import EventStore
+from professor_compressor.web.session_routes import (
     RESUME_COOKIE_NAME,
     browser_cookie_matches,
 )
@@ -297,7 +297,7 @@ class StoreTests(unittest.TestCase):
 
     def test_daily_activity_uses_event_time_not_session_creation(self):
         with patch(
-            "professor_compressor.observability.time.time",
+            "professor_compressor.observability.store.time.time",
             return_value=time.time() - 2 * 86400,
         ):
             self.emit("created")
@@ -648,7 +648,8 @@ class StoreTests(unittest.TestCase):
                 worker, "_save", side_effect=sqlite3.OperationalError("database full")
             ),
             patch(
-                "professor_compressor.observability.time.monotonic", side_effect=[0, 61]
+                "professor_compressor.observability.store.time.monotonic",
+                side_effect=[0, 61],
             ),
         ):
             worker._worker()

@@ -7,15 +7,16 @@ import discord
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor import bot_delivery, upload_relay
-from professor_compressor.application import Runtime
-from professor_compressor.assets import ASSET_PREFIX
-from professor_compressor.config import Settings
-from professor_compressor.delivery_policy import (
+from professor_compressor.app.runtime import Runtime
+from professor_compressor.bot import delivery as bot_delivery
+from professor_compressor.bot.delivery_policy import (
     bot_upload_limit,
     channel_delivery_problem,
 )
+from professor_compressor.config import Settings
 from professor_compressor.domain import BrowserResult, JobState, UploadJob
+from professor_compressor.relay import upload as upload_relay
+from professor_compressor.web.assets import ASSET_PREFIX
 
 
 def mp4():
