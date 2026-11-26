@@ -559,18 +559,18 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         session_context.__aenter__.return_value = session
 
         with (
-            patch.object(self.runtime, "client", mock_client),
+            patch.object(self.runtime.dsc_stats, "client", mock_client),
             patch.object(
-                self.runtime,
+                self.runtime.dsc_stats,
                 "settings",
                 replace(self.runtime.settings, dsc_api_token="test-api-token"),
             ),
             patch(
-                "professor_compressor.application.ClientSession",
+                "professor_compressor.dsc.ClientSession",
                 return_value=session_context,
             ),
         ):
-            self.assertTrue(await self.runtime.report_dsc_stats())
+            self.assertTrue(await self.runtime.dsc_stats.report())
 
         session.post.assert_called_once()
         request = session.post.call_args

@@ -1,25 +1,23 @@
 import asyncio
 import io
-import ipaddress
 import logging
 import math
 import os
 import signal
 import time
-from collections import deque
 from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
 import certifi
 import discord
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import web
 from discord import app_commands
 
 from . import browser_reports, discord_commands, sessions
+from .alerts import OwnerAlerts
 from .assets import ASSET_PACKAGES, ASSET_PREFIX
 from .background_tasks import BackgroundTasks
-from .branding import USER_AGENT
 from .config import MIB, Settings
 from .dashboard import register_dashboard
 from .delivery_policy import (
@@ -36,41 +34,25 @@ from .domain import (
     JobState,
     UploadJob,
 )
+from .dsc import DscStats
 from .metrics import RuntimeMetrics
 from .notifications import (
     guild_alert_message,
 )
 from .observability import EventStore
 from .paths import NODE_MODULES, STATIC
+from .rate_limit import RateLimiter, request_ip
 from .topgg import TopGGStats
+from .tracking import SessionTracker
 from .upload_relay import RelayState, receive_results
 from .web_pages import browser_security_headers, register_public_pages
 
 logger = logging.getLogger(__name__)
 
-ALERT_TIMEOUT_SECONDS = 5
-DSC_TIMEOUT_SECONDS = 10
-RATE_LIMIT_WINDOW_SECONDS = 60
 EXPIRY_SWEEP_SECONDS = 60
 COMMAND_SYNC_RETRY_SECONDS = 30
 # Shutdown grace for in-flight work; compose allows 150 s before SIGKILL.
 DRAIN_TIMEOUT_SECONDS = 120
-
-
-def request_ip(request: web.Request) -> str:
-    """Use Caddy's forwarded address only when the direct peer is private."""
-    peer = request.remote or "unknown"
-    try:
-        trusted_proxy = ipaddress.ip_address(peer).is_private
-    except ValueError:
-        trusted_proxy = False
-    forwarded = request.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
-    if trusted_proxy and forwarded:
-        try:
-            return str(ipaddress.ip_address(forwarded))
-        except ValueError:
-            pass
-    return peer
 
 
 def run() -> None:
@@ -102,7 +84,6 @@ class Runtime:
         self.jobs: dict[str, UploadJob] = {}
         self.outcomes: dict[str, DeliveryOutcome] = {}
         self.last_job_at: dict[tuple[int, int], float] = {}
-        self.request_times: dict[tuple[str, str], deque[float]] = {}
         self.diagnostic_event_counts: dict[str, int] = {}
         self.relay = RelayState()
         self.delivery_workers: list[asyncio.Task[None]] = []
@@ -123,6 +104,11 @@ class Runtime:
             retention_days=settings.observability_retention_days,
             max_events=settings.observability_max_events,
         )
+        self.tracker = SessionTracker(settings, self.event_store)
+        self.alerts = OwnerAlerts(settings, self.background_tasks)
+        self.dsc_stats = DscStats(settings, self.client, self.background_tasks)
+        self.rate_limiter = RateLimiter(settings, self.metrics)
+        self.request_times = self.rate_limiter.request_times
         self._deliver_results = deliver_results
         self.client.event(self.on_guild_join)
         self.client.event(self.on_guild_remove)
@@ -138,95 +124,14 @@ class Runtime:
                 guild=discord.Object(id=settings.botstats_guild_id),
             )(self.botstats)
 
-    def track(
-        self,
-        job: UploadJob,
-        event: str,
-        *,
-        data: object = None,
-        run_id: str = "",
-        file_index: int = 0,
-        source: str = "server",
-        event_id: str = "",
-    ) -> None:
-        """Optional diagnostics never participate in application correctness."""
-        try:
-            self.event_store.record(
-                job.diagnostic_id,
-                job.diagnostic_reference,
-                event,
-                run_id=run_id or job.active_run_id,
-                file_index=file_index,
-                source=source,
-                data=data,
-                revision=self.settings.app_revision,
-                user_key=self.event_store.pseudonym("user", job.user_id),
-                guild_key=self.event_store.pseudonym("guild", job.guild_id),
-                is_test=job.guild_id in self.settings.diagnostic_test_guild_ids,
-                event_id=event_id,
-            )
-        except Exception:
-            logger.warning("Optional session diagnostic could not be recorded")
-
-    async def send_owner_alert(self, message: str) -> None:
-        """Send a best-effort private alert without affecting the user workflow."""
-        if not self.settings.alert_webhook_url:
-            return
-        try:
-            timeout = ClientTimeout(total=ALERT_TIMEOUT_SECONDS)
-            async with ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    self.settings.alert_webhook_url,
-                    headers={"User-Agent": USER_AGENT},
-                    json={
-                        "content": message,
-                        "allowed_mentions": {"parse": []},
-                    },
-                ) as response:
-                    response.raise_for_status()
-        except Exception as error:
-            logger.warning("Owner notification failed (%s)", type(error).__name__)
+    def track(self, job: UploadJob, event: str, **details: Any) -> None:
+        self.tracker.track(job, event, **details)
 
     def schedule_owner_alert(self, message: str) -> None:
-        """Run an alert in the background so Discord commands remain responsive."""
-        if not self.settings.alert_webhook_url:
-            return
-        self.background_tasks.spawn(self.send_owner_alert(message))
-
-    async def report_dsc_stats(self) -> bool:
-        """Publish the current server count to dsc.sh without blocking bot work."""
-        if not self.settings.dsc_api_token or self.client.user is None:
-            return False
-        try:
-            timeout = ClientTimeout(total=DSC_TIMEOUT_SECONDS)
-            async with ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    f"https://dsc.sh/api/bots/{self.client.user.id}/stats",
-                    headers={
-                        "Authorization": self.settings.dsc_api_token,
-                        "Content-Type": "application/json",
-                        "User-Agent": USER_AGENT,
-                    },
-                    json={"server_count": len(self.client.guilds)},
-                ) as response:
-                    response.raise_for_status()
-            logger.info("Published dsc.sh server count: %d", len(self.client.guilds))
-            return True
-        except Exception as error:
-            logger.warning("dsc.sh statistics update failed (%s)", type(error).__name__)
-            return False
+        self.alerts.schedule(message)
 
     def schedule_dsc_stats_update(self) -> None:
-        """Schedule a best-effort dsc.sh update after a server-count change."""
-        if not self.settings.dsc_api_token:
-            return
-        self.background_tasks.spawn(self.report_dsc_stats())
-
-    async def dsc_stats_loop(self) -> None:
-        """Refresh dsc.sh periodically so the public listing stays current."""
-        while not self.client.is_closed():
-            await self.report_dsc_stats()
-            await asyncio.sleep(self.settings.dsc_stats_interval_seconds)
+        self.dsc_stats.schedule_update()
 
     def interaction_guild_name(self, interaction: discord.Interaction) -> str:
         """Return a usable guild name even when Discord sends partial guild data."""
@@ -255,16 +160,7 @@ class Runtime:
     def rate_limit_retry_after(
         self, request: web.Request, bucket: str, *, limit: int | None = None
     ) -> int | None:
-        now = time.monotonic()
-        key = (bucket, request_ip(request))
-        timestamps = self.request_times.setdefault(key, deque())
-        while timestamps and now - timestamps[0] >= RATE_LIMIT_WINDOW_SECONDS:
-            timestamps.popleft()
-        if len(timestamps) >= (limit or self.settings.upload_rate_limit_per_minute):
-            self.metrics.increment("rate_limited_requests")
-            return max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - timestamps[0])))
-        timestamps.append(now)
-        return None
+        return self.rate_limiter.retry_after(request, bucket, limit=limit)
 
     def discard_expired_jobs(self) -> None:
         sessions.discard_expired_jobs(self)
@@ -699,7 +595,7 @@ class Runtime:
         if self.settings.dsc_api_token and (
             self.dsc_stats_task is None or self.dsc_stats_task.done()
         ):
-            self.dsc_stats_task = self.background_tasks.spawn(self.dsc_stats_loop())
+            self.dsc_stats_task = self.background_tasks.spawn(self.dsc_stats.run())
         if self.topgg_stats.token and (
             self.topgg_stats_task is None or self.topgg_stats_task.done()
         ):
