@@ -62,6 +62,33 @@ def log_delivery_diagnostics(
     )
 
 
+def outcome_alert(
+    delivery: DeliveryRequest,
+    started: float,
+    batch_limit: int,
+    *,
+    succeeded: bool,
+    total_bytes: int,
+    stage: str | None = None,
+) -> str:
+    """Operator alert for a finished delivery, with the targets the page used."""
+    per_file_limit = batch_limit // len(delivery.results)
+    return compression_outcome_alert(
+        delivery.job,
+        succeeded=succeeded,
+        file_count=len(delivery.results),
+        total_bytes=total_bytes,
+        stage=stage,
+        results=delivery.results,
+        diagnostics=delivery.diagnostics,
+        timing=delivery_timing(delivery, started),
+        effective_target=min(
+            compression_target(delivery.job.discord_limit), per_file_limit
+        ),
+        unchanged_limit=min(delivery.job.discord_limit, per_file_limit),
+    )
+
+
 async def run_delivery_worker(
     worker_number: int,
     *,
@@ -118,22 +145,12 @@ async def run_delivery_worker(
                 },
             )
             notify(
-                compression_outcome_alert(
-                    delivery.job,
+                outcome_alert(
+                    delivery,
+                    delivery_started,
+                    batch_limit,
                     succeeded=True,
-                    file_count=len(delivery.results),
                     total_bytes=total_bytes,
-                    results=delivery.results,
-                    diagnostics=delivery.diagnostics,
-                    timing=delivery_timing(delivery, delivery_started),
-                    effective_target=min(
-                        compression_target(delivery.job.discord_limit),
-                        batch_limit // len(delivery.results),
-                    ),
-                    unchanged_limit=min(
-                        delivery.job.discord_limit,
-                        batch_limit // len(delivery.results),
-                    ),
                 )
             )
             if not delivery.completed.done():
@@ -168,23 +185,13 @@ async def run_delivery_worker(
                 },
             )
             notify(
-                compression_outcome_alert(
-                    delivery.job,
+                outcome_alert(
+                    delivery,
+                    delivery_started,
+                    batch_limit,
                     succeeded=False,
-                    file_count=len(delivery.results),
                     total_bytes=sum(len(result.data) for result in delivery.results),
                     stage="Discord delivery",
-                    results=delivery.results,
-                    diagnostics=delivery.diagnostics,
-                    timing=delivery_timing(delivery, delivery_started),
-                    effective_target=min(
-                        compression_target(delivery.job.discord_limit),
-                        batch_limit // len(delivery.results),
-                    ),
-                    unchanged_limit=min(
-                        delivery.job.discord_limit,
-                        batch_limit // len(delivery.results),
-                    ),
                 )
             )
             if not delivery.completed.done():
