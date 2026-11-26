@@ -1,9 +1,9 @@
 """Versioned URLs for the unmodified, pinned browser packages."""
 
 import hashlib
-from pathlib import Path
 
-NODE_MODULES = Path(__file__).resolve().parent.parent / "node_modules"
+from .paths import NODE_MODULES
+
 ASSET_PACKAGES = {
     "ffmpeg-esm": "@ffmpeg/ffmpeg",
     "util-esm": "@ffmpeg/util",

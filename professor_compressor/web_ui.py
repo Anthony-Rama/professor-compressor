@@ -1,12 +1,11 @@
 import json
 from html import escape
-from pathlib import Path
 
 from .assets import ASSET_PREFIX
+from .paths import TEMPLATES
 
-_TEMPLATES = Path(__file__).resolve().parent / "templates"
-_COMPRESSOR_TEMPLATE = (_TEMPLATES / "compressor.html").read_text(encoding="utf-8")
-_DELIVERY_TEMPLATE = (_TEMPLATES / "delivery-status.html").read_text(encoding="utf-8")
+_COMPRESSOR_TEMPLATE = (TEMPLATES / "compressor.html").read_text(encoding="utf-8")
+_DELIVERY_TEMPLATE = (TEMPLATES / "delivery-status.html").read_text(encoding="utf-8")
 
 REVIEW_PROMPT = """<p id="review-prompt" class="privacy" hidden>
   If you're enjoying Professor Compressor, please consider leaving a review and/or

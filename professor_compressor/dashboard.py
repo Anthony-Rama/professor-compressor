@@ -7,15 +7,13 @@ import secrets
 import time
 from collections import deque
 from collections.abc import Callable
-from pathlib import Path
 
 from aiohttp import BasicAuth, web
 
 from .observability import EventStore
+from .paths import TEMPLATES
 
-HTML = (Path(__file__).parent / "templates" / "dashboard.html").read_text(
-    encoding="utf-8"
-)
+HTML = (TEMPLATES / "dashboard.html").read_text(encoding="utf-8")
 
 
 def register_dashboard(

@@ -9,7 +9,6 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from functools import partial
-from pathlib import Path
 from typing import Any
 
 import certifi
@@ -18,7 +17,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 from discord import app_commands
 
 from . import browser_reports, discord_commands, sessions
-from .assets import ASSET_PACKAGES, ASSET_PREFIX, NODE_MODULES
+from .assets import ASSET_PACKAGES, ASSET_PREFIX
 from .config import MIB, Settings
 from .dashboard import register_dashboard
 from .delivery_policy import (
@@ -40,6 +39,7 @@ from .notifications import (
     guild_alert_message,
 )
 from .observability import EventStore
+from .paths import NODE_MODULES, STATIC
 from .topgg import TopGGStats
 from .upload_relay import RelayState, receive_results
 from .web_pages import browser_security_headers, register_public_pages
@@ -581,8 +581,7 @@ class Runtime:
             "/upload/{token}/failure",
             partial(browser_reports.receive_browser_failure, self),
         )
-        package_root = Path(__file__).resolve().parent
-        application.router.add_static("/brand/", package_root / "static")
+        application.router.add_static("/brand/", STATIC)
         for name, package in ASSET_PACKAGES.items():
             directory = NODE_MODULES / package / "dist/esm"
             application.router.add_static(f"{ASSET_PREFIX}/{name}/", directory)

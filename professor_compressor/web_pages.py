@@ -1,7 +1,6 @@
 """Shared HTTP document responses, security headers, and public pages."""
 
 from html import escape
-from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -9,12 +8,9 @@ from aiohttp import web
 from .assets import ASSET_PREFIX
 from .landing_pages import guide_html, home_html, robots_txt, sitemap_xml
 from .legal_pages import privacy_policy_html, terms_of_service_html
+from .paths import TEMPLATES
 
-_PAGE_TEMPLATE = (
-    (Path(__file__).parent / "templates" / "page.html")
-    .read_text(encoding="utf-8")
-    .rstrip("\n")
-)
+_PAGE_TEMPLATE = (TEMPLATES / "page.html").read_text(encoding="utf-8").rstrip("\n")
 GOOGLE_VERIFICATION_FILENAME = "googlec910ef324dae35ac.html"
 
 
