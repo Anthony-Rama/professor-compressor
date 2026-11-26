@@ -358,6 +358,16 @@ def track_received(
         )
 
 
+def send_optional_alert(
+    notify: Callable[[str], None], job: UploadJob, title: str, detail: str
+) -> None:
+    """Schedule an operator progress alert; failures never affect the upload."""
+    try:
+        notify(compression_progress_alert(job, title, detail))
+    except Exception:
+        logger.warning("Optional relay alert could not be scheduled")
+
+
 async def receive_results(
     request: web.Request,
     *,
@@ -371,15 +381,19 @@ async def receive_results(
 ) -> web.Response:
     """Receive one completed browser batch and transfer it to the delivery queue.
 
-    This handler deliberately keeps resource ownership in one place. Once it
-    takes an upload slot, the request owns that slot and every byte reserved
-    while reading clips. Each failure path returns through the single
-    ``finally`` block, which releases both and resets the job to CLAIMED.
-    Ownership passes to a delivery worker only at the queue handoff, with no
-    ``await`` between ``enqueue`` and clearing ``upload_slot_held``, so a
-    cancelled request can never release bytes a worker is already using.
-    Keep that structure when changing this function; the reading, validation,
-    and queueing steps it calls are separate helpers above.
+    This handler deliberately keeps resource ownership in one place. The
+    upload slot is taken inside the ``try``, so from then on the request owns
+    that slot and every byte reserved while reading clips. Each failure path
+    returns through the single ``finally`` block, which releases both and
+    resets the job to CLAIMED. Ownership passes to a delivery worker only at
+    the queue handoff, with no ``await`` between ``enqueue`` and clearing
+    ``upload_slot_held``, so a cancelled request can never release bytes a
+    worker is already using. After the handoff the session is never reopened:
+    an unexpected error returns a pending response so the browser polls the
+    receipt instead of uploading the same clips again. Operator alerts and
+    diagnostics are optional and cannot change the outcome. Keep that
+    structure when changing this function; the reading, validation, and
+    queueing steps it calls are separate helpers above.
     """
     receive_started = time.monotonic()
     job, response = authorize(request)
@@ -396,22 +410,23 @@ async def receive_results(
 
     progress = UploadProgress(started=receive_started, last_chunk_at=receive_started)
     job.relay_upload_attempts += 1
-    upload_slot_held = True
-    job.state = JobState.UPLOADING
     upload_run = valid_id(request.headers.get("X-Diagnostic-Run")) or job.active_run_id
-    track(job, "upload_started", run_id=upload_run)
-    state.active_uploads += 1
-    if not job.relay_upload_started:
-        job.relay_upload_started = True
-        notify(
-            compression_progress_alert(
+    upload_slot_held = False
+    handed_off = False
+    try:
+        state.active_uploads += 1
+        upload_slot_held = True
+        job.state = JobState.UPLOADING
+        track(job, "upload_started", run_id=upload_run)
+        if not job.relay_upload_started:
+            job.relay_upload_started = True
+            send_optional_alert(
+                notify,
                 job,
                 "📨 **Relay upload started**",
                 "Stage: browser began sending finished files; "
                 "receipt is not yet confirmed.",
             )
-        )
-    try:
         batch = await read_batch(
             request,
             progress=progress,
@@ -434,23 +449,26 @@ async def receive_results(
         # HTTP request, releases the batch's reserved bytes.
         state.active_uploads -= 1
         upload_slot_held = False
+        handed_off = True
         job.state = JobState.QUEUED
         metrics.increment("batches_queued")
         metrics.increment("files_queued", result_count)
         metrics.increment("bytes_queued", progress.reserved_bytes)
-        track_received(
-            job,
-            delivery,
-            track=track,
-            total_size=progress.reserved_bytes,
-            run_id=upload_run,
-        )
-        notify(
-            compression_progress_alert(
+        try:
+            track_received(
                 job,
-                "📤 **Finished files reached relay**",
-                f"Files: `{result_count}`; queued for Discord delivery.",
+                delivery,
+                track=track,
+                total_size=progress.reserved_bytes,
+                run_id=upload_run,
             )
+        except Exception:
+            logger.warning("Optional relay receipt diagnostic could not be recorded")
+        send_optional_alert(
+            notify,
+            job,
+            "📤 **Finished files reached relay**",
+            f"Files: `{result_count}`; queued for Discord delivery.",
         )
         try:
             message = await asyncio.wait_for(
@@ -522,6 +540,14 @@ async def receive_results(
         job.state = JobState.CLAIMED
         return json_error(str(error), 400, "invalid_upload")
     except Exception as error:
+        if handed_off:
+            # The worker owns the batch; reopening the session could queue the
+            # same clips twice. The browser polls the receipt instead.
+            logger.warning(
+                "Relay response failed after queue handoff (%s)",
+                type(error).__name__,
+            )
+            return pending_response()
         job.state = JobState.CLAIMED
         track(
             job,

@@ -311,6 +311,76 @@ class UploadRouteTests(WebAppTestCase):
             self.assertIs(job.state, JobState.CLAIMED)
 
 
+def failing_alert(failing_title: str):
+    """Build progress alerts normally, except the one whose title matches."""
+
+    def build(job, title, detail):
+        if failing_title in title:
+            raise RuntimeError("alert formatting failed")
+        return f"{title}: {detail}"
+
+    return build
+
+
+class RelayAlertFailureTests(RelayTestCase):
+    """Operator alerts are optional; a failure building one must not change
+    what the uploader sees, release resources early, or allow a duplicate."""
+
+    async def test_failed_upload_started_alert_does_not_hold_the_upload_slot(
+        self,
+    ) -> None:
+        job = self.job()
+        queue = self.runtime.relay.queue
+        assert queue is not None
+
+        async def deliver() -> None:
+            delivery = await queue.get()
+            delivery.completed.set_result("Delivered in test")
+            queue.task_done()
+
+        consumer = asyncio.create_task(deliver())
+        with patch.object(
+            upload_relay,
+            "compression_progress_alert",
+            failing_alert("Relay upload started"),
+        ):
+            response = await self.post_video()
+        try:
+            await asyncio.wait_for(asyncio.shield(consumer), 2)
+        except TimeoutError:
+            consumer.cancel()
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["message"], "Delivered in test")
+        self.assertEqual(self.runtime.relay.active_uploads, 0)
+        self.assertIs(job.state, JobState.DONE)
+
+    async def test_failed_queued_alert_keeps_one_queued_delivery(self) -> None:
+        job = self.job()
+        queue = self.runtime.relay.queue
+        assert queue is not None
+        with (
+            patch.object(
+                upload_relay,
+                "compression_progress_alert",
+                failing_alert("Finished files reached relay"),
+            ),
+            patch.object(upload_relay, "DELIVERY_RESPONSE_WAIT_SECONDS", 0.05),
+        ):
+            first = await self.post_video()
+            retry = await self.post_video()
+
+        # The batch belongs to the delivery queue; the browser is told to wait,
+        # and a retry while it is queued cannot enqueue the clips a second time.
+        self.assertEqual(first.status, 202)
+        self.assertTrue((await first.json())["pending"])
+        self.assertIs(job.state, JobState.QUEUED)
+        self.assertEqual(retry.status, 202)
+        self.assertEqual(queue.qsize(), 1)
+        self.assertEqual(self.runtime.relay.active_uploads, 0)
+        self.assertGreater(self.runtime.relay.buffered_bytes, 0)
+
+
 class ResultNameTests(unittest.TestCase):
     def test_result_names_are_safe_and_bounded(self) -> None:
         result = safe_result_name("../" + "a" * 300 + ".mp4", 1)
