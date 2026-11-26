@@ -36,13 +36,13 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
         interaction = self.make_interaction()
         with (
             patch.object(self.runtime.client, "get_guild", return_value=None),
-            patch.object(self.runtime, "jobs", {}),
-            patch.object(self.runtime, "last_job_at", {}),
-            patch.object(self.runtime, "schedule_owner_alert") as alert,
+            patch.object(self.runtime.sessions, "jobs", {}),
+            patch.object(self.runtime.sessions, "last_job_at", {}),
+            patch.object(self.runtime.alerts, "schedule") as alert,
         ):
             await self.runtime.compress(interaction)
-            self.assertEqual(self.runtime.jobs, {})
-            self.assertEqual(self.runtime.last_job_at, {})
+            self.assertEqual(self.runtime.sessions.jobs, {})
+            self.assertEqual(self.runtime.sessions.last_job_at, {})
 
         message = interaction.response.send_message.await_args.args[0]
         self.assertIn("installed in this server", message)
@@ -60,17 +60,19 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.runtime.client, "get_guild", return_value=interaction.guild
             ),
-            patch.object(self.runtime, "jobs", {}),
-            patch.object(self.runtime, "last_job_at", {}),
-            patch.object(self.runtime, "schedule_owner_alert") as alert,
+            patch.object(self.runtime.sessions, "jobs", {}),
+            patch.object(self.runtime.sessions, "last_job_at", {}),
+            patch.object(self.runtime.alerts, "schedule") as alert,
         ):
             await self.runtime.compress(interaction)
-            self.assertEqual(len(self.runtime.jobs), 1)
-            self.assertEqual(next(iter(self.runtime.jobs.values())).guild_id, 123)
+            self.assertEqual(len(self.runtime.sessions.jobs), 1)
+            self.assertEqual(
+                next(iter(self.runtime.sessions.jobs.values())).guild_id, 123
+            )
             self.assertIn("Username: **@clip\\_creator**", alert.call_args.args[0])
             self.assertIn("User ID: `789`", alert.call_args.args[0])
             self.assertEqual(
-                next(iter(self.runtime.jobs.values())).username, "clip_creator"
+                next(iter(self.runtime.sessions.jobs.values())).username, "clip_creator"
             )
             self.assertNotIn("<@789>", alert.call_args.args[0])
 
@@ -86,13 +88,14 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.runtime.client, "get_guild", return_value=interaction.guild
             ),
-            patch.object(self.runtime, "jobs", {}),
-            patch.object(self.runtime, "last_job_at", {}),
-            patch.object(self.runtime, "schedule_owner_alert"),
+            patch.object(self.runtime.sessions, "jobs", {}),
+            patch.object(self.runtime.sessions, "last_job_at", {}),
+            patch.object(self.runtime.alerts, "schedule"),
         ):
             await self.runtime.compress(interaction)
             self.assertEqual(
-                next(iter(self.runtime.jobs.values())).discord_limit, 20 * 1024 * 1024
+                next(iter(self.runtime.sessions.jobs.values())).discord_limit,
+                20 * 1024 * 1024,
             )
 
     async def test_missing_channel_permissions_prevent_session(self):
@@ -103,10 +106,10 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(
                     self.runtime.client, "get_guild", return_value=interaction.guild
                 ),
-                patch.object(self.runtime, "jobs", {}),
+                patch.object(self.runtime.sessions, "jobs", {}),
             ):
                 await self.runtime.compress(interaction)
-                self.assertFalse(self.runtime.jobs)
+                self.assertFalse(self.runtime.sessions.jobs)
                 self.assertIn(
                     "permissions", interaction.response.send_message.await_args.args[0]
                 )
@@ -128,12 +131,12 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(
                     self.runtime.client, "get_guild", return_value=interaction.guild
                 ),
-                patch.object(self.runtime, "jobs", {job.token: job}),
-                patch.object(self.runtime, "last_job_at", {}),
-                patch.object(self.runtime, "schedule_owner_alert"),
+                patch.object(self.runtime.sessions, "jobs", {job.token: job}),
+                patch.object(self.runtime.sessions, "last_job_at", {}),
+                patch.object(self.runtime.alerts, "schedule"),
             ):
                 await self.runtime.compress(interaction)
-                self.assertEqual(job.token in self.runtime.jobs, active)
+                self.assertEqual(job.token in self.runtime.sessions.jobs, active)
 
     async def test_page_exit_grace_unlocks_stale_processing_session(self):
         for seconds_since_exit, blocked in ((1, True), (6, False)):
@@ -153,12 +156,12 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(
                     self.runtime.client, "get_guild", return_value=interaction.guild
                 ),
-                patch.object(self.runtime, "jobs", {job.token: job}),
-                patch.object(self.runtime, "last_job_at", {}),
-                patch.object(self.runtime, "schedule_owner_alert"),
+                patch.object(self.runtime.sessions, "jobs", {job.token: job}),
+                patch.object(self.runtime.sessions, "last_job_at", {}),
+                patch.object(self.runtime.alerts, "schedule"),
             ):
                 await self.runtime.compress(interaction)
-                self.assertEqual(job.token in self.runtime.jobs, blocked)
+                self.assertEqual(job.token in self.runtime.sessions.jobs, blocked)
                 if blocked:
                     self.assertIn(
                         "wait 4 seconds",
@@ -181,11 +184,11 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.runtime.client, "get_guild", return_value=interaction.guild
             ),
-            patch.object(self.runtime, "jobs", {job.token: job}),
-            patch.object(self.runtime, "last_job_at", {}),
+            patch.object(self.runtime.sessions, "jobs", {job.token: job}),
+            patch.object(self.runtime.sessions, "last_job_at", {}),
         ):
             await self.runtime.compress(interaction)
-            self.assertIn("original", self.runtime.jobs)
+            self.assertIn("original", self.runtime.sessions.jobs)
             self.assertIn(
                 "sending files", interaction.response.send_message.await_args.args[0]
             )
@@ -207,8 +210,10 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.runtime.client, "get_guild", return_value=interaction.guild
             ),
-            patch.object(self.runtime, "jobs", {job.token: job}),
-            patch.object(self.runtime, "last_job_at", {(123, 789): time.time() - 2}),
+            patch.object(self.runtime.sessions, "jobs", {job.token: job}),
+            patch.object(
+                self.runtime.sessions, "last_job_at", {(123, 789): time.time() - 2}
+            ),
         ):
             await self.runtime.compress(interaction)
             self.assertIn(
@@ -218,11 +223,11 @@ class CompressCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_drain_rejects_new_command(self):
         interaction = self.make_interaction()
         with (
-            patch.object(self.runtime, "draining", True),
-            patch.object(self.runtime, "jobs", {}),
+            patch.object(self.runtime.sessions, "draining", True),
+            patch.object(self.runtime.sessions, "jobs", {}),
         ):
             await self.runtime.compress(interaction)
-            self.assertFalse(self.runtime.jobs)
+            self.assertFalse(self.runtime.sessions.jobs)
             self.assertIn(
                 "maintenance", interaction.response.send_message.await_args.args[0]
             )

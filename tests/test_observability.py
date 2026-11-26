@@ -17,7 +17,10 @@ from professor_compressor.config import Settings
 from professor_compressor.domain import JobState, UploadJob
 from professor_compressor.observability import EventStore
 from professor_compressor.observability_contract import sanitize
-from professor_compressor.sessions import RESUME_COOKIE_NAME, browser_cookie_matches
+from professor_compressor.session_routes import (
+    RESUME_COOKIE_NAME,
+    browser_cookie_matches,
+)
 
 
 class StoreTests(unittest.TestCase):
@@ -683,15 +686,15 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
             claim_secret="private-page-secret",
             guild_id=999,
         )
-        self.runtime.jobs[self.job.token] = self.job
+        self.runtime.sessions.jobs[self.job.token] = self.job
         self.headers = {"X-Upload-Session": "private-page-secret"}
         self.url = "/upload/diagnostic-test/events"
 
     async def asyncTearDown(self):
-        self.runtime.jobs.clear()
-        self.runtime.outcomes.clear()
+        self.runtime.sessions.jobs.clear()
+        self.runtime.sessions.outcomes.clear()
         self.runtime.request_times.clear()
-        self.runtime.diagnostic_event_counts.clear()
+        self.runtime.sessions.diagnostic_event_counts.clear()
         await self.client.close()
 
     def payload(self):
@@ -737,7 +740,7 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
             self.url, data="x" * 20000, headers=self.headers
         )
         self.assertEqual(response.status, 400)
-        self.runtime.diagnostic_event_counts[self.job.diagnostic_id] = 1000
+        self.runtime.sessions.diagnostic_event_counts[self.job.diagnostic_id] = 1000
         response = await self.client.post(
             self.url, json=self.payload(), headers=self.headers
         )
@@ -756,8 +759,8 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_receipt_auth_allows_late_reporting_but_not_forged_delivery(self):
         self.job.browser_secret = "browser-secret"
-        self.runtime.record_outcome(self.job, 200, {"ok": True})
-        self.runtime.jobs.pop(self.job.token)
+        self.runtime.sessions.record_outcome(self.job, 200, {"ok": True})
+        self.runtime.sessions.jobs.pop(self.job.token)
         response = await self.client.post(
             self.url, json=self.payload(), headers=self.headers
         )
@@ -823,7 +826,7 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_late_failure_does_not_alert_or_suppress_current_run_failure(self):
         self.job.active_run_id = uuid.uuid4().hex
-        with patch.object(self.runtime, "schedule_owner_alert") as alert:
+        with patch.object(self.runtime.alerts, "schedule") as alert:
             response = await self.client.post(
                 "/upload/diagnostic-test/failure",
                 headers=self.headers,
@@ -844,7 +847,7 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         run = uuid.uuid4().hex
-        with patch.object(self.runtime, "schedule_owner_alert"):
+        with patch.object(self.runtime.alerts, "schedule"):
             response = await self.client.post(
                 "/upload/diagnostic-test/failure",
                 headers=self.headers,
@@ -869,7 +872,7 @@ class DiagnosticHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failure["file_index"], 1)
         self.assertEqual(failure["data"]["engine_signal"], "oom")
         self.assertNotIn("secret.mp4", json.dumps(result))
-        with patch.object(self.runtime, "schedule_owner_alert"):
+        with patch.object(self.runtime.alerts, "schedule"):
             response = await self.client.post(
                 "/upload/diagnostic-test/failure",
                 headers=self.headers,

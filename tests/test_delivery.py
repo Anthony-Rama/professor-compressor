@@ -51,8 +51,8 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.object(self.runtime.relay, "queue", queue),
                 patch.object(self.runtime.relay, "buffered_bytes", 5),
-                patch.object(self.runtime, "schedule_owner_alert"),
-                patch.object(self.runtime, "outcomes", {}),
+                patch.object(self.runtime.alerts, "schedule"),
+                patch.object(self.runtime.sessions, "outcomes", {}),
                 patch.object(
                     self.runtime,
                     "deliver_browser_results",
@@ -67,7 +67,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                     if failure is not None:
                         expected = delivery_failure(failure)
                         self.assertEqual(str(completed.exception()), str(expected))
-                        receipt = self.runtime.outcomes[job.token].body
+                        receipt = self.runtime.sessions.outcomes[job.token].body
                         self.assertEqual(receipt["delivery_outcome"], expected.outcome)
                         self.assertEqual(receipt["error_code"], expected.error_code)
                     else:
@@ -94,7 +94,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             job = UploadJob(
                 token, 1, 2, 9999999999, 1000, Mock(), state=JobState.QUEUED
             )
-            runtime.jobs[token] = job
+            runtime.sessions.jobs[token] = job
             runtime.relay.buffered_bytes += len(payload)
             runtime.relay.queue.put_nowait(
                 DeliveryRequest(
@@ -103,7 +103,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                     asyncio.get_running_loop().create_future(),
                 )
             )
-        in_flight = runtime.jobs["in-flight"]
+        in_flight = runtime.sessions.jobs["in-flight"]
         worker = asyncio.create_task(runtime.delivery_worker(1))
         try:
             await asyncio.wait_for(sending.wait(), 2)
@@ -112,8 +112,8 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(worker, return_exceptions=True)
         self.assertEqual(runtime.relay.buffered_bytes, len(b"second"))
         self.assertIs(in_flight.state, JobState.DONE)
-        self.assertEqual(set(runtime.jobs), {"queued"})
-        self.assertEqual(runtime.outcomes, {})
+        self.assertEqual(set(runtime.sessions.jobs), {"queued"})
+        self.assertEqual(runtime.sessions.outcomes, {})
         remaining = runtime.relay.queue.get_nowait()
         self.assertEqual(remaining.job.token, "queued")
         remaining.completed.cancel()

@@ -174,8 +174,8 @@ class TopGGTests(unittest.IsolatedAsyncioTestCase):
         guild = SimpleNamespace(id=123, name="Test", member_count=3)
         with (
             patch.object(self.runtime, "topgg_stats") as stats,
-            patch.object(self.runtime, "schedule_owner_alert"),
-            patch.object(self.runtime, "schedule_dsc_stats_update"),
+            patch.object(self.runtime.alerts, "schedule"),
+            patch.object(self.runtime.dsc_stats, "schedule_update"),
         ):
             await self.runtime.on_guild_join(guild)
             await self.runtime.on_guild_remove(guild)

@@ -89,7 +89,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         sender_b.assert_not_awaited()
         self.assertEqual(a.relay.buffered_bytes, 0)
         self.assertEqual(b.relay.buffered_bytes, 0)
-        self.assertEqual(b.outcomes, {})
+        self.assertEqual(b.sessions.outcomes, {})
 
     async def test_transient_command_sync_retries(self):
         response = Mock(status=503, reason="Unavailable")
@@ -143,10 +143,10 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 self.runtime, "settings", replace(self.runtime.settings, web_port=0)
             ),
             patch.object(self.runtime, "web_runner", None),
-            patch.object(self.runtime, "jobs", {}),
+            patch.object(self.runtime.sessions, "jobs", {}),
             patch.object(self.runtime, "background_tasks", BackgroundTasks()),
             patch.object(self.runtime, "delivery_workers", []),
-            patch.object(self.runtime, "draining", False),
+            patch.object(self.runtime.sessions, "draining", False),
             patch.object(
                 loop,
                 "add_signal_handler",

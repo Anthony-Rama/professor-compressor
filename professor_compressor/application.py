@@ -6,7 +6,6 @@ import os
 import signal
 import time
 from collections.abc import Awaitable, Callable
-from functools import partial
 from typing import Any
 
 import certifi
@@ -14,10 +13,10 @@ import discord
 from aiohttp import web
 from discord import app_commands
 
-from . import browser_reports, discord_commands, sessions
 from .alerts import OwnerAlerts
 from .assets import ASSET_PACKAGES, ASSET_PREFIX
 from .background_tasks import BackgroundTasks
+from .browser_reports import ReportRoutes
 from .config import MIB, Settings
 from .dashboard import register_dashboard
 from .delivery_policy import (
@@ -27,9 +26,9 @@ from .delivery_policy import (
     delivery_failure,
 )
 from .delivery_worker import run_delivery_worker
+from .discord_commands import Commands
 from .domain import (
     BrowserResult,
-    DeliveryOutcome,
     DeliveryRequest,
     JobState,
     UploadJob,
@@ -42,9 +41,11 @@ from .notifications import (
 from .observability import EventStore
 from .paths import NODE_MODULES, STATIC
 from .rate_limit import RateLimiter, request_ip
+from .session_routes import SessionRoutes
+from .sessions import SessionRegistry
 from .topgg import TopGGStats
 from .tracking import SessionTracker
-from .upload_relay import RelayState, receive_results
+from .upload_relay import RelayState
 from .web_pages import browser_security_headers, register_public_pages
 
 logger = logging.getLogger(__name__)
@@ -81,10 +82,6 @@ class Runtime:
         self.topgg_stats = TopGGStats(
             self.client, settings.topgg_api_token, settings.topgg_stats_interval_seconds
         )
-        self.jobs: dict[str, UploadJob] = {}
-        self.outcomes: dict[str, DeliveryOutcome] = {}
-        self.last_job_at: dict[tuple[int, int], float] = {}
-        self.diagnostic_event_counts: dict[str, int] = {}
         self.relay = RelayState()
         self.delivery_workers: list[asyncio.Task[None]] = []
         self.background_tasks = BackgroundTasks()
@@ -93,9 +90,7 @@ class Runtime:
         self.command_sync_task: asyncio.Task[None] | None = None
         self.dsc_stats_task: asyncio.Task[None] | None = None
         self.topgg_stats_task: asyncio.Task[None] | None = None
-        self.draining = False
         self.commands_synced = False
-        self.application_operator_ids: frozenset[int] | None = None
         self.effective_allowed_guild_ids = settings.allowed_guild_ids
         self.metrics = RuntimeMetrics()
         self.event_store = EventStore(
@@ -108,6 +103,39 @@ class Runtime:
         self.alerts = OwnerAlerts(settings, self.background_tasks)
         self.dsc_stats = DscStats(settings, self.client, self.background_tasks)
         self.rate_limiter = RateLimiter(settings, self.metrics)
+        self.sessions = SessionRegistry(
+            settings,
+            tracker=self.tracker,
+            alerts=self.alerts,
+            rate_limiter=self.rate_limiter,
+        )
+        self.session_routes = SessionRoutes(
+            settings,
+            sessions=self.sessions,
+            rate_limiter=self.rate_limiter,
+            tracker=self.tracker,
+            alerts=self.alerts,
+            metrics=self.metrics,
+            relay=self.relay,
+        )
+        self.report_routes = ReportRoutes(
+            settings,
+            sessions=self.sessions,
+            rate_limiter=self.rate_limiter,
+            tracker=self.tracker,
+            alerts=self.alerts,
+            event_store=self.event_store,
+        )
+        self.commands = Commands(
+            settings,
+            client=self.client,
+            sessions=self.sessions,
+            tracker=self.tracker,
+            alerts=self.alerts,
+            metrics=self.metrics,
+        )
+        # The browser test harness drives these directly.
+        self.jobs = self.sessions.jobs
         self.request_times = self.rate_limiter.request_times
         self._deliver_results = deliver_results
         self.client.event(self.on_guild_join)
@@ -127,48 +155,10 @@ class Runtime:
     def track(self, job: UploadJob, event: str, **details: Any) -> None:
         self.tracker.track(job, event, **details)
 
-    def schedule_owner_alert(self, message: str) -> None:
-        self.alerts.schedule(message)
-
-    def schedule_dsc_stats_update(self) -> None:
-        self.dsc_stats.schedule_update()
-
-    def interaction_guild_name(self, interaction: discord.Interaction) -> str:
-        """Return a usable guild name even when Discord sends partial guild data."""
-        guild = interaction.guild
-        if guild is None and interaction.guild_id is not None:
-            guild = self.client.get_guild(interaction.guild_id)
-        guild_name = getattr(guild, "name", "").strip()
-        return guild_name or "Unknown server"
-
-    async def get_application_operator_ids(self) -> frozenset[int]:
-        """Return the application owner and team members allowed to view status."""
-        if self.application_operator_ids is None:
-            application = await self.client.application_info()
-            operator_ids = {application.owner.id}
-            if application.team is not None:
-                operator_ids.update(member.id for member in application.team.members)
-            self.application_operator_ids = frozenset(operator_ids)
-        return self.application_operator_ids
-
-    def active_job(self, token: str) -> UploadJob | None:
-        return sessions.active_job(self, token)
-
-    def expire_job(self, token: str, job: UploadJob) -> None:
-        sessions.expire_job(self, token, job)
-
-    def rate_limit_retry_after(
-        self, request: web.Request, bucket: str, *, limit: int | None = None
-    ) -> int | None:
-        return self.rate_limiter.retry_after(request, bucket, limit=limit)
-
-    def discard_expired_jobs(self) -> None:
-        sessions.discard_expired_jobs(self)
-
     async def expire_jobs_loop(self) -> None:
         try:
             while not self.client.is_closed():
-                self.discard_expired_jobs()
+                self.sessions.discard_expired_jobs()
                 await asyncio.sleep(EXPIRY_SWEEP_SECONDS)
         except asyncio.CancelledError:
             pass
@@ -180,7 +170,7 @@ class Runtime:
                 "status": "ok",
                 "revision": self.settings.app_revision[:64],
                 "discord_ready": self.client.is_ready(),
-                "active_upload_links": len(self.jobs),
+                "active_upload_links": len(self.sessions.jobs),
                 "active_relay_uploads": self.relay.active_uploads,
                 "delivery_queue_depth": self.relay.queue.qsize()
                 if self.relay.queue
@@ -204,7 +194,7 @@ class Runtime:
             self.client.is_ready()
             and self.commands_synced
             and workers_ready
-            and not self.draining
+            and not self.sessions.draining
         )
         return web.json_response(
             {
@@ -212,7 +202,7 @@ class Runtime:
                 "discord_ready": self.client.is_ready(),
                 "workers_ready": workers_ready,
                 "commands_synced": self.commands_synced,
-                "draining": self.draining,
+                "draining": self.sessions.draining,
             },
             status=200 if ready else 503,
             headers={"Cache-Control": "no-store"},
@@ -226,28 +216,6 @@ class Runtime:
                 **self.metrics.snapshot(),
             },
             headers={"Cache-Control": "no-store"},
-        )
-
-    def record_outcome(
-        self, job: UploadJob, status: int, body: dict[str, object]
-    ) -> None:
-        sessions.record_outcome(self, job, status, body)
-
-    def session_access(
-        self, request: web.Request
-    ) -> tuple[UploadJob | None, web.Response | None]:
-        return sessions.session_access(self, request)
-
-    async def receive_results(self, request: web.Request) -> web.Response:
-        return await receive_results(
-            request,
-            state=self.relay,
-            limits=self.settings,
-            authorize=self.session_access,
-            rate_limit=self.rate_limit_retry_after,
-            track=self.track,
-            notify=self.schedule_owner_alert,
-            metrics=self.metrics,
         )
 
     async def get_channel(self, job: UploadJob) -> discord.abc.Messageable | None:
@@ -349,7 +317,7 @@ class Runtime:
     def finish_delivery(self, delivery: DeliveryRequest) -> None:
         self.relay.release(sum(len(result.data) for result in delivery.results))
         delivery.job.state = JobState.DONE
-        self.jobs.pop(delivery.job.token, None)
+        self.sessions.jobs.pop(delivery.job.token, None)
 
     async def delivery_worker(self, worker_number: int) -> None:
         assert self.relay.queue is not None
@@ -358,10 +326,10 @@ class Runtime:
             queue=self.relay.queue,
             send=self._deliver_results or self.deliver_browser_results,
             is_closed=self.client.is_closed,
-            track=self.track,
+            track=self.tracker.track,
             metrics=self.metrics,
-            record_outcome=self.record_outcome,
-            notify=self.schedule_owner_alert,
+            record_outcome=self.sessions.record_outcome,
+            notify=self.alerts.schedule,
             finish=self.finish_delivery,
             batch_limit=min(
                 self.settings.max_result_total_bytes,
@@ -372,12 +340,12 @@ class Runtime:
     @app_commands.guild_only()
     @app_commands.allowed_installs(guilds=True, users=False)
     async def compress(self, interaction: discord.Interaction) -> None:
-        await discord_commands.compress(self, interaction)
+        await self.commands.compress(interaction)
 
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
     async def botstats(self, interaction: discord.Interaction) -> None:
-        await discord_commands.botstats(self, interaction)
+        await self.commands.botstats(interaction)
 
     def dashboard_runtime(self) -> dict:
         """Cached Discord/process facts; no API requests or private identifiers."""
@@ -397,14 +365,14 @@ class Runtime:
             "ready": connected
             and self.commands_synced
             and workers_ready
-            and not self.draining,
+            and not self.sessions.draining,
             "commands_synced": self.commands_synced,
-            "draining": self.draining,
+            "draining": self.sessions.draining,
             "gateway_latency_ms": round(latency * 1000)
             if math.isfinite(latency)
             else None,
             "revision": self.settings.app_revision[:64],
-            "active_sessions": len(self.jobs),
+            "active_sessions": len(self.sessions.jobs),
             "active_uploads": self.relay.active_uploads,
             "queue_depth": self.relay.queue.qsize() if self.relay.queue else 0,
             "queue_capacity": self.settings.delivery_queue_size,
@@ -429,9 +397,9 @@ class Runtime:
         async def diagnostic_lifecycle(_application):
             self.event_store.start()
             yield
-            for job in list(self.jobs.values()):
+            for job in list(self.sessions.jobs.values()):
                 if job.compression_started or job.relay_upload_started:
-                    self.track(job, "interrupted")
+                    self.tracker.track(job, "interrupted")
             await asyncio.to_thread(self.event_store.stop)
 
         application.cleanup_ctx.append(diagnostic_lifecycle)
@@ -446,34 +414,24 @@ class Runtime:
         application.router.add_get("/healthz", self.health)
         application.router.add_get("/readyz", self.readiness)
         application.router.add_get("/metricsz", self.aggregate_metrics)
-        application.router.add_get(
-            "/upload/{token}", partial(sessions.upload_form, self)
-        )
-        application.router.add_post("/upload/{token}", self.receive_results)
-        application.router.add_get(
-            "/upload/{token}/status", partial(sessions.session_status, self)
+        sessions = self.session_routes
+        reports = self.report_routes
+        application.router.add_get("/upload/{token}", sessions.upload_form)
+        application.router.add_post("/upload/{token}", sessions.receive_results)
+        application.router.add_get("/upload/{token}/status", sessions.session_status)
+        application.router.add_post("/upload/{token}/heartbeat", sessions.renew_session)
+        application.router.add_post("/upload/{token}/pause", sessions.pause_session)
+        application.router.add_post(
+            "/upload/{token}/progress", reports.receive_browser_progress
         )
         application.router.add_post(
-            "/upload/{token}/heartbeat", partial(sessions.renew_session, self)
+            "/upload/{token}/telemetry", reports.receive_browser_telemetry
         )
         application.router.add_post(
-            "/upload/{token}/pause", partial(sessions.pause_session, self)
+            "/upload/{token}/events", reports.receive_diagnostic_events
         )
         application.router.add_post(
-            "/upload/{token}/progress",
-            partial(browser_reports.receive_browser_progress, self),
-        )
-        application.router.add_post(
-            "/upload/{token}/telemetry",
-            partial(browser_reports.receive_browser_telemetry, self),
-        )
-        application.router.add_post(
-            "/upload/{token}/events",
-            partial(browser_reports.receive_diagnostic_events, self),
-        )
-        application.router.add_post(
-            "/upload/{token}/failure",
-            partial(browser_reports.receive_browser_failure, self),
+            "/upload/{token}/failure", reports.receive_browser_failure
         )
         application.router.add_static("/brand/", STATIC)
         for name, package in ASSET_PACKAGES.items():
@@ -509,35 +467,35 @@ class Runtime:
         )
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
-        self.track(
+        self.tracker.track(
             UploadJob("", 0, 0, time.time(), 0, None, guild_id=guild.id),
             "installed",
             data={"connected_servers": len(self.client.guilds)},
         )
-        self.schedule_owner_alert(
+        self.alerts.schedule(
             guild_alert_message(
                 "🟢 **Professor Compressor installed**",
                 guild,
                 server_count=len(self.client.guilds),
             )
         )
-        self.schedule_dsc_stats_update()
+        self.dsc_stats.schedule_update()
         self.topgg_stats.notify_change()
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
-        self.track(
+        self.tracker.track(
             UploadJob("", 0, 0, time.time(), 0, None, guild_id=guild.id),
             "removed",
             data={"connected_servers": len(self.client.guilds)},
         )
-        self.schedule_owner_alert(
+        self.alerts.schedule(
             guild_alert_message(
                 "🔴 **Professor Compressor removed**",
                 guild,
                 server_count=len(self.client.guilds),
             )
         )
-        self.schedule_dsc_stats_update()
+        self.dsc_stats.schedule_update()
         self.topgg_stats.notify_change()
 
     async def sync_commands(self) -> None:
@@ -606,12 +564,12 @@ class Runtime:
 
     async def drain_sessions(self, timeout: float = DRAIN_TIMEOUT_SECONDS) -> None:
         """Reject new work while allowing existing browser/relay work to finish."""
-        self.draining = True
+        self.sessions.draining = True
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             busy = self.relay.active_uploads or any(
                 job.state is JobState.QUEUED or job.processing_until > time.time()
-                for job in self.jobs.values()
+                for job in self.sessions.jobs.values()
             )
             if not busy:
                 return

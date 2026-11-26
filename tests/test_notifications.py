@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, Mock, patch
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
 
 from professor_compressor.application import Runtime
-from professor_compressor.browser_reports import receive_browser_failure
 from professor_compressor.config import Settings
 from professor_compressor.domain import (
     BrowserResult,
@@ -246,7 +245,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         interaction.guild_id = 123
 
         self.assertEqual(
-            self.runtime.interaction_guild_name(interaction), "Unknown server"
+            self.runtime.commands.interaction_guild_name(interaction), "Unknown server"
         )
 
     def test_success_alert_contains_delivery_metrics_without_filenames(self) -> None:
@@ -478,19 +477,21 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             guild_name="Test Server",
             username="clip_creator",
         )
-        self.runtime.jobs[job.token] = job
+        self.runtime.sessions.jobs[job.token] = job
         request = Mock()
         request.match_info = {"token": job.token}
         request.headers = {"X-Upload-Session": "claim-secret"}
         request.json = AsyncMock(return_value={"stage": "Browser compression<script>"})
         request.clone.return_value = request
         try:
-            with patch.object(self.runtime, "schedule_owner_alert") as schedule_alert:
-                response = await receive_browser_failure(self.runtime, request)
+            with patch.object(self.runtime.alerts, "schedule") as schedule_alert:
+                response = await self.runtime.report_routes.receive_browser_failure(
+                    request
+                )
 
             self.assertEqual(response.status, 200)
             self.assertIs(job.state, JobState.CLAIMED)
-            self.assertIn(job.token, self.runtime.jobs)
+            self.assertIn(job.token, self.runtime.sessions.jobs)
             self.assertTrue(job.browser_failure_reported)
             alert = schedule_alert.call_args.args[0]
             self.assertIn("Compression failed", alert)
@@ -499,7 +500,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Browser compressionscript", alert)
             self.assertNotIn("<script>", alert)
         finally:
-            self.runtime.jobs.pop(job.token, None)
+            self.runtime.sessions.jobs.pop(job.token, None)
 
     async def test_browser_failure_alert_is_only_sent_once(self) -> None:
         job = UploadJob(
@@ -513,17 +514,19 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             claim_secret="claim-secret",
             browser_failure_reported=True,
         )
-        self.runtime.jobs[job.token] = job
+        self.runtime.sessions.jobs[job.token] = job
         request = Mock()
         request.match_info = {"token": job.token}
         request.headers = {"X-Upload-Session": "claim-secret"}
         request.json = AsyncMock(return_value={"stage": "Browser compression"})
         request.clone.return_value = request
         try:
-            with patch.object(self.runtime, "schedule_owner_alert") as schedule_alert:
-                response = await receive_browser_failure(self.runtime, request)
+            with patch.object(self.runtime.alerts, "schedule") as schedule_alert:
+                response = await self.runtime.report_routes.receive_browser_failure(
+                    request
+                )
         finally:
-            self.runtime.jobs.pop(job.token, None)
+            self.runtime.sessions.jobs.pop(job.token, None)
 
         self.assertEqual(response.status, 200)
         schedule_alert.assert_not_called()
@@ -535,8 +538,8 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         guild.member_count = 42
 
         with (
-            patch.object(self.runtime, "schedule_owner_alert") as schedule_alert,
-            patch.object(self.runtime, "schedule_dsc_stats_update") as schedule_stats,
+            patch.object(self.runtime.alerts, "schedule") as schedule_alert,
+            patch.object(self.runtime.dsc_stats, "schedule_update") as schedule_stats,
         ):
             await self.runtime.on_guild_join(guild)
 
