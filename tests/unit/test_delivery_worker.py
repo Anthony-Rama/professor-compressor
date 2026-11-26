@@ -69,6 +69,109 @@ class DeliveryWorkerTests(RuntimeTestCase):
                     worker.cancel()
                     await asyncio.gather(worker, return_exceptions=True)
 
+    async def test_alert_failures_never_change_the_delivery_result(self) -> None:
+        # A failure building the operator alert must not turn a confirmed send
+        # into a failure, and must not stop the worker taking the next batch.
+        from professor_compressor.domain import DeliveryRequest, JobState
+        from professor_compressor.relay import worker as worker_module
+
+        for failure in (None, RuntimeError("Discord unavailable")):
+            with self.subTest(send_fails=failure is not None):
+                queue: asyncio.Queue[DeliveryRequest] = asyncio.Queue(2)
+                deliveries = []
+                for token in ("first", "second"):
+                    job = UploadJob(
+                        token=token,
+                        user_id=1,
+                        channel_id=2,
+                        expires_at=9999999999,
+                        discord_limit=1000,
+                        interaction=Mock(),
+                    )
+                    completed = asyncio.get_running_loop().create_future()
+                    deliveries.append((job, completed))
+                    queue.put_nowait(
+                        DeliveryRequest(
+                            job, [BrowserResult("clip.mp4", b"video")], completed
+                        )
+                    )
+                with (
+                    patch.object(self.runtime.relay, "queue", queue),
+                    patch.object(self.runtime.relay, "buffered_bytes", 10),
+                    patch.object(self.runtime.sessions, "outcomes", {}),
+                    patch.object(
+                        worker_module,
+                        "outcome_alert",
+                        side_effect=RuntimeError("alert formatting failed"),
+                    ),
+                    patch.object(
+                        self.runtime.delivery,
+                        "deliver_browser_results",
+                        AsyncMock(return_value="sent", side_effect=failure),
+                    ),
+                ):
+                    worker = asyncio.create_task(self.runtime.delivery.run_worker(1))
+                    try:
+                        await asyncio.wait_for(queue.join(), 2)
+                        self.assertFalse(worker.done())
+                        for job, completed in deliveries:
+                            receipt = self.runtime.sessions.outcomes[job.token]
+                            self.assertIs(job.state, JobState.DONE)
+                            if failure is None:
+                                self.assertEqual(completed.result(), "sent")
+                                self.assertEqual(receipt.status, 200)
+                            else:
+                                self.assertIsInstance(
+                                    completed.exception(), RuntimeError
+                                )
+                                self.assertEqual(receipt.status, 502)
+                        self.assertEqual(self.runtime.relay.buffered_bytes, 0)
+                    finally:
+                        worker.cancel()
+                        await asyncio.gather(worker, return_exceptions=True)
+
+    async def test_unexpected_bookkeeping_error_never_stops_the_worker(self) -> None:
+        from professor_compressor.domain import DeliveryRequest, JobState
+
+        queue: asyncio.Queue[DeliveryRequest] = asyncio.Queue(2)
+        deliveries = []
+        for token in ("first", "second"):
+            job = UploadJob(token, 1, 2, 9999999999, 1000, Mock())
+            completed = asyncio.get_running_loop().create_future()
+            deliveries.append((job, completed))
+            queue.put_nowait(
+                DeliveryRequest(job, [BrowserResult("clip.mp4", b"video")], completed)
+            )
+        with (
+            patch.object(self.runtime.relay, "queue", queue),
+            patch.object(self.runtime.relay, "buffered_bytes", 10),
+            patch.object(
+                self.runtime.sessions,
+                "record_outcome",
+                Mock(side_effect=[RuntimeError("receipt store failed"), None]),
+            ),
+            patch.object(
+                self.runtime.delivery,
+                "deliver_browser_results",
+                AsyncMock(return_value="sent"),
+            ),
+        ):
+            worker = asyncio.create_task(self.runtime.delivery.run_worker(1))
+            try:
+                await asyncio.wait_for(queue.join(), 2)
+                self.assertFalse(worker.done())
+                (first_job, first), (second_job, second) = deliveries
+                # The browser is told delivery could not be confirmed rather
+                # than waiting forever; the next batch is delivered normally.
+                self.assertIsInstance(first.exception(), RuntimeError)
+                self.assertEqual(second.result(), "sent")
+                self.assertIs(first_job.state, JobState.DONE)
+                self.assertIs(second_job.state, JobState.DONE)
+                self.assertEqual(self.runtime.relay.buffered_bytes, 0)
+            finally:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+
     async def test_cancelled_worker_releases_only_its_dequeued_batch(self):
         from professor_compressor.domain import DeliveryRequest, JobState
 
