@@ -24,11 +24,13 @@ test('the private compressor page loads its dependencies without putting session
   expect((await controller.text()).includes(config.SESSION_SECRET)).toBe(false);
 });
 
-test('an unavailable compressor asset leaves the picker disabled with recovery instructions', async ({ page, request }) => {
-  await page.route('**/brand/compressor.js', route => route.abort());
-  const { path } = await (await request.post('/test/session')).json();
-  await page.goto(path);
-  await expect(page.locator('#startup-error')).toContainText('reload');
-  await expect(page.locator('#clips')).toBeDisabled();
-  await expect(page.locator('#submit')).toBeDisabled();
-});
+for (const asset of ['compressor.js', 'file-selection.js', 'video-encoder.js', 'relay-client.js']) {
+  test(`missing ${asset} leaves the picker disabled with recovery instructions`, async ({ page, request }) => {
+    await page.route(`**/brand/${asset}`, route => route.abort());
+    const { path } = await (await request.post('/test/session')).json();
+    await page.goto(path);
+    await expect(page.locator('#startup-error')).toContainText('reload');
+    await expect(page.locator('#clips')).toBeDisabled();
+    await expect(page.locator('#submit')).toBeDisabled();
+  });
+}
