@@ -490,7 +490,8 @@ export function startBatchController(config, modules) {
       return "Delivery could not be confirmed. Check your connection and Discord, then use Check delivery / retry. Prepared files will not be recompressed.";
     }
     const code = diagnostic.code(error);
-    if (Object.hasOwn(PROCESSING_MESSAGES, code)) return PROCESSING_MESSAGES[code];
+    if (Object.prototype.hasOwnProperty.call(PROCESSING_MESSAGES, code))
+      return PROCESSING_MESSAGES[code];
     if (code === "UNSUPPORTED_CODEC")
       return (
         (encoder.currentFile?.inputMedia?.video_codec === "av1"
