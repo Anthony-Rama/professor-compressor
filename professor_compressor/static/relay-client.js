@@ -43,6 +43,52 @@ export function createRelayClient({
     return body;
   }
 
+  // Multipart body: trimmed caption, per-file diagnostics, then the finished clips.
+  function uploadForm(results) {
+    const data = new FormData();
+    data.append("caption", getCaption().trim());
+    data.append("diagnostics", JSON.stringify(results.map((result) => result.diagnostic)));
+    for (const result of results) data.append("clips", result.blob, result.name);
+    return data;
+  }
+
+  // Split overall upload progress across files in upload order.
+  function showUploadProgress(results, fraction) {
+    events.emit("progress", 80 + fraction * 18);
+    const resultBytes = results.reduce((sum, result) => sum + result.blob.size, 0);
+    const sentBytes = fraction * resultBytes;
+    let previousBytes = 0;
+    for (const result of results) {
+      const fileFraction = Math.max(0, Math.min(1, (sentBytes - previousBytes) / result.blob.size));
+      if (fileFraction >= 1) events.emit("fileStatus", result.state, "Sent to relay", 100);
+      else if (fileFraction > 0)
+        events.emit(
+          "fileStatus",
+          result.state,
+          "Sending " + Math.round(fileFraction * 100) + "%",
+          fileFraction * 100,
+        );
+      else events.emit("fileStatus", result.state, "Waiting to send", 0);
+      previousBytes += result.blob.size;
+    }
+    events.emit(
+      "phaseCopy",
+      "Uploading finished files through the secure relay: " + Math.round(fraction * 100) + "%",
+    );
+    events.emit("runDetail", "Sending " + Math.round(fraction * 100) + "%");
+  }
+
+  function showUploadSent(results) {
+    events.emit("progress", 98);
+    events.emit(
+      "phaseCopy",
+      "Upload sent. Waiting for the relay to confirm receipt and Discord delivery.",
+    );
+    events.emit("runDetail", "Waiting for Discord");
+    for (const result of results)
+      events.emit("fileStatus", result.state, "Waiting for Discord", 100);
+  }
+
   function xhrUpload(results) {
     const batchMetrics = getBatchMetrics();
     return new Promise((resolve, reject) => {
@@ -53,10 +99,7 @@ export function createRelayClient({
         hidden_seconds: hiddenSeconds(),
       });
       const uploadStarted = performance.now();
-      const data = new FormData();
-      data.append("caption", getCaption().trim());
-      data.append("diagnostics", JSON.stringify(results.map((result) => result.diagnostic)));
-      for (const result of results) data.append("clips", result.blob, result.name);
+      const data = uploadForm(results);
       const request = new XMLHttpRequest();
       uploadRequest = request;
       request.open("POST", window.location.href);
@@ -67,31 +110,7 @@ export function createRelayClient({
       request.upload.addEventListener("progress", (event) => {
         if (!event.lengthComputable) return;
         const fraction = event.loaded / event.total;
-        events.emit("progress", 80 + fraction * 18);
-        const resultBytes = results.reduce((sum, result) => sum + result.blob.size, 0);
-        const sentBytes = fraction * resultBytes;
-        let previousBytes = 0;
-        for (const result of results) {
-          const fileFraction = Math.max(
-            0,
-            Math.min(1, (sentBytes - previousBytes) / result.blob.size),
-          );
-          if (fileFraction >= 1) events.emit("fileStatus", result.state, "Sent to relay", 100);
-          else if (fileFraction > 0)
-            events.emit(
-              "fileStatus",
-              result.state,
-              "Sending " + Math.round(fileFraction * 100) + "%",
-              fileFraction * 100,
-            );
-          else events.emit("fileStatus", result.state, "Waiting to send", 0);
-          previousBytes += result.blob.size;
-        }
-        events.emit(
-          "phaseCopy",
-          "Uploading finished files through the secure relay: " + Math.round(fraction * 100) + "%",
-        );
-        events.emit("runDetail", "Sending " + Math.round(fraction * 100) + "%");
+        showUploadProgress(results, fraction);
       });
       request.upload.addEventListener("loadend", () => {
         batchMetrics.upload_seconds =
@@ -100,14 +119,7 @@ export function createRelayClient({
       request.upload.addEventListener("load", () => {
         batchMetrics.stage = "delivery";
         diagnostic.mark("delivery");
-        events.emit("progress", 98);
-        events.emit(
-          "phaseCopy",
-          "Upload sent. Waiting for the relay to confirm receipt and Discord delivery.",
-        );
-        events.emit("runDetail", "Waiting for Discord");
-        for (const result of results)
-          events.emit("fileStatus", result.state, "Waiting for Discord", 100);
+        showUploadSent(results);
       });
       request.addEventListener("load", () => {
         const body = request.response || {};
