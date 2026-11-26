@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, Mock
 
 from aiohttp import web
 
-from professor_compressor.web_pages import browser_security_headers, page
+from professor_compressor.web_pages import page
+from professor_compressor.web_security import browser_security_headers
 from professor_compressor.web_ui import browser_compressor, browser_delivery_status
 
 
