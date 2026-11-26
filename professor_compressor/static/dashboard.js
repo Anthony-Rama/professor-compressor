@@ -393,16 +393,7 @@ function chart(rows) {
     target.append(column);
   }
 }
-function render(d) {
-  const t = d.totals || {},
-    s = d.storage || {},
-    r = d.runtime || {},
-    c = r.counters || {},
-    a = d.adoption || {},
-    f = d.files || {},
-    timings = d.timings || {},
-    retries = d.retries || {},
-    groups = d.groups || {};
+function renderLiveStatus(r, c) {
   cards(
     el("live"),
     [
@@ -448,6 +439,9 @@ function render(d) {
     ],
     true,
   );
+}
+
+function renderSessionSummary(t) {
   cards(el("summary"), [
     ["Sessions created", number(t.sessions), "Distinct sessions in this view", "", "sessions"],
     ["Delivered sessions", number(t.delivered), "Confirmed by Discord delivery", "good"],
@@ -493,6 +487,9 @@ function render(d) {
       t.unknown ? "warning" : "",
     ],
   ]);
+}
+
+function renderFunnel(t) {
   el("funnel").replaceChildren();
   for (const [key, name] of [
     ["sessions", "Session created"],
@@ -519,7 +516,9 @@ function render(d) {
     row.append(title, track);
     el("funnel").append(row);
   }
-  chart(d.activity || []);
+}
+
+function renderAdoption(d, a) {
   let joins = 0,
     leaves = 0;
   for (const row of d.activity || []) {
@@ -536,6 +535,9 @@ function render(d) {
     ],
     ["Bot removals", number(leaves), "Recorded in the selected window; not a failure reason"],
   ]);
+}
+
+function renderReliability(d, t, retries, groups) {
   cards(el("reliability-summary"), [
     [
       "Needs attention",
@@ -573,6 +575,9 @@ function render(d) {
     d.statuses || [],
     "No outcomes yet",
   );
+}
+
+function renderPerformance(d, timings, f) {
   cards(el("performance-summary"), [
     [
       "Median encode",
@@ -629,6 +634,9 @@ function render(d) {
     ],
     d.performance || [],
   );
+}
+
+function renderActivity(d) {
   table(
     el("activity"),
     [
@@ -640,6 +648,9 @@ function render(d) {
     "No activity recorded yet",
     "History begins when tracking was enabled; older Discord logs are not imported.",
   );
+}
+
+function renderSessionTable(d) {
   table(
     el("sessions"),
     [
@@ -692,8 +703,18 @@ function render(d) {
     "No matching sessions",
     "Change the window or filters. Enable Include tests to see development-server activity.",
   );
+}
+
+function renderSessionHistory(d) {
   el("events").replaceChildren();
   const history = d.events || [];
+  renderSessionFiles(history);
+  renderAttempts(history);
+  renderTimeline(history);
+}
+
+// One row per file and run: browser facts in client order, then relay receipts.
+function renderSessionFiles(history) {
   const files = new Map();
   for (const event of history) {
     if (!event.file_index) continue;
@@ -764,6 +785,9 @@ function render(d) {
     "No file diagnostics",
     "Select a session with browser file reports or a relay receipt.",
   );
+}
+
+function renderAttempts(history) {
   const evidence = history.filter(
     (event) =>
       event.event === "attempt_started" ||
@@ -818,6 +842,9 @@ function render(d) {
     "No attempt evidence",
     "Attempt and engine details appear as new sessions run. Raw logs are never shown or stored.",
   );
+}
+
+function renderTimeline(history) {
   el("timeline-heading").textContent = el("reference").value
     ? el("reference").value + " · " + history.length + " most recent events · arrival order"
     : "Select a session to inspect its history.";
@@ -851,6 +878,9 @@ function render(d) {
     item.append(summary, body);
     el("events").append(item);
   }
+}
+
+function renderSystem(r, s, c) {
   cards(el("system-summary"), [
     [
       "Delivery workers",
@@ -912,6 +942,9 @@ function render(d) {
             : number(value),
     })),
   );
+}
+
+function renderCollectionStatus(d, t, s) {
   const hidden = d.collection?.hidden_test_sessions || 0;
   el("notice").hidden = !(s.ready && t.sessions === 0);
   el("show-tests").hidden = !hidden;
@@ -942,6 +975,31 @@ function render(d) {
     : "Diagnostic storage unavailable · live process snapshot is still shown.";
   el("status").className = s.errors || s.dropped || !s.ready ? "warning" : "good";
 }
+
+function render(d) {
+  const t = d.totals || {},
+    s = d.storage || {},
+    r = d.runtime || {},
+    c = r.counters || {},
+    a = d.adoption || {},
+    f = d.files || {},
+    timings = d.timings || {},
+    retries = d.retries || {},
+    groups = d.groups || {};
+  renderLiveStatus(r, c);
+  renderSessionSummary(t);
+  renderFunnel(t);
+  chart(d.activity || []);
+  renderAdoption(d, a);
+  renderReliability(d, t, retries, groups);
+  renderPerformance(d, timings, f);
+  renderActivity(d);
+  renderSessionTable(d);
+  renderSessionHistory(d);
+  renderSystem(r, s, c);
+  renderCollectionStatus(d, t, s);
+}
+
 async function load() {
   const sequence = ++loadSequence;
   loading = true;
