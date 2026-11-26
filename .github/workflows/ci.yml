@@ -117,7 +117,7 @@ jobs:
       - name: Run unit and integration tests with coverage
         run: python -m coverage run -m unittest discover -s tests -t . -v
 
-      - name: Report coverage
+      - name: Report coverage (fails below the configured floor)
         run: python -m coverage report
 
   browser:
