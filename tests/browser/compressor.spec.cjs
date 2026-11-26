@@ -1,1005 +1,1400 @@
-const { test, expect } = require('@playwright/test');
-const { execFileSync } = require('node:child_process');
-const { mkdtempSync, rmSync, readFileSync, writeFileSync } = require('node:fs');
-const { tmpdir } = require('node:os');
-const { join } = require('node:path');
+const { test, expect } = require("@playwright/test");
+const { execFileSync } = require("node:child_process");
+const { mkdtempSync, rmSync, readFileSync, writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { join } = require("node:path");
+const { openSession, ffmpeg, testPatternClip } = require("./helpers.cjs");
 
 let fixtures;
 test.beforeAll(() => {
-  fixtures = mkdtempSync(join(tmpdir(), 'compressor-browser-'));
-  const generate = (name, crf, duration) => execFileSync('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-    'testsrc2=size=1280x720:rate=30', '-t', String(duration),
-    '-c:v', 'libx264', '-crf', String(crf), '-preset', 'ultrafast', join(fixtures, name),
-  ]);
-  generate('large.mp4', 0, 3);
-  execFileSync('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-i', join(fixtures, 'large.mp4'),
-    '-c', 'copy', join(fixtures, 'large.mov'),
-  ]);
-  generate('small.mp4', 35, 0.5);
-  const smallMp4 = readFileSync(join(fixtures, 'small.mp4'));
-  writeFileSync(join(fixtures, 'near-limit.mp4'), Buffer.concat([
-    smallMp4, Buffer.alloc(1_090_000 - smallMp4.length),
-  ]));
-  generate('small.mov', 35, 0.5);
-  execFileSync('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-    'testsrc2=size=360x640:rate=30', '-f', 'lavfi', '-i',
-    'sine=frequency=440:sample_rate=48000', '-t', '2',
-    '-vf', "select='not(mod(n,2))+not(mod(n,5))'", '-fps_mode', 'vfr',
-    '-c:v', 'libx264', '-crf', '18', '-preset', 'ultrafast',
-    '-c:a', 'pcm_s16le', join(fixtures, 'portrait-audio-vfr.mov'),
-  ]);
+  fixtures = mkdtempSync(join(tmpdir(), "compressor-browser-"));
+  const generate = (name, crf, duration) =>
+    testPatternClip(join(fixtures, name), {
+      size: "1280x720",
+      rate: 30,
+      duration,
+      options: ["-crf", String(crf), "-preset", "ultrafast"],
+    });
+  generate("large.mp4", 0, 3);
+  ffmpeg("-i", join(fixtures, "large.mp4"), "-c", "copy", join(fixtures, "large.mov"));
+  generate("small.mp4", 35, 0.5);
+  const smallMp4 = readFileSync(join(fixtures, "small.mp4"));
+  writeFileSync(
+    join(fixtures, "near-limit.mp4"),
+    Buffer.concat([smallMp4, Buffer.alloc(1_090_000 - smallMp4.length)]),
+  );
+  generate("small.mov", 35, 0.5);
+  ffmpeg(
+    "-f",
+    "lavfi",
+    "-i",
+    "testsrc2=size=360x640:rate=30",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=440:sample_rate=48000",
+    "-t",
+    "2",
+    "-vf",
+    "select='not(mod(n,2))+not(mod(n,5))'",
+    "-fps_mode",
+    "vfr",
+    "-c:v",
+    "libx264",
+    "-crf",
+    "18",
+    "-preset",
+    "ultrafast",
+    "-c:a",
+    "pcm_s16le",
+    join(fixtures, "portrait-audio-vfr.mov"),
+  );
   for (const [name, codec] of [
-    ['sample.mkv', 'libx264'], ['sample.avi', 'mpeg4'],
-    ['sample.webm', 'libvpx-vp9'], ['sample.wmv', 'wmv2'],
-    ['sample.m2ts', 'mpeg2video'], ['sample.3gp', 'mpeg4'],
-    ['sample.mpg', 'mpeg2video'], ['sample.ogv', 'libtheora'],
-    ['sample.flv', 'flv'], ['sample.ts', 'mpeg2video'],
-    ['hevc.mkv', 'libx265'], ['av1.mkv', 'libaom-av1'],
-  ]) execFileSync('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-    'testsrc2=size=320x240:rate=25', '-t', '0.4', '-c:v', codec,
-    ...(codec === 'libx265' ? ['-x265-params', 'log-level=error:pools=2'] : []),
-    ...(codec === 'libaom-av1' ? ['-cpu-used', '8'] : []),
-    join(fixtures, name),
-  ]);
-  execFileSync('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-    'sine=frequency=440', '-t', '0.4', '-c:a', 'libopus', join(fixtures, 'audio.webm'),
-  ]);
+    ["sample.mkv", "libx264"],
+    ["sample.avi", "mpeg4"],
+    ["sample.webm", "libvpx-vp9"],
+    ["sample.wmv", "wmv2"],
+    ["sample.m2ts", "mpeg2video"],
+    ["sample.3gp", "mpeg4"],
+    ["sample.mpg", "mpeg2video"],
+    ["sample.ogv", "libtheora"],
+    ["sample.flv", "flv"],
+    ["sample.ts", "mpeg2video"],
+    ["hevc.mkv", "libx265"],
+    ["av1.mkv", "libaom-av1"],
+  ])
+    testPatternClip(join(fixtures, name), {
+      codec,
+      options: [
+        ...(codec === "libx265" ? ["-x265-params", "log-level=error:pools=2"] : []),
+        ...(codec === "libaom-av1" ? ["-cpu-used", "8"] : []),
+      ],
+    });
+  ffmpeg(
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=440",
+    "-t",
+    "0.4",
+    "-c:a",
+    "libopus",
+    join(fixtures, "audio.webm"),
+  );
 });
 test.afterAll(() => rmSync(fixtures, { recursive: true, force: true }));
 
-async function openSession(page, request) {
-  const response = await request.post('/test/session');
-  await page.goto((await response.json()).path);
-  await expect(page.locator('#clips')).toBeEnabled();
-}
 async function deliver(page, files) {
-  await expect(page.locator('#clips')).toBeEnabled();
-  await page.locator('#clips').setInputFiles(files);
-  await page.locator('#submit').click();
-  await expect.poll(async () => {
-    if (await page.locator('#message').isVisible()) return page.locator('#phase-title').textContent();
-    return 'Processing';
-  }, { timeout: 60000 }).toMatch(/Delivered to Discord|Action needed/);
-  expect(await page.locator('#phase-title').textContent(), await page.locator('#message').textContent()).toBe('Delivered to Discord');
+  await expect(page.locator("#clips")).toBeEnabled();
+  await page.locator("#clips").setInputFiles(files);
+  await page.locator("#submit").click();
+  await expect
+    .poll(
+      async () => {
+        if (await page.locator("#message").isVisible())
+          return page.locator("#phase-title").textContent();
+        return "Processing";
+      },
+      { timeout: 60000 },
+    )
+    .toMatch(/Delivered to Discord|Action needed/);
+  expect(
+    await page.locator("#phase-title").textContent(),
+    await page.locator("#message").textContent(),
+  ).toBe("Delivered to Discord");
 }
 
-test('browser reports selection and start without filenames or media', async ({ page, request }) => {
+test("browser reports selection and start without filenames or media", async ({
+  page,
+  request,
+}) => {
   const reports = [];
-  await page.route('**/upload/*/progress', async route => {
+  await page.route("**/upload/*/progress", async (route) => {
     reports.push(JSON.parse(route.request().postData()));
     await route.continue();
   });
   await openSession(page, request);
-  await deliver(page, join(fixtures, 'small.mp4'));
-  expect(reports).toContainEqual({event: 'selected', count: 1});
-  expect(reports).toContainEqual({event: 'started', run_id: expect.stringMatching(/^[0-9a-f]{32}$/)});
-  expect(JSON.stringify(reports)).not.toContain('small.mp4');
+  await deliver(page, join(fixtures, "small.mp4"));
+  expect(reports).toContainEqual({ event: "selected", count: 1 });
+  expect(reports).toContainEqual({
+    event: "started",
+    run_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+  });
+  expect(JSON.stringify(reports)).not.toContain("small.mp4");
 });
 
-test('final telemetry separates upload timing and excludes captions and filenames', async ({page, request}) => {
+test("final telemetry separates upload timing and excludes captions and filenames", async ({
+  page,
+  request,
+}) => {
   const reports = [];
-  await page.route('**/telemetry', async route => {
+  await page.route("**/telemetry", async (route) => {
     reports.push(route.request().postDataJSON());
-    await route.fulfill({json: {ok: true}});
+    await route.fulfill({ json: { ok: true } });
   });
   await openSession(page, request);
-  await page.locator('#caption').fill('Private caption');
-  await deliver(page, join(fixtures, 'small.mp4'));
+  await page.locator("#caption").fill("Private caption");
+  await deliver(page, join(fixtures, "small.mp4"));
   await expect.poll(() => reports.length).toBe(1);
-  expect(reports[0]).toMatchObject({outcome: 'delivered', category: 'none', engine: 'unused',
-    encoding_attempts: 0, upload_attempts: 1});
+  expect(reports[0]).toMatchObject({
+    outcome: "delivered",
+    category: "none",
+    engine: "unused",
+    encoding_attempts: 0,
+    upload_attempts: 1,
+  });
   expect(reports[0].total_seconds).toBeGreaterThan(0);
   expect(reports[0].upload_seconds).toBeGreaterThanOrEqual(0);
   expect(reports[0].total_seconds).toBeGreaterThanOrEqual(reports[0].upload_seconds);
   expect(JSON.stringify(reports)).not.toMatch(/Private caption|small\.mp4|\/upload\//);
 });
 
-test('optional caption travels with the delivered batch and disappears on completion', async ({ page, request }) => {
+test("optional caption travels with the delivered batch and disappears on completion", async ({
+  page,
+  request,
+}) => {
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.sentCaption = body.get('caption');
-        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips")) {
+        window.sentCaption = body.get("caption");
+        window.sentDiagnostics = JSON.parse(body.get("diagnostics"));
       }
       return originalSend.call(this, body);
     };
   });
   await openSession(page, request);
-  await page.locator('#caption').fill('Clips from yesterday');
-  await deliver(page, join(fixtures, 'small.mp4'));
-  expect(await page.evaluate(() => window.sentCaption)).toBe('Clips from yesterday');
-  expect(await page.evaluate(() => window.sentDiagnostics)).toEqual([{
-    input_bytes: expect.any(Number), duration_seconds: null,
-    video_kbps: null, copied: true, input_format: 'mp4', encoding_seconds: 0,
-    telemetry: expect.objectContaining({path: 'unchanged', encoding_attempts: 0,
-      engine: 'unused', upload_attempts: 1, engine_seconds: 0}),
-  }]);
-  await expect(page.locator('#caption')).toBeHidden();
-  await expect(page.locator('.caption-label')).toBeHidden();
-  await expect(page.locator('.caption-help')).toBeHidden();
+  await page.locator("#caption").fill("Clips from yesterday");
+  await deliver(page, join(fixtures, "small.mp4"));
+  expect(await page.evaluate(() => window.sentCaption)).toBe("Clips from yesterday");
+  expect(await page.evaluate(() => window.sentDiagnostics)).toEqual([
+    {
+      input_bytes: expect.any(Number),
+      duration_seconds: null,
+      video_kbps: null,
+      copied: true,
+      input_format: "mp4",
+      encoding_seconds: 0,
+      telemetry: expect.objectContaining({
+        path: "unchanged",
+        encoding_attempts: 0,
+        engine: "unused",
+        upload_attempts: 1,
+        engine_seconds: 0,
+      }),
+    },
+  ]);
+  await expect(page.locator("#caption")).toBeHidden();
+  await expect(page.locator(".caption-label")).toBeHidden();
+  await expect(page.locator(".caption-help")).toBeHidden();
 });
 
-test('page exit sends a best-effort leave report', async ({ page, request }) => {
+test("page exit sends a best-effort leave report", async ({ page, request }) => {
   let resolveReport;
-  const report = new Promise(resolve => { resolveReport = resolve; });
-  await page.route('**/upload/*/progress', async route => {
+  const report = new Promise((resolve) => {
+    resolveReport = resolve;
+  });
+  await page.route("**/upload/*/progress", async (route) => {
     const body = JSON.parse(route.request().postData());
-    if (body.event === 'page_left') resolveReport(body);
+    if (body.event === "page_left") resolveReport(body);
     await route.continue();
   });
   await openSession(page, request);
-  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
-  expect(await report).toEqual({event: 'page_left'});
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  expect(await report).toEqual({ event: "page_left" });
 });
 
-test('oversized video loads WebAssembly and compresses under the real CSP', async ({ page, request }) => {
+test("oversized video loads WebAssembly and compresses under the real CSP", async ({
+  page,
+  request,
+}) => {
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips")) {
+        window.sentDiagnostics = JSON.parse(body.get("diagnostics"));
       }
       return originalSend.call(this, body);
     };
   });
   await openSession(page, request);
-  await expect(page.locator('#feedback-actions')).toBeHidden();
-  await expect(page.locator('#review-prompt')).toBeHidden();
-  await expect(page.locator('#processing-privacy')).toBeVisible();
+  await expect(page.locator("#feedback-actions")).toBeHidden();
+  await expect(page.locator("#review-prompt")).toBeHidden();
+  await expect(page.locator("#processing-privacy")).toBeVisible();
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
-  await deliver(page, join(fixtures, 'large.mp4'));
+  await deliver(page, join(fixtures, "large.mp4"));
   const [diagnostic] = await page.evaluate(() => window.sentDiagnostics);
   expect(diagnostic.copied).toBe(false);
   expect(diagnostic.input_bytes).toBeGreaterThan(0);
   expect(diagnostic.duration_seconds).toBeGreaterThan(0);
   expect(diagnostic.video_kbps).toBeGreaterThanOrEqual(100);
   expect(diagnostic.encoding_seconds).toBeGreaterThan(0);
-  expect(diagnostic.telemetry.path).toBe('compressed');
+  expect(diagnostic.telemetry.path).toBe("compressed");
   expect(diagnostic.telemetry.encoding_attempts).toBeGreaterThanOrEqual(1);
   expect(diagnostic.telemetry.input_width).toBeGreaterThan(0);
   expect(diagnostic.telemetry.output_width).toBeGreaterThan(0);
   expect(diagnostic.telemetry.output_fps).toBeGreaterThan(0);
-  await expect(page.locator('#message')).toContainText('To upload more videos, run /compress again.');
-  await expect(page.locator('.file-meta')).toContainText('smaller');
-  await expect(page.locator('#feedback-actions')).toBeVisible();
-  await expect(page.locator('#review-prompt')).toHaveText("If you're enjoying Professor Compressor, please consider leaving a review and/or upvoting on Top.gg!");
-  await expect(page.locator('#review-prompt')).toBeVisible();
-  await expect(page.locator('#contact-help')).toBeHidden();
-  await expect(page.locator('#processing-privacy')).toBeHidden();
-  await expect(page.getByRole('link', {name: 'Privacy Policy', exact: true})).toBeVisible();
-  await expect(page.getByRole('link', {name: 'Terms of Service', exact: true})).toBeVisible();
-  await expect(page.locator('#review-prompt a')).toHaveAttribute('href', 'https://top.gg/bot/1550752400271351839');
-  await expect(page.locator('#page-heading')).toHaveText('Delivered to Discord');
-  await expect(page.locator('#completion-summary')).toHaveText(/^✓ 1 video delivered · Completed in \d+:\d{2}$/);
-  await expect(page.locator('#completion-summary')).toBeVisible();
-  await expect(page.locator('#work')).toBeHidden();
-  await expect(page.locator('.file-card progress')).toBeHidden();
-  await expect(page.locator('#feedback-link')).toHaveCSS('background-color', 'rgb(88, 101, 242)');
-  await expect(page.locator('#feedback-actions .support-link')).toHaveCSS('border-top-color', 'rgb(89, 103, 125)');
-  await expect(page.locator('#page-intro')).toBeHidden();
-  await expect(page.locator('#drop-zone')).toBeHidden();
-  await expect(page.locator('#clear-selection')).toBeHidden();
-  await expect(page.locator('#selection')).toBeHidden();
-  await expect(page.locator('#session-note')).toBeHidden();
-  await expect(page.locator('#stay-open')).toBeHidden();
-  await expect(page.locator('#performance-help')).toBeHidden();
-  await expect(page.locator('#format-help')).toBeHidden();
-  await expect(page.locator('#message')).toHaveCSS('text-align', 'center');
-  await expect(page.getByRole('link', {name: 'Contact Us'})).toHaveAttribute('href', /^mailto:professorcompressor\.support@gmail\.com\?/);
-  await expect(page.getByRole('link', {name: 'Join Discord Server'})).toHaveAttribute('href', 'https://discord.com/invite/32RWwNWyEH');
-  const actions = page.locator('#feedback-actions');
-  const firstAction = await actions.getByRole('link', {name: 'Contact Us'}).boundingBox();
-  const secondAction = await actions.getByRole('link', {name: 'Join Discord Server'}).boundingBox();
+  await expect(page.locator("#message")).toContainText(
+    "To upload more videos, run /compress again.",
+  );
+  await expect(page.locator(".file-meta")).toContainText("smaller");
+  await expect(page.locator("#feedback-actions")).toBeVisible();
+  await expect(page.locator("#review-prompt")).toHaveText(
+    "If you're enjoying Professor Compressor, please consider leaving a review and/or upvoting on Top.gg!",
+  );
+  await expect(page.locator("#review-prompt")).toBeVisible();
+  await expect(page.locator("#contact-help")).toBeHidden();
+  await expect(page.locator("#processing-privacy")).toBeHidden();
+  await expect(page.getByRole("link", { name: "Privacy Policy", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Terms of Service", exact: true })).toBeVisible();
+  await expect(page.locator("#review-prompt a")).toHaveAttribute(
+    "href",
+    "https://top.gg/bot/1550752400271351839",
+  );
+  await expect(page.locator("#page-heading")).toHaveText("Delivered to Discord");
+  await expect(page.locator("#completion-summary")).toHaveText(
+    /^✓ 1 video delivered · Completed in \d+:\d{2}$/,
+  );
+  await expect(page.locator("#completion-summary")).toBeVisible();
+  await expect(page.locator("#work")).toBeHidden();
+  await expect(page.locator(".file-card progress")).toBeHidden();
+  await expect(page.locator("#feedback-link")).toHaveCSS("background-color", "rgb(88, 101, 242)");
+  await expect(page.locator("#feedback-actions .support-link")).toHaveCSS(
+    "border-top-color",
+    "rgb(89, 103, 125)",
+  );
+  await expect(page.locator("#page-intro")).toBeHidden();
+  await expect(page.locator("#drop-zone")).toBeHidden();
+  await expect(page.locator("#clear-selection")).toBeHidden();
+  await expect(page.locator("#selection")).toBeHidden();
+  await expect(page.locator("#session-note")).toBeHidden();
+  await expect(page.locator("#stay-open")).toBeHidden();
+  await expect(page.locator("#performance-help")).toBeHidden();
+  await expect(page.locator("#format-help")).toBeHidden();
+  await expect(page.locator("#message")).toHaveCSS("text-align", "center");
+  await expect(page.getByRole("link", { name: "Contact Us" })).toHaveAttribute(
+    "href",
+    /^mailto:professorcompressor\.support@gmail\.com\?/,
+  );
+  await expect(page.getByRole("link", { name: "Join Discord Server" })).toHaveAttribute(
+    "href",
+    "https://discord.com/invite/32RWwNWyEH",
+  );
+  const actions = page.locator("#feedback-actions");
+  const firstAction = await actions.getByRole("link", { name: "Contact Us" }).boundingBox();
+  const secondAction = await actions
+    .getByRole("link", { name: "Join Discord Server" })
+    .boundingBox();
   const actionsBox = await actions.boundingBox();
-  expect(Math.abs((firstAction.x + secondAction.x + secondAction.width) / 2 -
-    (actionsBox.x + actionsBox.width / 2))).toBeLessThan(2);
+  expect(
+    Math.abs(
+      (firstAction.x + secondAction.x + secondAction.width) / 2 -
+        (actionsBox.x + actionsBox.width / 2),
+    ),
+  ).toBeLessThan(2);
 });
 
-test('single-thread fallback still encodes when multithread core is unavailable', async ({ page, request }) => {
-  await page.route('**/assets/**/core-mt-esm/**', route => route.abort());
+test("single-thread fallback still encodes when multithread core is unavailable", async ({
+  page,
+  request,
+}) => {
+  await page.route("**/assets/**/core-mt-esm/**", (route) => route.abort());
   await openSession(page, request);
-  await deliver(page, join(fixtures, 'large.mp4'));
+  await deliver(page, join(fixtures, "large.mp4"));
 });
 
-test('reloading a failed encoder keeps completed file progress intact', async ({ page, request }) => {
+test("reloading a failed encoder keeps completed file progress intact", async ({
+  page,
+  request,
+}) => {
   await page.addInitScript(() => {
     const send = Worker.prototype.postMessage;
     window.injectedWorkerFailure = false;
-    Worker.prototype.postMessage = function(message, ...rest) {
-      if (!window.injectedWorkerFailure && message?.type === 'WRITE_FILE') {
+    Worker.prototype.postMessage = function (message, ...rest) {
+      if (!window.injectedWorkerFailure && message?.type === "WRITE_FILE") {
         window.injectedWorkerFailure = true;
-        queueMicrotask(() => this.onmessage?.({data: {
-          id: message.id, type: 'ERROR', data: new Error('Injected worker write failure'),
-        }}));
+        queueMicrotask(() =>
+          this.onmessage?.({
+            data: {
+              id: message.id,
+              type: "ERROR",
+              data: new Error("Injected worker write failure"),
+            },
+          }),
+        );
         return;
       }
       return send.call(this, message, ...rest);
     };
   });
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles([
-    join(fixtures, 'small.mp4'), join(fixtures, 'large.mp4'),
-  ]);
+  await page
+    .locator("#clips")
+    .setInputFiles([join(fixtures, "small.mp4"), join(fixtures, "large.mp4")]);
   await page.evaluate(() => {
-    const firstStatus = document.querySelector('.file-status');
+    const firstStatus = document.querySelector(".file-status");
     window.firstFileStatuses = [firstStatus.textContent];
-    new MutationObserver(() => window.firstFileStatuses.push(firstStatus.textContent))
-      .observe(firstStatus, {childList:true, subtree:true, characterData:true});
+    new MutationObserver(() => window.firstFileStatuses.push(firstStatus.textContent)).observe(
+      firstStatus,
+      { childList: true, subtree: true, characterData: true },
+    );
   });
-  await page.locator('#submit').click();
-  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord', {timeout:60000});
-  const {injected, statuses} = await page.evaluate(() => ({
-    injected: window.injectedWorkerFailure, statuses: window.firstFileStatuses,
+  await page.locator("#submit").click();
+  await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord", { timeout: 60000 });
+  const { injected, statuses } = await page.evaluate(() => ({
+    injected: window.injectedWorkerFailure,
+    statuses: window.firstFileStatuses,
   }));
   expect(injected).toBe(true);
-  const completedAt = statuses.indexOf('Already fits');
+  const completedAt = statuses.indexOf("Already fits");
   expect(completedAt).toBeGreaterThanOrEqual(0);
-  expect(statuses.slice(completedAt + 1).some(status => status.startsWith('Loading'))).toBe(false);
+  expect(statuses.slice(completedAt + 1).some((status) => status.startsWith("Loading"))).toBe(
+    false,
+  );
 });
 
-test('ten fitting MP4s deliver together without loading an encoder', async ({ page, request }) => {
-  await page.route('**/assets/**/core*-esm/**', () => { throw new Error('Unexpected encoding'); });
+test("ten fitting MP4s deliver together without loading an encoder", async ({ page, request }) => {
+  await page.route("**/assets/**/core*-esm/**", () => {
+    throw new Error("Unexpected encoding");
+  });
   await openSession(page, request);
-  const bytes = readFileSync(join(fixtures, 'small.mp4'));
-  await deliver(page, Array.from({length:10}, (_, index) => ({
-    name:`clip-${index}.mp4`, mimeType:'video/mp4', buffer:bytes,
-  })));
-  await expect(page.locator('#phase-copy')).toContainText('10 file(s)');
+  const bytes = readFileSync(join(fixtures, "small.mp4"));
+  await deliver(
+    page,
+    Array.from({ length: 10 }, (_, index) => ({
+      name: `clip-${index}.mp4`,
+      mimeType: "video/mp4",
+      buffer: bytes,
+    })),
+  );
+  await expect(page.locator("#phase-copy")).toContainText("10 file(s)");
 });
 
-test('MP4 below Discord limit but above encoding target is sent unchanged', async ({ page, request }) => {
-  await page.route('**/assets/**/core*-esm/**', () => { throw new Error('Unexpected encoding'); });
+test("MP4 below Discord limit but above encoding target is sent unchanged", async ({
+  page,
+  request,
+}) => {
+  await page.route("**/assets/**/core*-esm/**", () => {
+    throw new Error("Unexpected encoding");
+  });
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.sentSize = body.get('clips').size;
-        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips")) {
+        window.sentSize = body.get("clips").size;
+        window.sentDiagnostics = JSON.parse(body.get("diagnostics"));
       }
       return originalSend.call(this, body);
     };
   });
   await openSession(page, request);
-  await deliver(page, join(fixtures, 'near-limit.mp4'));
+  await deliver(page, join(fixtures, "near-limit.mp4"));
   expect(await page.evaluate(() => window.sentSize)).toBe(1_090_000);
   expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(true);
 });
 
-test('small QuickTime MOV is converted to an actual MP4', async ({ page, request }) => {
+test("small QuickTime MOV is converted to an actual MP4", async ({ page, request }) => {
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips")) {
+        window.sentDiagnostics = JSON.parse(body.get("diagnostics"));
       }
       return originalSend.call(this, body);
     };
   });
   await openSession(page, request);
-  await deliver(page, join(fixtures, 'small.mov'));
+  await deliver(page, join(fixtures, "small.mov"));
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeNull();
   expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(true);
-  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('mov');
+  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe("mov");
   expect(await page.evaluate(() => window.sentDiagnostics[0].encoding_seconds)).toBe(0);
 });
 
-test('WebM conversion uses quality encoding when streams cannot be copied', async ({ page, request }) => {
+test("WebM conversion uses quality encoding when streams cannot be copied", async ({
+  page,
+  request,
+}) => {
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips")) {
+        window.sentDiagnostics = JSON.parse(body.get("diagnostics"));
       }
       return originalSend.call(this, body);
     };
   });
   await openSession(page, request);
-  await deliver(page, join(fixtures, 'sample.webm'));
+  await deliver(page, join(fixtures, "sample.webm"));
   expect(await page.evaluate(() => window.sentDiagnostics[0].copied)).toBe(false);
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeNull();
-  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('webm');
+  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe("webm");
   expect(await page.evaluate(() => window.sentDiagnostics[0].encoding_seconds)).toBeGreaterThan(0);
 });
 
-test('encoding timer includes failed attempts but excludes loading, probing and file copies', async ({page, request}) => {
+test("encoding timer includes failed attempts but excludes loading, probing and file copies", async ({
+  page,
+  request,
+}) => {
   await page.addInitScript(() => {
     let offset = 0;
     const realNow = performance.now.bind(performance);
-    Object.defineProperty(performance, 'now', {value: () => realNow() + offset});
+    Object.defineProperty(performance, "now", { value: () => realNow() + offset });
     const send = Worker.prototype.postMessage;
     window.encodeAttempts = 0;
-    Worker.prototype.postMessage = function(message, ...rest) {
-      if (['LOAD', 'FFPROBE', 'WRITE_FILE', 'READ_FILE'].includes(message?.type)) offset += 120000;
-      if (message?.type === 'EXEC') {
+    Worker.prototype.postMessage = function (message, ...rest) {
+      if (["LOAD", "FFPROBE", "WRITE_FILE", "READ_FILE"].includes(message?.type)) offset += 120000;
+      if (message?.type === "EXEC") {
         window.encodeAttempts++;
         offset += 5000;
         if (window.encodeAttempts === 1) {
-          queueMicrotask(() => this.onmessage?.({data: {
-            id: message.id, type: 'ERROR', data: new Error('Injected encode failure'),
-          }}));
+          queueMicrotask(() =>
+            this.onmessage?.({
+              data: {
+                id: message.id,
+                type: "ERROR",
+                data: new Error("Injected encode failure"),
+              },
+            }),
+          );
           return;
         }
       }
       return send.call(this, message, ...rest);
     };
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) window.timingDiagnostics = JSON.parse(body.get('diagnostics'));
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips"))
+        window.timingDiagnostics = JSON.parse(body.get("diagnostics"));
       return originalSend.call(this, body);
     };
   });
   await openSession(page, request);
-  await deliver(page, join(fixtures,'sample.webm'));
-  const {attempts, seconds} = await page.evaluate(() => ({attempts: window.encodeAttempts, seconds: window.timingDiagnostics[0].encoding_seconds}));
+  await deliver(page, join(fixtures, "sample.webm"));
+  const { attempts, seconds } = await page.evaluate(() => ({
+    attempts: window.encodeAttempts,
+    seconds: window.timingDiagnostics[0].encoding_seconds,
+  }));
   expect(attempts).toBe(2);
   expect(seconds).toBeGreaterThanOrEqual(10);
   expect(seconds).toBeLessThan(60);
 });
 
-test('Matroska header is identified as MKV without sending a filename', async ({ page, request }) => {
+test("Matroska header is identified as MKV without sending a filename", async ({
+  page,
+  request,
+}) => {
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips")) {
+        window.sentDiagnostics = JSON.parse(body.get("diagnostics"));
       }
       return originalSend.call(this, body);
     };
   });
   await openSession(page, request);
-  await deliver(page, join(fixtures, 'sample.mkv'));
-  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe('mkv');
-  expect(JSON.stringify(await page.evaluate(() => window.sentDiagnostics))).not.toContain('sample.mkv');
+  await deliver(page, join(fixtures, "sample.mkv"));
+  expect(await page.evaluate(() => window.sentDiagnostics[0].input_format)).toBe("mkv");
+  expect(JSON.stringify(await page.evaluate(() => window.sentDiagnostics))).not.toContain(
+    "sample.mkv",
+  );
 });
 
-test('oversized MOV conversion falls back to size-targeted encoding', async ({ page, request }) => {
-  const events=[];
-  page.on('request',request=>{if(request.url().endsWith('/events'))events.push(...request.postDataJSON().events);});
+test("oversized MOV conversion falls back to size-targeted encoding", async ({ page, request }) => {
+  const events = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/events")) events.push(...request.postDataJSON().events);
+  });
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.sentDiagnostics = JSON.parse(body.get('diagnostics'));
-        window.sentSize = body.get('clips').size;
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips")) {
+        window.sentDiagnostics = JSON.parse(body.get("diagnostics"));
+        window.sentSize = body.get("clips").size;
       }
       return originalSend.call(this, body);
     };
   });
-  const diagnosticsLoaded=page.waitForResponse(response=>response.url().endsWith('/brand/diagnostics.js'));
-  await openSession(page, request);await diagnosticsLoaded;
-  await deliver(page, join(fixtures, 'large.mov'));
+  const diagnosticsLoaded = page.waitForResponse((response) =>
+    response.url().endsWith("/brand/diagnostics.js"),
+  );
+  await openSession(page, request);
+  await diagnosticsLoaded;
+  await deliver(page, join(fixtures, "large.mov"));
   expect(await page.evaluate(() => window.sentDiagnostics[0].video_kbps)).toBeGreaterThan(100);
   expect(await page.evaluate(() => window.sentSize)).toBeLessThanOrEqual(1_078_000);
-  await expect.poll(()=>events.some(event=>event.event==='stage_started'&&event.data.command_mode==='bitrate'&&event.data.size_adjustment===true)).toBe(true);
+  await expect
+    .poll(() =>
+      events.some(
+        (event) =>
+          event.event === "stage_started" &&
+          event.data.command_mode === "bitrate" &&
+          event.data.size_adjustment === true,
+      ),
+    )
+    .toBe(true);
 });
 
-test('portrait variable-frame-rate video retains playable video and audio', async ({ page, request }) => {
+test("portrait variable-frame-rate video retains playable video and audio", async ({
+  page,
+  request,
+}) => {
   await page.addInitScript(() => {
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) {
-        window.preparedOutput = body.get('clips');
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips")) {
+        window.preparedOutput = body.get("clips");
       }
       return originalSend.call(this, body);
     };
   });
   await openSession(page, request);
-  await deliver(page, join(fixtures, 'portrait-audio-vfr.mov'));
-  const bytes = Buffer.from(await page.evaluate(async () =>
-    Array.from(new Uint8Array(await window.preparedOutput.arrayBuffer()))));
+  await deliver(page, join(fixtures, "portrait-audio-vfr.mov"));
+  const bytes = Buffer.from(
+    await page.evaluate(async () =>
+      Array.from(new Uint8Array(await window.preparedOutput.arrayBuffer())),
+    ),
+  );
   expect(bytes.length).toBeLessThanOrEqual(1_100_000);
-  const metadata = JSON.parse(execFileSync('ffprobe', [
-    '-v', 'error', '-count_frames', '-show_streams', '-of', 'json', '-i', 'pipe:0',
-  ], {input: bytes, maxBuffer: 2 * 1024 * 1024}));
-  const video = metadata.streams.find(stream => stream.codec_type === 'video');
-  const audio = metadata.streams.find(stream => stream.codec_type === 'audio');
-  expect(video.codec_name).toBe('h264');
+  const metadata = JSON.parse(
+    execFileSync(
+      "ffprobe",
+      ["-v", "error", "-count_frames", "-show_streams", "-of", "json", "-i", "pipe:0"],
+      { input: bytes, maxBuffer: 2 * 1024 * 1024 },
+    ),
+  );
+  const video = metadata.streams.find((stream) => stream.codec_type === "video");
+  const audio = metadata.streams.find((stream) => stream.codec_type === "audio");
+  expect(video.codec_name).toBe("h264");
   expect(video.height).toBeGreaterThan(video.width);
   expect(Number(video.nb_read_frames)).toBeGreaterThan(1);
-  expect(audio.codec_name).toBe('aac');
-  execFileSync('ffmpeg', [
-    '-v', 'error', '-xerror', '-i', 'pipe:0', '-f', 'null', '-',
-  ], {input: bytes});
+  expect(audio.codec_name).toBe("aac");
+  execFileSync("ffmpeg", ["-v", "error", "-xerror", "-i", "pipe:0", "-f", "null", "-"], {
+    input: bytes,
+  });
 });
 
-test('cancelling during the session check does not start the video engine', async ({ page, request }) => {
+test("cancelling during the session check does not start the video engine", async ({
+  page,
+  request,
+}) => {
   let releaseCheck;
   let markArrived;
-  const arrived = new Promise(resolve => { markArrived = resolve; });
+  const arrived = new Promise((resolve) => {
+    markArrived = resolve;
+  });
   let coreRequests = 0;
-  page.on('request', req => {
+  page.on("request", (req) => {
     if (/\/core(?:-mt)?-esm\//.test(new URL(req.url()).pathname)) coreRequests++;
   });
-  await page.route('**/heartbeat', async route => {
-    const release = new Promise(resolve => { releaseCheck = resolve; });
+  await page.route("**/heartbeat", async (route) => {
+    const release = new Promise((resolve) => {
+      releaseCheck = resolve;
+    });
     markArrived();
     await release;
     await route.continue();
   });
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
-  await page.locator('#submit').click();
+  await page.locator("#clips").setInputFiles(join(fixtures, "large.mp4"));
+  await page.locator("#submit").click();
   await arrived;
-  await page.locator('#cancel').click();
+  await page.locator("#cancel").click();
   releaseCheck();
-  await expect(page.locator('#submit')).toBeEnabled();
-  await expect(page.locator('#message')).toContainText('Cancelled');
+  await expect(page.locator("#submit")).toBeEnabled();
+  await expect(page.locator("#message")).toContainText("Cancelled");
   expect(coreRequests).toBe(0);
 });
 
 for (const width of [375, 1440]) {
-  test(`focused processing view hides selection and restores it after cancellation at ${width}px`, async ({ page, request }) => {
-    await page.setViewportSize({width, height:900});
+  test(`focused processing view hides selection and restores it after cancellation at ${width}px`, async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
     let releaseCheck;
     let markArrived;
-    const arrived = new Promise(resolve => { markArrived = resolve; });
-    await page.route('**/heartbeat', async route => {
+    const arrived = new Promise((resolve) => {
+      markArrived = resolve;
+    });
+    await page.route("**/heartbeat", async (route) => {
       markArrived();
-      await new Promise(resolve => { releaseCheck = resolve; });
+      await new Promise((resolve) => {
+        releaseCheck = resolve;
+      });
       await route.continue();
     });
     await openSession(page, request);
-    await expect(page.locator('.caption-help')).toHaveText('1,000-character limit.');
-    await page.locator('#caption').fill('Preserve my caption');
-    await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
-    await page.locator('#submit').click();
+    await expect(page.locator(".caption-help")).toHaveText("1,000-character limit.");
+    await page.locator("#caption").fill("Preserve my caption");
+    await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+    await page.locator("#submit").click();
     await arrived;
-    await expect(page.locator('#page-heading')).toHaveText('Compression in progress');
-    await expect(page.locator('#stay-open')).toBeVisible();
-    await expect(page.locator('#stay-open')).toContainText('Keep this page open and active until it finishes.');
-    await expect(page.locator('#stay-open')).toContainText('This helps compression run at full speed.');
-    for (const selector of ['#picker-row', '#caption', '.caption-label', '.caption-help', '#selection', '#session-note', '#submit', '#format-help', '#performance-help', '#page-intro']) {
+    await expect(page.locator("#page-heading")).toHaveText("Compression in progress");
+    await expect(page.locator("#stay-open")).toBeVisible();
+    await expect(page.locator("#stay-open")).toContainText(
+      "Keep this page open and active until it finishes.",
+    );
+    await expect(page.locator("#stay-open")).toContainText(
+      "This helps compression run at full speed.",
+    );
+    for (const selector of [
+      "#picker-row",
+      "#caption",
+      ".caption-label",
+      ".caption-help",
+      "#selection",
+      "#session-note",
+      "#submit",
+      "#format-help",
+      "#performance-help",
+      "#page-intro",
+    ]) {
       await expect(page.locator(selector)).toBeHidden();
     }
-    await expect(page.locator('#files')).toBeVisible();
-    await expect(page.locator('#work')).toBeVisible();
-    await expect(page.locator('#cancel')).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const workBox = await page.locator('#work').boundingBox();
-    const cancelBox = await page.locator('#cancel').boundingBox();
+    await expect(page.locator("#files")).toBeVisible();
+    await expect(page.locator("#work")).toBeVisible();
+    await expect(page.locator("#cancel")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    const workBox = await page.locator("#work").boundingBox();
+    const cancelBox = await page.locator("#cancel").boundingBox();
     expect(cancelBox.y).toBeGreaterThanOrEqual(workBox.y + workBox.height);
-    await page.screenshot({path:test.info().outputPath(`processing-${width}.png`),fullPage:true});
-    await page.locator('#cancel').click();
+    await page.screenshot({
+      path: test.info().outputPath(`processing-${width}.png`),
+      fullPage: true,
+    });
+    await page.locator("#cancel").click();
     releaseCheck();
-    await expect(page.locator('#submit')).toBeVisible();
-    await expect(page.locator('#submit')).toBeEnabled();
-    await expect(page.locator('#picker-row')).toBeVisible();
-    await expect(page.locator('#caption')).toBeVisible();
-    await expect(page.locator('#caption')).toHaveValue('Preserve my caption');
-    expect(await page.locator('#clips').evaluate(el => el.files.length)).toBe(1);
-    await expect(page.locator('.file-card')).toHaveCount(1);
-    await expect(page.locator('#page-heading')).toHaveText('Compress videos for Discord');
-    await page.unroute('**/heartbeat');
-    await page.locator('#submit').click();
-    await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
-    await expect(page.locator('#picker-row')).toBeHidden();
-    await expect(page.locator('#caption')).toBeHidden();
-    await expect(page.locator('#cancel')).toBeHidden();
+    await expect(page.locator("#submit")).toBeVisible();
+    await expect(page.locator("#submit")).toBeEnabled();
+    await expect(page.locator("#picker-row")).toBeVisible();
+    await expect(page.locator("#caption")).toBeVisible();
+    await expect(page.locator("#caption")).toHaveValue("Preserve my caption");
+    expect(await page.locator("#clips").evaluate((el) => el.files.length)).toBe(1);
+    await expect(page.locator(".file-card")).toHaveCount(1);
+    await expect(page.locator("#page-heading")).toHaveText("Compress videos for Discord");
+    await page.unroute("**/heartbeat");
+    await page.locator("#submit").click();
+    await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord");
+    await expect(page.locator("#picker-row")).toBeHidden();
+    await expect(page.locator("#caption")).toBeHidden();
+    await expect(page.locator("#cancel")).toBeHidden();
   });
 }
 
-for (const name of ['sample.mkv', 'sample.avi', 'sample.webm', 'sample.wmv',
-  'sample.m2ts', 'sample.3gp', 'sample.mpg', 'sample.ogv', 'sample.flv', 'sample.ts',
-  'hevc.mkv']) {
-  test(`converts ${name} using encoder metadata rather than browser codecs`, async ({ page, request }) => {
+for (const name of [
+  "sample.mkv",
+  "sample.avi",
+  "sample.webm",
+  "sample.wmv",
+  "sample.m2ts",
+  "sample.3gp",
+  "sample.mpg",
+  "sample.ogv",
+  "sample.flv",
+  "sample.ts",
+  "hevc.mkv",
+]) {
+  test(`converts ${name} using encoder metadata rather than browser codecs`, async ({
+    page,
+    request,
+  }) => {
     await openSession(page, request);
     await deliver(page, join(fixtures, name));
   });
 }
 
-test('unsupported AV1 fails without uploading and allows a supported replacement', async ({ page, request }) => {
+test("unsupported AV1 fails without uploading and allows a supported replacement", async ({
+  page,
+  request,
+}) => {
   let uploads = 0;
-  page.on('request', req => {
-    if (req.method() === 'POST' && /\/upload\/[^/]+$/.test(new URL(req.url()).pathname)) uploads++;
+  page.on("request", (req) => {
+    if (req.method() === "POST" && /\/upload\/[^/]+$/.test(new URL(req.url()).pathname)) uploads++;
   });
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'av1.mkv'));
-  await page.locator('#submit').click();
+  await page.locator("#clips").setInputFiles(join(fixtures, "av1.mkv"));
+  await page.locator("#submit").click();
   // The pinned core may reject AV1 during metadata probing before it can
   // identify the codec. Explain only the evidence actually reported.
-  await expect(page.locator('#message')).toContainText(/AV1.*cannot convert|codec is not supported|reported invalid media data/, {timeout:30000});
-  await expect(page.locator('#feedback-actions')).toBeVisible();
-  await expect(page.locator('#format-help')).toBeVisible();
-  await expect(page.getByRole('link', {name: 'Contact Us'})).toBeVisible();
-  await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(failure\)/);
+  await expect(page.locator("#message")).toContainText(
+    /AV1.*cannot convert|codec is not supported|reported invalid media data/,
+    { timeout: 30000 },
+  );
+  await expect(page.locator("#feedback-actions")).toBeVisible();
+  await expect(page.locator("#format-help")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Contact Us" })).toBeVisible();
+  await expect(page.locator("#feedback-link")).toHaveAttribute("href", /feedback%20\(failure\)/);
   expect(uploads).toBe(0);
-  await page.getByRole('button', {name: 'Remove av1.mkv'}).click();
-  await deliver(page, join(fixtures, 'small.mp4'));
-  await expect(page.locator('#format-help')).toBeHidden();
-  await expect(page.locator('#feedback-link')).toHaveAttribute('href', /feedback%20\(success\)/);
+  await page.getByRole("button", { name: "Remove av1.mkv" }).click();
+  await deliver(page, join(fixtures, "small.mp4"));
+  await expect(page.locator("#format-help")).toBeHidden();
+  await expect(page.locator("#feedback-link")).toHaveAttribute("href", /feedback%20\(success\)/);
 });
 
-async function dropFiles(page, count, target = '#drop-zone') {
-  const transfer = await page.evaluateHandle(({ bytes, count }) => {
-    const dt = new DataTransfer();
-    for (let i = 0; i < count; i++) dt.items.add(new File([new Uint8Array(bytes)], `clip-${i}.mp4`, {type:'video/mp4', lastModified:123}));
-    return dt;
-  }, {bytes:Array.from(readFileSync(join(fixtures, 'small.mp4'))), count});
-  await page.locator(target).dispatchEvent('drop', {dataTransfer:transfer});
+async function dropFiles(page, count, target = "#drop-zone") {
+  const transfer = await page.evaluateHandle(
+    ({ bytes, count }) => {
+      const dt = new DataTransfer();
+      for (let i = 0; i < count; i++)
+        dt.items.add(
+          new File([new Uint8Array(bytes)], `clip-${i}.mp4`, {
+            type: "video/mp4",
+            lastModified: 123,
+          }),
+        );
+      return dt;
+    },
+    { bytes: Array.from(readFileSync(join(fixtures, "small.mp4"))), count },
+  );
+  await page.locator(target).dispatchEvent("drop", { dataTransfer: transfer });
   await transfer.dispose();
 }
 
-test('dropped videos populate the input and deliver together', async ({ page, request }) => {
+test("dropped videos populate the input and deliver together", async ({ page, request }) => {
   await openSession(page, request);
   await dropFiles(page, 2);
-  await expect(page.locator('.file-card')).toHaveCount(2);
-  await page.locator('#submit').click();
-  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
+  await expect(page.locator(".file-card")).toHaveCount(2);
+  await page.locator("#submit").click();
+  await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord");
   await dropFiles(page, 1);
-  await expect(page.locator('.file-card')).toHaveCount(2);
+  await expect(page.locator(".file-card")).toHaveCount(2);
 });
 
-test('page-wide drops append once, preserve the caption, and show selection errors above the picker', async ({ page, request }) => {
+test("page-wide drops append once, preserve the caption, and show selection errors above the picker", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
-  await page.locator('#caption').fill('Keep this caption');
-  await dropFiles(page, 1, '#page-heading');
-  await expect(page.locator('.file-card')).toHaveCount(1);
-  await dropFiles(page, 2, '#caption');
-  await expect(page.locator('.file-card')).toHaveCount(2);
-  await dropFiles(page, 11, 'body');
-  await expect(page.locator('#message')).toContainText('no more than 10');
-  await expect(page.locator('.file-card')).toHaveCount(2);
-  await expect(page.locator('#caption')).toHaveValue('Keep this caption');
-  expect(await page.evaluate(() => Boolean(document.getElementById('message')
-    .compareDocumentPosition(document.getElementById('picker-row')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
-  await expect(page.locator('#message')).toBeFocused();
-  await page.getByRole('button', {name: 'Remove clip-0.mp4'}).click();
-  await expect(page.locator('#message')).toBeHidden();
-  await page.locator('#submit').click();
-  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
-  expect(await page.evaluate(() => Boolean(document.querySelector('.controls')
-    .compareDocumentPosition(document.getElementById('message')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
-  await dropFiles(page, 3, 'body');
-  await expect(page.locator('.file-card')).toHaveCount(1);
+  await page.locator("#caption").fill("Keep this caption");
+  await dropFiles(page, 1, "#page-heading");
+  await expect(page.locator(".file-card")).toHaveCount(1);
+  await dropFiles(page, 2, "#caption");
+  await expect(page.locator(".file-card")).toHaveCount(2);
+  await dropFiles(page, 11, "body");
+  await expect(page.locator("#message")).toContainText("no more than 10");
+  await expect(page.locator(".file-card")).toHaveCount(2);
+  await expect(page.locator("#caption")).toHaveValue("Keep this caption");
+  expect(
+    await page.evaluate(() =>
+      Boolean(
+        document
+          .getElementById("message")
+          .compareDocumentPosition(document.getElementById("picker-row")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ),
+  ).toBe(true);
+  await expect(page.locator("#message")).toBeFocused();
+  await page.getByRole("button", { name: "Remove clip-0.mp4" }).click();
+  await expect(page.locator("#message")).toBeHidden();
+  await page.locator("#submit").click();
+  await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord");
+  expect(
+    await page.evaluate(() =>
+      Boolean(
+        document
+          .querySelector(".controls")
+          .compareDocumentPosition(document.getElementById("message")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ),
+  ).toBe(true);
+  await dropFiles(page, 3, "body");
+  await expect(page.locator(".file-card")).toHaveCount(1);
 });
 
-test('page-wide file drag feedback clears and text drops do not select files', async ({ page, request }) => {
+test("page-wide file drag feedback clears and text drops do not select files", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
   await page.evaluate(() => {
     const transfer = new DataTransfer();
-    transfer.items.add(new File(['test'], 'clip.mp4', {type:'video/mp4'}));
-    document.body.dispatchEvent(new DragEvent('dragenter', {bubbles:true, dataTransfer:transfer}));
+    transfer.items.add(new File(["test"], "clip.mp4", { type: "video/mp4" }));
+    document.body.dispatchEvent(
+      new DragEvent("dragenter", { bubbles: true, dataTransfer: transfer }),
+    );
   });
-  await expect(page.locator('#drop-zone')).toHaveClass(/drag-over/);
-  await page.evaluate(() => window.dispatchEvent(new Event('dragend')));
-  await expect(page.locator('#drop-zone')).not.toHaveClass(/drag-over/);
+  await expect(page.locator("#drop-zone")).toHaveClass(/drag-over/);
+  await page.evaluate(() => window.dispatchEvent(new Event("dragend")));
+  await expect(page.locator("#drop-zone")).not.toHaveClass(/drag-over/);
   await page.evaluate(() => {
     const transfer = new DataTransfer();
-    transfer.setData('text/plain', 'not a video');
-    document.body.dispatchEvent(new DragEvent('dragenter', {bubbles:true, dataTransfer:transfer}));
-    document.body.dispatchEvent(new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:transfer}));
+    transfer.setData("text/plain", "not a video");
+    document.body.dispatchEvent(
+      new DragEvent("dragenter", { bubbles: true, dataTransfer: transfer }),
+    );
+    document.body.dispatchEvent(
+      new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }),
+    );
   });
-  await expect(page.locator('#drop-zone')).not.toHaveClass(/drag-over/);
-  await expect(page.locator('.file-card')).toHaveCount(0);
-  await expect(page.locator('#message')).toBeHidden();
+  await expect(page.locator("#drop-zone")).not.toHaveClass(/drag-over/);
+  await expect(page.locator(".file-card")).toHaveCount(0);
+  await expect(page.locator("#message")).toBeHidden();
 });
 
-test('later selections add to the batch and per-file removal keeps the rest', async ({ page, request }) => {
+test("later selections add to the batch and per-file removal keeps the rest", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mov'));
-  await expect(page.locator('.file-name')).toHaveText(['small.mp4', 'small.mov']);
-  await expect(page.locator('#selection')).toContainText('2 videos selected');
-  await page.getByRole('button', {name: 'Remove small.mp4'}).click();
-  await expect(page.locator('.file-name')).toHaveText(['small.mov']);
-  await expect(page.getByRole('button', {name: 'Remove small.mov'})).toBeFocused();
-  expect(await page.locator('#clips').evaluate(input => Array.from(input.files, file => file.name))).toEqual(['small.mov']);
-  await page.locator('#submit').click();
-  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord');
-  await expect(page.locator('.remove-file')).toBeHidden();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mov"));
+  await expect(page.locator(".file-name")).toHaveText(["small.mp4", "small.mov"]);
+  await expect(page.locator("#selection")).toContainText("2 videos selected");
+  await page.getByRole("button", { name: "Remove small.mp4" }).click();
+  await expect(page.locator(".file-name")).toHaveText(["small.mov"]);
+  await expect(page.getByRole("button", { name: "Remove small.mov" })).toBeFocused();
+  expect(
+    await page.locator("#clips").evaluate((input) => Array.from(input.files, (file) => file.name)),
+  ).toEqual(["small.mov"]);
+  await page.locator("#submit").click();
+  await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord");
+  await expect(page.locator(".remove-file")).toBeHidden();
 });
 
-test('file picker and drag-and-drop both append without duplicating a selected file', async ({ page, request }) => {
+test("file picker and drag-and-drop both append without duplicating a selected file", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
   await dropFiles(page, 2);
-  await expect(page.locator('.file-card')).toHaveCount(3);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
-  await expect(page.locator('.file-card')).toHaveCount(3);
-  await expect(page.locator('#message')).toContainText('already selected');
-  await page.getByRole('button', {name: 'Remove clip-0.mp4'}).click();
-  await expect(page.locator('.file-name')).toHaveText(['small.mp4', 'clip-1.mp4']);
-  await expect(page.locator('#submit')).toBeEnabled();
+  await expect(page.locator(".file-card")).toHaveCount(3);
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await expect(page.locator(".file-card")).toHaveCount(3);
+  await expect(page.locator("#message")).toContainText("already selected");
+  await page.getByRole("button", { name: "Remove clip-0.mp4" }).click();
+  await expect(page.locator(".file-name")).toHaveText(["small.mp4", "clip-1.mp4"]);
+  await expect(page.locator("#submit")).toBeEnabled();
 });
 
-test('canceling a later file selection keeps the current batch', async ({ page, request }) => {
+test("canceling a later file selection keeps the current batch", async ({ page, request }) => {
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
-  await page.locator('#clips').setInputFiles([]);
-  await expect(page.locator('.file-name')).toHaveText(['small.mp4']);
-  expect(await page.locator('#clips').evaluate(input => Array.from(input.files, file => file.name))).toEqual(['small.mp4']);
-  await expect(page.locator('#submit')).toBeEnabled();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await page.locator("#clips").setInputFiles([]);
+  await expect(page.locator(".file-name")).toHaveText(["small.mp4"]);
+  expect(
+    await page.locator("#clips").evaluate((input) => Array.from(input.files, (file) => file.name)),
+  ).toEqual(["small.mp4"]);
+  await expect(page.locator("#submit")).toBeEnabled();
 });
 
-test('duplicate videos within one selection appear only once', async ({ page, request }) => {
+test("duplicate videos within one selection appear only once", async ({ page, request }) => {
   await openSession(page, request);
-  const bytes = Array.from(readFileSync(join(fixtures, 'small.mp4')));
-  await page.evaluate(bytes => {
+  const bytes = Array.from(readFileSync(join(fixtures, "small.mp4")));
+  await page.evaluate((bytes) => {
     const transfer = new DataTransfer();
     for (let i = 0; i < 2; i++) {
-      transfer.items.add(new File([new Uint8Array(bytes)], 'same.mp4',
-        {type:'video/mp4', lastModified:123}));
+      transfer.items.add(
+        new File([new Uint8Array(bytes)], "same.mp4", { type: "video/mp4", lastModified: 123 }),
+      );
     }
-    document.getElementById('drop-zone').dispatchEvent(
-      new DragEvent('drop', {dataTransfer:transfer, bubbles:true, cancelable:true}));
+    document
+      .getElementById("drop-zone")
+      .dispatchEvent(
+        new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }),
+      );
   }, bytes);
-  await expect(page.locator('.file-card')).toHaveCount(1);
-  await expect(page.locator('#selection')).toContainText('1 video selected');
+  await expect(page.locator(".file-card")).toHaveCount(1);
+  await expect(page.locator("#selection")).toContainText("1 video selected");
 });
 
-test('adding past the ten-file limit preserves the existing batch', async ({ page, request }) => {
+test("adding past the ten-file limit preserves the existing batch", async ({ page, request }) => {
   await openSession(page, request);
   await dropFiles(page, 9);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
-  await expect(page.locator('.file-card')).toHaveCount(10);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mov'));
-  await expect(page.locator('#message')).toContainText('no more than 10');
-  await expect(page.locator('.file-card')).toHaveCount(10);
-  await expect(page.locator('.file-name').last()).toHaveText('small.mp4');
-  await page.getByRole('button', {name: 'Remove clip-0.mp4'}).click();
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mov'));
-  await expect(page.locator('.file-card')).toHaveCount(10);
-  await expect(page.locator('.file-name').last()).toHaveText('small.mov');
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await expect(page.locator(".file-card")).toHaveCount(10);
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mov"));
+  await expect(page.locator("#message")).toContainText("no more than 10");
+  await expect(page.locator(".file-card")).toHaveCount(10);
+  await expect(page.locator(".file-name").last()).toHaveText("small.mp4");
+  await page.getByRole("button", { name: "Remove clip-0.mp4" }).click();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mov"));
+  await expect(page.locator(".file-card")).toHaveCount(10);
+  await expect(page.locator(".file-name").last()).toHaveText("small.mov");
 });
 
-test('trash button clears chosen or dropped videos before processing', async ({ page, request }) => {
+test("trash button clears chosen or dropped videos before processing", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
-  const clear = page.getByRole('button', {name: 'Clear selected videos'});
+  const clear = page.getByRole("button", { name: "Clear selected videos" });
   await expect(clear).toBeDisabled();
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
   await expect(clear).toBeEnabled();
-  await expect(page.locator('.file-card')).toHaveCount(1);
+  await expect(page.locator(".file-card")).toHaveCount(1);
   await clear.click();
-  await expect(page.locator('#selection')).toHaveText('No videos selected');
-  await expect(page.locator('.file-card')).toHaveCount(0);
-  await expect(page.locator('#submit')).toBeDisabled();
+  await expect(page.locator("#selection")).toHaveText("No videos selected");
+  await expect(page.locator(".file-card")).toHaveCount(0);
+  await expect(page.locator("#submit")).toBeDisabled();
   await expect(clear).toBeDisabled();
-  expect(await page.locator('#clips').evaluate(input => input.files.length)).toBe(0);
+  expect(await page.locator("#clips").evaluate((input) => input.files.length)).toBe(0);
   await dropFiles(page, 2);
-  await expect(page.locator('.file-card')).toHaveCount(2);
+  await expect(page.locator(".file-card")).toHaveCount(2);
   await clear.click();
-  await expect(page.locator('#selection')).toHaveText('No videos selected');
-  await expect(page.locator('.file-card')).toHaveCount(0);
-  await expect(page.locator('#submit')).toBeDisabled();
+  await expect(page.locator("#selection")).toHaveText("No videos selected");
+  await expect(page.locator(".file-card")).toHaveCount(0);
+  await expect(page.locator("#submit")).toBeDisabled();
 });
 
-test('too many dropped files preserves the existing selection', async ({ page, request }) => {
+test("too many dropped files preserves the existing selection", async ({ page, request }) => {
   await openSession(page, request);
   await dropFiles(page, 1);
   await dropFiles(page, 11);
-  await expect(page.locator('#message')).toContainText('no more than 10');
-  await expect(page.locator('#message')).toBeVisible();
-  await expect(page.locator('.file-card')).toHaveCount(1);
+  await expect(page.locator("#message")).toContainText("no more than 10");
+  await expect(page.locator("#message")).toBeVisible();
+  await expect(page.locator(".file-card")).toHaveCount(1);
 });
 
-test('audio-only and damaged containers fail clearly and allow another selection', async ({ page, request }) => {
+test("audio-only and damaged containers fail clearly and allow another selection", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'audio.webm'));
-  await page.locator('#submit').click();
-  await expect(page.locator('#message')).toContainText('No video stream', { timeout: 30000 });
-  await page.getByRole('button', {name: 'Remove audio.webm'}).click();
-  await page.locator('#clips').setInputFiles({name:'broken.mkv', mimeType:'video/x-matroska',
-    buffer:Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0])});
-  await page.locator('#submit').click();
-  await expect(page.locator('#message')).toContainText('reported invalid media data', { timeout: 30000 });
-  await page.getByRole('button', {name: 'Remove broken.mkv'}).click();
-  await deliver(page, join(fixtures, 'small.mp4'));
+  await page.locator("#clips").setInputFiles(join(fixtures, "audio.webm"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#message")).toContainText("No video stream", { timeout: 30000 });
+  await page.getByRole("button", { name: "Remove audio.webm" }).click();
+  await page.locator("#clips").setInputFiles({
+    name: "broken.mkv",
+    mimeType: "video/x-matroska",
+    buffer: Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]),
+  });
+  await page.locator("#submit").click();
+  await expect(page.locator("#message")).toContainText("reported invalid media data", {
+    timeout: 30000,
+  });
+  await page.getByRole("button", { name: "Remove broken.mkv" }).click();
+  await deliver(page, join(fixtures, "small.mp4"));
 });
 
-test('drops cannot replace files while compression is running', async ({ page, request }) => {
+test("drops cannot replace files while compression is running", async ({ page, request }) => {
   let release;
-  const gate = new Promise(resolve => { release = resolve; });
-  await page.route('**/assets/**/core-mt-esm/ffmpeg-core.js', async route => {
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/assets/**/core-mt-esm/ffmpeg-core.js", async (route) => {
     await gate;
     await route.continue();
   });
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
-  await page.locator('#submit').click();
-  await expect(page.locator('#clips')).toBeDisabled();
-  await expect(page.locator('#clear-selection')).toBeDisabled();
-  await expect(page.locator('#clear-selection')).toBeHidden();
-  await expect(page.locator('.remove-file')).toBeHidden();
-  await expect(page.locator('#phase-title')).toHaveText('Loading video engine');
-  await expect(page.locator('#run-detail')).toHaveText('Starting video engine');
-  await expect(page.locator('.file-status')).toHaveText('Loading video engine');
-  await dropFiles(page, 2, 'body');
-  await expect(page.locator('.file-card')).toHaveCount(1);
-  await expect(page.locator('.file-name')).toHaveText('large.mp4');
+  await page.locator("#clips").setInputFiles(join(fixtures, "large.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#clips")).toBeDisabled();
+  await expect(page.locator("#clear-selection")).toBeDisabled();
+  await expect(page.locator("#clear-selection")).toBeHidden();
+  await expect(page.locator(".remove-file")).toBeHidden();
+  await expect(page.locator("#phase-title")).toHaveText("Loading video engine");
+  await expect(page.locator("#run-detail")).toHaveText("Starting video engine");
+  await expect(page.locator(".file-status")).toHaveText("Loading video engine");
+  await dropFiles(page, 2, "body");
+  await expect(page.locator(".file-card")).toHaveCount(1);
+  await expect(page.locator(".file-name")).toHaveText("large.mp4");
   release();
-  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord', { timeout: 60000 });
+  await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord", { timeout: 60000 });
 });
 
-test('folder drops are rejected and outside drops do not navigate away', async ({ page, request }) => {
+test("folder drops are rejected and outside drops do not navigate away", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
   const url = page.url();
-  expect(await page.evaluate(() => {
-    const event = new Event('drop', {bubbles:true, cancelable:true});
-    Object.defineProperty(event, 'dataTransfer', {value:{items:[{
-      webkitGetAsEntry: () => ({isDirectory:true}),
-    }], files:[]}});
-    return document.body.dispatchEvent(event);
-  })).toBe(false);
-  await expect(page.locator('#message')).toBeVisible();
-  await expect(page.locator('#message')).toContainText('not folders');
-  expect(await page.evaluate(() => document.body.dispatchEvent(
-    new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:new DataTransfer()})
-  ))).toBe(false);
+  expect(
+    await page.evaluate(() => {
+      const event = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", {
+        value: {
+          items: [
+            {
+              webkitGetAsEntry: () => ({ isDirectory: true }),
+            },
+          ],
+          files: [],
+        },
+      });
+      return document.body.dispatchEvent(event);
+    }),
+  ).toBe(false);
+  await expect(page.locator("#message")).toBeVisible();
+  await expect(page.locator("#message")).toContainText("not folders");
+  expect(
+    await page.evaluate(() =>
+      document.body.dispatchEvent(
+        new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: new DataTransfer(),
+        }),
+      ),
+    ),
+  ).toBe(false);
   expect(page.url()).toBe(url);
 });
 
-test('invalid input can be removed and retried in the same session', async ({ page, request }) => {
+test("invalid input can be removed and retried in the same session", async ({ page, request }) => {
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles({name:'bad.mp4', mimeType:'video/mp4', buffer:Buffer.from('not video')});
-  await page.locator('#submit').click();
-  await expect(page.locator('#phase-title')).toHaveText('Action needed');
-  expect(await page.evaluate(() => Boolean(document.querySelector('.controls')
-    .compareDocumentPosition(document.getElementById('message')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
-  await expect(page.locator('#picker-row')).toBeVisible();
-  await expect(page.locator('#caption')).toBeVisible();
-  await page.getByRole('button', {name: 'Remove bad.mp4'}).click();
-  await deliver(page, join(fixtures, 'small.mp4'));
+  await page
+    .locator("#clips")
+    .setInputFiles({ name: "bad.mp4", mimeType: "video/mp4", buffer: Buffer.from("not video") });
+  await page.locator("#submit").click();
+  await expect(page.locator("#phase-title")).toHaveText("Action needed");
+  expect(
+    await page.evaluate(() =>
+      Boolean(
+        document
+          .querySelector(".controls")
+          .compareDocumentPosition(document.getElementById("message")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ),
+  ).toBe(true);
+  await expect(page.locator("#picker-row")).toBeVisible();
+  await expect(page.locator("#caption")).toBeVisible();
+  await page.getByRole("button", { name: "Remove bad.mp4" }).click();
+  await deliver(page, join(fixtures, "small.mp4"));
 });
 
-test('cancel during engine loading settles before another attempt', async ({ page, request }) => {
-  await page.route('**/assets/**/core-mt-esm/ffmpeg-core.js', async route => {
-    await new Promise(resolve => setTimeout(resolve, 500));
+test("cancel during engine loading settles before another attempt", async ({ page, request }) => {
+  // Hold the engine core until Cancel is pressed, so cancellation always lands mid-load.
+  let engineRequested, releaseEngine;
+  const engineLoading = new Promise((resolve) => (engineRequested = resolve));
+  const engineReleased = new Promise((resolve) => (releaseEngine = resolve));
+  await page.route("**/assets/**/core-mt-esm/ffmpeg-core.js", async (route) => {
+    engineRequested();
+    await engineReleased;
     await route.continue();
   });
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
-  await page.locator('#submit').click();
-  await page.locator('#cancel').click();
-  await expect(page.locator('#submit')).toBeEnabled({timeout:30000});
-  await page.getByRole('button', {name: 'Remove large.mp4'}).click();
-  await deliver(page, join(fixtures, 'small.mp4'));
+  await page.locator("#clips").setInputFiles(join(fixtures, "large.mp4"));
+  await page.locator("#submit").click();
+  await engineLoading;
+  await page.locator("#cancel").click();
+  releaseEngine();
+  await expect(page.locator("#submit")).toBeEnabled({ timeout: 30000 });
+  await page.getByRole("button", { name: "Remove large.mp4" }).click();
+  await deliver(page, join(fixtures, "small.mp4"));
 });
 
-test('same browser can refresh and reselect without retaining local files', async ({ page, request }) => {
+test("same browser can refresh and reselect without retaining local files", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
   const url = page.url();
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
   await page.reload();
-  await expect(page.getByRole('heading')).toHaveText('Compress videos for Discord');
-  await expect(page.getByRole('status')).toContainText('Page refreshed');
-  await expect(page.getByRole('status')).not.toContainText('Check Discord first');
-  await expect(page.locator('#selection')).toHaveText('No videos selected');
+  await expect(page.getByRole("heading")).toHaveText("Compress videos for Discord");
+  await expect(page.getByRole("status")).toContainText("Page refreshed");
+  await expect(page.getByRole("status")).not.toContainText("Check Discord first");
+  await expect(page.locator("#selection")).toHaveText("No videos selected");
   expect(page.url()).toBe(url);
-  await deliver(page, join(fixtures, 'small.mp4'));
+  await deliver(page, join(fixtures, "small.mp4"));
 });
 
-test('claimed link is unavailable in another browser context', async ({ page, request, browser }) => {
+test("claimed link is unavailable in another browser context", async ({
+  page,
+  request,
+  browser,
+}) => {
   await openSession(page, request);
   const stranger = await browser.newContext();
   try {
     const otherPage = await stranger.newPage();
     await otherPage.goto(page.url());
-    await expect(otherPage.getByRole('heading')).toHaveText('Private link unavailable');
-    await expect(otherPage.locator('#clips')).toHaveCount(0);
-    await expect(page.locator('#submit')).toBeVisible();
+    await expect(otherPage.getByRole("heading")).toHaveText("Private link unavailable");
+    await expect(otherPage.locator("#clips")).toHaveCount(0);
+    await expect(page.locator("#submit")).toBeVisible();
   } finally {
     await stranger.close();
   }
 });
 
-test('refresh during local compression restarts with explicit file re-selection', async ({ page, request }) => {
+test("refresh during local compression restarts with explicit file re-selection", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures, 'large.mp4'));
-  await page.locator('#submit').click();
-  await expect(page.locator('#work')).toBeVisible();
+  await page.locator("#clips").setInputFiles(join(fixtures, "large.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#work")).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading')).toHaveText('Compress videos for Discord');
-  await expect(page.getByRole('status')).toContainText('Choose them again');
-  await expect(page.locator('#selection')).toHaveText('No videos selected');
-  await deliver(page, join(fixtures, 'small.mp4'));
+  await expect(page.getByRole("heading")).toHaveText("Compress videos for Discord");
+  await expect(page.getByRole("status")).toContainText("Choose them again");
+  await expect(page.locator("#selection")).toHaveText("No videos selected");
+  await deliver(page, join(fixtures, "small.mp4"));
 });
 
-test('refresh while Discord delivery is pending shows receipt status, not uploader', async ({ page, request }) => {
-  const response = await request.post('/test/session?slow=1');
+test("refresh while Discord delivery is pending shows receipt status, not uploader", async ({
+  page,
+  request,
+}) => {
+  const response = await request.post("/test/session?slow=1");
   await page.goto((await response.json()).path);
-  await expect(page.locator('#clips')).toBeEnabled();
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
-  await page.locator('#submit').click();
-  await expect(page.locator('#phase-copy')).toContainText('relay is processing this batch', {timeout:30000});
+  await expect(page.locator("#clips")).toBeEnabled();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#phase-copy")).toContainText("relay is processing this batch", {
+    timeout: 30000,
+  });
   await page.reload();
-  await expect(page.locator('#clips')).toHaveCount(0);
-  await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord', {timeout:15000});
-  await expect(page.getByRole('heading')).toHaveText('Delivery complete');
-  await expect(page.locator('#delivery-explanation')).toBeHidden();
-  await expect(page.locator('#delivery-status')).toContainText('To upload more videos, run /compress again.');
+  await expect(page.locator("#clips")).toHaveCount(0);
+  await expect(page.locator("#delivery-status")).toContainText("Delivered to Discord", {
+    timeout: 15000,
+  });
+  await expect(page.getByRole("heading")).toHaveText("Delivery complete");
+  await expect(page.locator("#delivery-explanation")).toBeHidden();
+  await expect(page.locator("#delivery-status")).toContainText(
+    "To upload more videos, run /compress again.",
+  );
 });
 
-test('completed session refresh shows delivered receipt, not duplicate uploader', async ({ page, request }) => {
+test("completed session refresh shows delivered receipt, not duplicate uploader", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
-  await deliver(page, join(fixtures, 'small.mp4'));
+  await deliver(page, join(fixtures, "small.mp4"));
   await page.reload();
-  await expect(page.locator('#delivery-status')).toContainText('Delivered to Discord');
-  await expect(page.getByRole('heading')).toHaveText('Delivery complete');
-  await expect(page.locator('#review-prompt')).toBeVisible();
-  await expect(page.locator('#delivery-explanation')).toBeHidden();
-  await expect(page.locator('#delivery-status')).toContainText('To upload more videos, run /compress again.');
-  await expect(page.locator('#clips')).toHaveCount(0);
+  await expect(page.locator("#delivery-status")).toContainText("Delivered to Discord");
+  await expect(page.getByRole("heading")).toHaveText("Delivery complete");
+  await expect(page.locator("#review-prompt")).toBeVisible();
+  await expect(page.locator("#delivery-explanation")).toBeHidden();
+  await expect(page.locator("#delivery-status")).toContainText(
+    "To upload more videos, run /compress again.",
+  );
+  await expect(page.locator("#clips")).toHaveCount(0);
 });
 
-test('busy relay is retried without recompression', async ({ page, request }) => {
+test("busy relay is retried without recompression", async ({ page, request }) => {
   await openSession(page, request);
   let attempts = 0;
-  await page.route('**/upload/*', async route => {
-    if (route.request().method() === 'POST' && attempts++ === 0) {
-      await route.fulfill({status:503, contentType:'application/json',
-        body:JSON.stringify({error:'Relay busy', retry_after:1})});
+  await page.route("**/upload/*", async (route) => {
+    if (route.request().method() === "POST" && attempts++ === 0) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Relay busy", retry_after: 1 }),
+      });
     } else await route.continue();
   });
-  await deliver(page, join(fixtures, 'small.mp4'));
+  await deliver(page, join(fixtures, "small.mp4"));
   expect(attempts).toBe(2);
 });
 
-test('delivery rejection shows an error and prevents duplicate submission', async ({ page, request }) => {
+test("delivery rejection shows an error and prevents duplicate submission", async ({
+  page,
+  request,
+}) => {
   await openSession(page, request);
-  await page.route('**/upload/*', async route => {
-    if (route.request().method() === 'POST') await route.fulfill({
-      status:502, contentType:'application/json',
-      body:JSON.stringify({error:'Discord rejected the files', code:'discord_delivery_failed'}),
-    });
+  await page.route("**/upload/*", async (route) => {
+    if (route.request().method() === "POST")
+      await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Discord rejected the files",
+          code: "discord_delivery_failed",
+        }),
+      });
     else await route.continue();
   });
-  await page.locator('#clips').setInputFiles(join(fixtures, 'small.mp4'));
-  await page.locator('#submit').click();
-  await expect(page.locator('#phase-title')).toHaveText('Action needed');
-  await expect(page.locator('#submit')).toBeHidden();
-  await expect(page.locator('#review-prompt')).toBeHidden();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#phase-title")).toHaveText("Action needed");
+  await expect(page.locator("#submit")).toBeHidden();
+  await expect(page.locator("#review-prompt")).toBeHidden();
 });
 
-test('lost success response is recovered without another upload', async ({page, request}) => {
+test("lost success response is recovered without another upload", async ({ page, request }) => {
   await page.addInitScript(() => {
     const listen = XMLHttpRequest.prototype.addEventListener;
     window.lostSuccess = false;
-    XMLHttpRequest.prototype.addEventListener = function(type, callback, ...args) {
-      if (type !== 'load') return listen.call(this,type,callback,...args);
-      return listen.call(this,type,function(event) {
-        if (!window.lostSuccess && this.responseType === 'json' && this.status === 200 && this.response?.ok) {
-          window.lostSuccess = true;
-          this.dispatchEvent(new ProgressEvent('error'));
-          return;
-        }
-        return callback.call(this,event);
-      },...args);
+    XMLHttpRequest.prototype.addEventListener = function (type, callback, ...args) {
+      if (type !== "load") return listen.call(this, type, callback, ...args);
+      return listen.call(
+        this,
+        type,
+        function (event) {
+          if (
+            !window.lostSuccess &&
+            this.responseType === "json" &&
+            this.status === 200 &&
+            this.response?.ok
+          ) {
+            window.lostSuccess = true;
+            this.dispatchEvent(new ProgressEvent("error"));
+            return;
+          }
+          return callback.call(this, event);
+        },
+        ...args,
+      );
     };
   });
   await openSession(page, request);
   let uploads = 0;
-  page.on('request', r => {if(r.method()==='POST' && /\/upload\/[^/]+$/.test(new URL(r.url()).pathname)) uploads++;});
-  await deliver(page, join(fixtures,'small.mp4'));
-  expect(await page.evaluate(()=>window.lostSuccess)).toBe(true);
+  page.on("request", (r) => {
+    if (r.method() === "POST" && /\/upload\/[^/]+$/.test(new URL(r.url()).pathname)) uploads++;
+  });
+  await deliver(page, join(fixtures, "small.mp4"));
+  expect(await page.evaluate(() => window.lostSuccess)).toBe(true);
   expect(uploads).toBe(1);
 });
 
-test('slow delivery is polled rather than reported failed or resent', async ({page, request}) => {
-  const session = await (await request.post('/test/session?slow=1')).json();
+test("slow delivery is polled rather than reported failed or resent", async ({ page, request }) => {
+  const session = await (await request.post("/test/session?slow=1")).json();
   await page.goto(session.path);
-  await expect(page.locator('#clips')).toBeEnabled();
-  let uploads=0;
-  let pending=0;
-  page.on('request', r=> {if(r.method()==='POST' && new URL(r.url()).pathname===session.path) uploads++;});
-  page.on('response', r=> {if(r.status()===202) pending++;});
-  await page.locator('#clips').setInputFiles(join(fixtures,'small.mp4'));
-  await page.locator('#submit').click();
-  await expect(page.locator('#page-heading')).toHaveText('Sending to Discord');
-  await expect(page.locator('#picker-row')).toBeHidden();
-  await expect(page.locator('#caption')).toBeHidden();
-  await expect(page.locator('#stay-open')).toBeVisible();
-  await expect(page.locator('#cancel')).toBeHidden();
-  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord', {timeout:10000});
+  await expect(page.locator("#clips")).toBeEnabled();
+  let uploads = 0;
+  let pending = 0;
+  page.on("request", (r) => {
+    if (r.method() === "POST" && new URL(r.url()).pathname === session.path) uploads++;
+  });
+  page.on("response", (r) => {
+    if (r.status() === 202) pending++;
+  });
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#page-heading")).toHaveText("Sending to Discord");
+  await expect(page.locator("#picker-row")).toBeHidden();
+  await expect(page.locator("#caption")).toBeHidden();
+  await expect(page.locator("#stay-open")).toBeVisible();
+  await expect(page.locator("#cancel")).toBeHidden();
+  await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord", { timeout: 10000 });
   expect(uploads).toBe(1);
   expect(pending).toBeGreaterThan(0);
 });
 
-test('expired idle session cannot start encoding', async ({page, request}) => {
+test("expired idle session cannot start encoding", async ({ page, request }) => {
   await page.clock.install();
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles(join(fixtures,'large.mp4'));
-  await page.clock.fastForward(31*60*1000);
-  await expect(page.locator('#expires')).toHaveText('Session expired');
-  await expect(page.locator('#submit')).toBeDisabled();
-  await page.locator('#clips').setInputFiles(join(fixtures,'small.mp4'));
-  await expect(page.locator('#submit')).toBeDisabled();
+  await page.locator("#clips").setInputFiles(join(fixtures, "large.mp4"));
+  await page.clock.fastForward(31 * 60 * 1000);
+  await expect(page.locator("#expires")).toHaveText("Session expired");
+  await expect(page.locator("#submit")).toBeDisabled();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await expect(page.locator("#submit")).toBeDisabled();
 });
 
-test('manual relay retry reuses prepared files and offers local recovery', async ({page, request}) => {
+test("manual relay retry reuses prepared files and offers local recovery", async ({
+  page,
+  request,
+}) => {
   await page.addInitScript(() => {
     window.sentEncodingTimes = [];
     const originalXHRSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(body) {
-      if (body instanceof FormData && body.has('clips')) window.sentEncodingTimes.push(JSON.parse(body.get('diagnostics'))[0].encoding_seconds);
-      return originalXHRSend.call(this,body);
+    XMLHttpRequest.prototype.send = function (body) {
+      if (body instanceof FormData && body.has("clips"))
+        window.sentEncodingTimes.push(JSON.parse(body.get("diagnostics"))[0].encoding_seconds);
+      return originalXHRSend.call(this, body);
     };
-    window.encoderWrites=0;
-    const send=Worker.prototype.postMessage;
-    Worker.prototype.postMessage=function(message,...rest) {
-      if(message?.type==='WRITE_FILE') window.encoderWrites++;
-      return send.call(this,message,...rest);
+    window.encoderWrites = 0;
+    const send = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...rest) {
+      if (message?.type === "WRITE_FILE") window.encoderWrites++;
+      return send.call(this, message, ...rest);
     };
   });
-  await openSession(page,request);
-  let uploads=0;
-  await page.route('**/upload/*',async route=> {
-    if(route.request().method()==='POST' && uploads++<3) {
-      await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Busy',retry_after:0.01})});
+  await openSession(page, request);
+  let uploads = 0;
+  await page.route("**/upload/*", async (route) => {
+    if (route.request().method() === "POST" && uploads++ < 3) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Busy", retry_after: 0.01 }),
+      });
     } else await route.continue();
   });
-  await page.locator('#clips').setInputFiles(join(fixtures,'large.mp4'));
-  await page.locator('#submit').click();
-  await expect(page.locator('#phase-title')).toHaveText('Action needed',{timeout:60000});
-  await expect(page.locator('#downloads a')).toHaveCount(1);
-  await expect(page.locator('#clips')).toBeDisabled();
-  await expect(page.locator('#picker-row')).toBeHidden();
-  await expect(page.locator('#caption')).toBeHidden();
-  await expect(page.locator('#page-heading')).toHaveText('Delivery needs attention');
-  const writes=await page.evaluate(()=>window.encoderWrites);
+  await page.locator("#clips").setInputFiles(join(fixtures, "large.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#phase-title")).toHaveText("Action needed", { timeout: 60000 });
+  await expect(page.locator("#downloads a")).toHaveCount(1);
+  await expect(page.locator("#clips")).toBeDisabled();
+  await expect(page.locator("#picker-row")).toBeHidden();
+  await expect(page.locator("#caption")).toBeHidden();
+  await expect(page.locator("#page-heading")).toHaveText("Delivery needs attention");
+  const writes = await page.evaluate(() => window.encoderWrites);
   expect(writes).toBeGreaterThan(0);
-  await page.getByRole('button',{name:'Check delivery / retry'}).click();
-  await expect(page.locator('#phase-title')).toHaveText('Delivered to Discord',{timeout:10000});
-  expect(await page.evaluate(()=>window.encoderWrites)).toBe(writes);
+  await page.getByRole("button", { name: "Check delivery / retry" }).click();
+  await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord", { timeout: 10000 });
+  expect(await page.evaluate(() => window.encoderWrites)).toBe(writes);
   const times = await page.evaluate(() => window.sentEncodingTimes);
   expect(times.length).toBeGreaterThanOrEqual(4);
   expect(times[0]).toBeGreaterThan(0);
   expect(new Set(times).size).toBe(1);
-  await expect(page.locator('#downloads')).toBeHidden();
+  await expect(page.locator("#downloads")).toBeHidden();
 });
 
-test('narrow screens contain a ten-file selection', async ({ page, request }) => {
-  await page.setViewportSize({width:375, height:812});
+test("narrow screens contain a ten-file selection", async ({ page, request }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
   await openSession(page, request);
-  const bytes = readFileSync(join(fixtures, 'small.mp4'));
-  await page.locator('#clips').setInputFiles(Array.from({length:10}, (_, index) => ({
-    name:`clip-${index}.mp4`, mimeType:'video/mp4', buffer:bytes,
-  })));
+  const bytes = readFileSync(join(fixtures, "small.mp4"));
+  await page.locator("#clips").setInputFiles(
+    Array.from({ length: 10 }, (_, index) => ({
+      name: `clip-${index}.mp4`,
+      mimeType: "video/mp4",
+      buffer: bytes,
+    })),
+  );
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test('long filenames leave room for per-file removal on a narrow screen', async ({ page, request }) => {
-  await page.setViewportSize({width:375, height:812});
+test("long filenames leave room for per-file removal on a narrow screen", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
   await openSession(page, request);
-  await page.locator('#clips').setInputFiles({
-    name:'A-very-long-video-name-that-should-not-overlap-the-status-or-remove-button.mp4',
-    mimeType:'video/mp4', buffer:Buffer.from('test'),
+  await page.locator("#clips").setInputFiles({
+    name: "A-very-long-video-name-that-should-not-overlap-the-status-or-remove-button.mp4",
+    mimeType: "video/mp4",
+    buffer: Buffer.from("test"),
   });
-  const card = await page.locator('.file-card').boundingBox();
-  const name = await page.locator('.file-name').boundingBox();
-  const remove = await page.locator('.remove-file').boundingBox();
+  const card = await page.locator(".file-card").boundingBox();
+  const name = await page.locator(".file-name").boundingBox();
+  const remove = await page.locator(".remove-file").boundingBox();
   expect(name.x + name.width).toBeLessThanOrEqual(remove.x);
   expect(remove.x + remove.width).toBeLessThanOrEqual(card.x + card.width);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 for (const width of [375, 1440]) {
-  test(`format help does not overlap controls or messages at ${width}px`, async ({ page, request }) => {
-    await page.setViewportSize({width, height:1000});
+  test(`format help does not overlap controls or messages at ${width}px`, async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
     await openSession(page, request);
-    const help = page.locator('.format-help');
-    const performanceHelp = page.locator('#performance-help');
+    const help = page.locator(".format-help");
+    const performanceHelp = page.locator("#performance-help");
     const formatBox = await help.boundingBox();
     const performanceBox = await performanceHelp.boundingBox();
     expect(performanceBox.y - (formatBox.y + formatBox.height)).toBeGreaterThanOrEqual(15);
-    const gapAfter = async selector => {
+    const gapAfter = async (selector) => {
       const above = await page.locator(selector).boundingBox();
       const below = await help.boundingBox();
       expect(below.y - (above.y + above.height)).toBeGreaterThanOrEqual(15);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
     };
-    await gapAfter('#submit');
-    await help.locator('summary').click();
-    await gapAfter('#submit');
-    await deliver(page, join(fixtures, 'small.mp4'));
+    await gapAfter("#submit");
+    await help.locator("summary").click();
+    await gapAfter("#submit");
+    await deliver(page, join(fixtures, "small.mp4"));
     await expect(help).toBeHidden();
-    await expect(page.locator('#performance-help')).toBeHidden();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({path: test.info().outputPath(`layout-${width}.png`), fullPage:true});
+    await expect(page.locator("#performance-help")).toBeHidden();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: test.info().outputPath(`layout-${width}.png`), fullPage: true });
   });
 }
