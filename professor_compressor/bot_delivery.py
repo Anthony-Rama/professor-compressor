@@ -23,7 +23,7 @@ from .sessions import SessionRegistry
 from .tracking import SessionTracker
 from .upload_relay import RelayState
 
-# Extracted from the application module; keep its logger name for log continuity.
+# Log name is part of the operations contract; this code came from application.py.
 logger = logging.getLogger("professor_compressor.application")
 
 DeliverResults = Callable[[UploadJob, list[BrowserResult], str], Awaitable[str]]

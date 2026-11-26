@@ -12,7 +12,8 @@ from .domain import BrowserResult, DeliveryRequest, UploadJob
 from .metrics import RuntimeMetrics
 from .notifications import compression_outcome_alert
 
-logger = logging.getLogger(__name__)
+# Log name is part of the operations contract; it must not follow the module path.
+logger = logging.getLogger("professor_compressor.delivery_worker")
 
 # Upper bound for one Discord upload; later outcomes are reported as unconfirmed.
 SEND_TIMEOUT_SECONDS = 120

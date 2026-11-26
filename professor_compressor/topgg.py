@@ -9,7 +9,8 @@ from email.utils import parsedate_to_datetime
 
 from aiohttp import ClientSession, ClientTimeout
 
-logger = logging.getLogger(__name__)
+# Log name is part of the operations contract; it must not follow the module path.
+logger = logging.getLogger("professor_compressor.topgg")
 METRICS_URL = "https://top.gg/api/v1/projects/@me/metrics"
 
 

@@ -10,7 +10,7 @@ from .background_tasks import BackgroundTasks
 from .branding import USER_AGENT
 from .config import Settings
 
-# Extracted from the application module; keep its logger name for log continuity.
+# Log name is part of the operations contract; this code came from application.py.
 logger = logging.getLogger("professor_compressor.application")
 
 DSC_TIMEOUT_SECONDS = 10

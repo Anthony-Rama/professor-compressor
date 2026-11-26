@@ -6,7 +6,7 @@ from .config import Settings
 from .domain import UploadJob
 from .observability import EventStore
 
-# Extracted from the application module; keep its logger name for log continuity.
+# Log name is part of the operations contract; this code came from application.py.
 logger = logging.getLogger("professor_compressor.application")
 
 

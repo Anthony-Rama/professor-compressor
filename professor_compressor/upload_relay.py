@@ -23,7 +23,8 @@ from .observability_contract import valid_id
 from .relay_diagnostics import parse_compression_diagnostics
 from .web_responses import json_error, pending_response
 
-logger = logging.getLogger(__name__)
+# Log name is part of the operations contract; it must not follow the module path.
+logger = logging.getLogger("professor_compressor.upload_relay")
 
 DELIVERY_RESPONSE_WAIT_SECONDS = 2
 UPLOAD_DEADLINE_SECONDS = 300

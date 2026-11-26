@@ -29,7 +29,8 @@ from .observability_contract import (
 )
 from .observability_queries import query_dashboard
 
-logger = logging.getLogger(__name__)
+# Log name is part of the operations contract; it must not follow the module path.
+logger = logging.getLogger("professor_compressor.observability")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (

@@ -26,7 +26,8 @@ from .sessions import SessionRegistry
 from .tracking import SessionTracker
 from .web_responses import json_error
 
-logger = logging.getLogger(__name__)
+# Log name is part of the operations contract; it must not follow the module path.
+logger = logging.getLogger("professor_compressor.browser_reports")
 
 MAX_REPORT_BYTES = 4096
 REPORT_READ_TIMEOUT_SECONDS = 5
