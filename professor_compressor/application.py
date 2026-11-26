@@ -9,27 +9,24 @@ from aiohttp import web
 from discord import app_commands
 
 from .alerts import OwnerAlerts
-from .assets import ASSET_PACKAGES, ASSET_PREFIX
 from .background_tasks import BackgroundTasks
 from .bot_delivery import DeliverResults, DeliveryService
 from .bot_events import CommandSync, GuildEvents
 from .browser_reports import ReportRoutes
-from .config import MIB, Settings
-from .dashboard import register_dashboard
+from .config import Settings
 from .discord_commands import Commands
 from .dsc import DscStats
 from .health import HealthService
 from .lifecycle import BotLifecycle
 from .metrics import RuntimeMetrics
 from .observability import EventStore
-from .paths import NODE_MODULES, STATIC
-from .rate_limit import RateLimiter, request_ip
+from .rate_limit import RateLimiter
 from .session_routes import SessionRoutes
 from .sessions import SessionRegistry
 from .topgg import TopGGStats
 from .tracking import SessionTracker
 from .upload_relay import RelayState
-from .web_pages import browser_security_headers, register_public_pages
+from .web_app import build_web_application
 
 
 def run() -> None:
@@ -185,57 +182,16 @@ class Runtime:
         self, *, runtime_snapshot: Callable[[], dict] | None = None
     ) -> web.Application:
         """Build the HTTP application so routes can be smoke-tested independently."""
-        application = web.Application(
-            client_max_size=self.settings.max_result_total_bytes + 2 * MIB,
-            middlewares=[browser_security_headers],
-        )
-
-        async def diagnostic_lifecycle(_application):
-            self.event_store.start()
-            yield
-            for job in list(self.sessions.jobs.values()):
-                if job.compression_started or job.relay_upload_started:
-                    self.tracker.track(job, "interrupted")
-            await asyncio.to_thread(self.event_store.stop)
-
-        application.cleanup_ctx.append(diagnostic_lifecycle)
-        register_dashboard(
-            application,
-            self.event_store,
-            self.settings.observability_admin_key,
-            request_ip,
+        return build_web_application(
+            self.settings,
+            event_store=self.event_store,
+            sessions=self.sessions,
+            tracker=self.tracker,
+            health=self.health,
+            session_routes=self.session_routes,
+            report_routes=self.report_routes,
             runtime_snapshot=runtime_snapshot or self.health.dashboard_snapshot,
         )
-        register_public_pages(application, self.settings.public_base_url)
-        application.router.add_get("/healthz", self.health.health)
-        application.router.add_get("/readyz", self.health.readiness)
-        application.router.add_get("/metricsz", self.health.aggregate_metrics)
-        sessions = self.session_routes
-        reports = self.report_routes
-        application.router.add_get("/upload/{token}", sessions.upload_form)
-        application.router.add_post("/upload/{token}", sessions.receive_results)
-        application.router.add_get("/upload/{token}/status", sessions.session_status)
-        application.router.add_post("/upload/{token}/heartbeat", sessions.renew_session)
-        application.router.add_post("/upload/{token}/pause", sessions.pause_session)
-        application.router.add_post(
-            "/upload/{token}/progress", reports.receive_browser_progress
-        )
-        application.router.add_post(
-            "/upload/{token}/telemetry", reports.receive_browser_telemetry
-        )
-        application.router.add_post(
-            "/upload/{token}/events", reports.receive_diagnostic_events
-        )
-        application.router.add_post(
-            "/upload/{token}/failure", reports.receive_browser_failure
-        )
-        application.router.add_static("/brand/", STATIC)
-        for name, package in ASSET_PACKAGES.items():
-            directory = NODE_MODULES / package / "dist/esm"
-            application.router.add_static(f"{ASSET_PREFIX}/{name}/", directory)
-            # Compatibility for pages opened before this release; never immutable.
-            application.router.add_static(f"/assets/{name}/", directory)
-        return application
 
 
 def create_web_application() -> web.Application:
