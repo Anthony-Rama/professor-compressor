@@ -24,10 +24,10 @@ os.environ["DIAGNOSTIC_TEST_GUILD_IDS"] = "999"
 
 from aiohttp import web  # noqa: E402 - configure the isolated harness before app imports
 
-from professor_compressor.application import Runtime  # noqa: E402
+from professor_compressor.app.runtime import Runtime  # noqa: E402
 from professor_compressor.config import Settings  # noqa: E402
 from professor_compressor.domain import UploadJob  # noqa: E402
-from professor_compressor.media_validation import valid_mp4_signature  # noqa: E402
+from professor_compressor.relay.media_validation import valid_mp4_signature  # noqa: E402
 
 delivery_delays = {}
 test_discord_limit = int(os.environ.get("BROWSER_TEST_DISCORD_LIMIT_BYTES", "1100000"))

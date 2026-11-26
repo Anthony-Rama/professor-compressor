@@ -1,6 +1,6 @@
 """Run Professor Compressor with ``python -m professor_compressor``."""
 
-from .application import run
+from .app.runtime import run
 
 if __name__ == "__main__":
     run()

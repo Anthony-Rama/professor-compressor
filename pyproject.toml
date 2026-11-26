@@ -13,12 +13,17 @@ extend-exclude = ["node_modules"]
 select = ["E", "F", "I", "B", "UP", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"professor_compressor/application.py" = ["E501"]
-"professor_compressor/legal_pages.py" = ["RUF001"]
+"professor_compressor/web/pages/legal.py" = ["RUF001"]
 # Embedded dashboard markup and parameterized SQL contain long literal lines.
-"professor_compressor/dashboard.py" = ["E501"]
-"professor_compressor/observability.py" = ["E501"]
-"professor_compressor/observability_queries.py" = ["E501"]
+"professor_compressor/observability/dashboard.py" = ["E501"]
+"professor_compressor/observability/store.py" = ["E501"]
+"professor_compressor/observability/queries.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["bot.py", "dev_bot.py", "professor_compressor"]
+warn_unused_ignores = true
+warn_redundant_casts = true
 
 [tool.ruff.format]
 quote-style = "double"
