@@ -36,7 +36,7 @@ class DeliveryWorkerTests(RuntimeTestCase):
                 discord_limit=1000,
                 interaction=Mock(),
             )
-            queue = asyncio.Queue(1)
+            queue: asyncio.Queue[DeliveryRequest] = asyncio.Queue(1)
             completed = asyncio.get_running_loop().create_future()
             queue.put_nowait(
                 DeliveryRequest(job, [BrowserResult("clip.mp4", b"video")], completed)

@@ -45,11 +45,11 @@ class PublicRouteTests(WebAppTestCase):
         )
         self.assertIn('rel="canonical"', home_html)
         self.assertIn('type="application/ld+json"', home_html)
-        home_schema = json.loads(
-            re.search(
-                r'<script type="application/ld\+json">(.*?)</script>', home_html
-            ).group(1)
+        schema_match = re.search(
+            r'<script type="application/ld\+json">(.*?)</script>', home_html
         )
+        assert schema_match is not None
+        home_schema = json.loads(schema_match.group(1))
         self.assertEqual(home_schema["@graph"][0]["@type"], "WebSite")
         self.assertEqual(
             home_schema["@graph"][0]["url"],
@@ -108,7 +108,7 @@ class PublicRouteTests(WebAppTestCase):
         urls = ElementTree.fromstring(await sitemap.text())
         locs = [node.text for node in urls.iter() if node.tag.endswith("loc")]
         self.assertEqual(len(locs), 4)
-        self.assertTrue(all("/upload/" not in url for url in locs))
+        self.assertTrue(all(url is not None and "/upload/" not in url for url in locs))
 
         verification = await self.client.get("/googlec910ef324dae35ac.html")
         self.assertEqual(

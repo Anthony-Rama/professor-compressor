@@ -162,6 +162,7 @@ class SessionPageTests(WebAppTestCase):
         self.assertEqual(cookie["samesite"], "Lax")
         self.assertEqual(cookie["path"], f"/upload/{token}")
         first_secret = job.claim_secret
+        assert first_secret is not None
         self.assertIn("Choose videos", await first.text())
 
         stranger = await self.client.get(f"/upload/{token}")
@@ -184,6 +185,7 @@ class SessionPageTests(WebAppTestCase):
             headers={"X-Upload-Session": first_secret},
         )
         self.assertEqual(stale.status, 403)
+        assert job.claim_secret is not None
         current = await self.client.get(
             f"/upload/{token}/status",
             headers={"X-Upload-Session": job.claim_secret},

@@ -124,6 +124,7 @@ class BrowserPageTests(unittest.TestCase):
 
     def test_large_batches_stay_inside_the_viewport(self) -> None:
         document = page("Test", self.page).text
+        assert document is not None
         self.assertIn("align-items: flex-start", document)
         self.assertIn("margin-block: auto", document)
         self.assertIn("grid-template-columns: minmax(0, 1fr)", document)

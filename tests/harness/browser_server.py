@@ -9,6 +9,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 os.environ["PYTHON_DOTENV_DISABLED"] = "1"
@@ -29,7 +30,7 @@ from professor_compressor.config import Settings  # noqa: E402
 from professor_compressor.domain import UploadJob  # noqa: E402
 from professor_compressor.relay.media_validation import valid_mp4_signature  # noqa: E402
 
-delivery_delays = {}
+delivery_delays: dict[str, float] = {}
 test_discord_limit = int(os.environ.get("BROWSER_TEST_DISCORD_LIMIT_BYTES", "1100000"))
 if not 1_100_000 <= test_discord_limit <= 20 * 1024 * 1024:
     raise ValueError("Browser test upload limit is outside the supported test range")
@@ -65,7 +66,8 @@ async def test_session(request: web.Request) -> web.Response:
         expires_at=time.time()
         + (1800 if os.environ.get("RUN_LONG_ENCODER_STRESS") == "1" else 600),
         discord_limit=test_discord_limit,
-        interaction=SimpleNamespace(channel=None),
+        # A stand-in interaction: delivery is captured, never sent to Discord.
+        interaction=cast(Any, SimpleNamespace(channel=None)),
         guild_id=999,
     )
     if request.query.get("slow") == "1":

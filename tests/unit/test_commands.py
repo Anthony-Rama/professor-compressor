@@ -225,9 +225,9 @@ class CompressCommandTests(RuntimeTestCase):
             )
 
     def test_command_is_server_install_only(self) -> None:
-        self.assertTrue(
-            self.runtime.tree.get_command("compress").allowed_installs.guild
-        )
-        self.assertFalse(
-            self.runtime.tree.get_command("compress").allowed_installs.user
-        )
+        command = self.runtime.tree.get_command("compress")
+        assert command is not None
+        installs = command.allowed_installs
+        assert installs is not None
+        self.assertTrue(installs.guild)
+        self.assertFalse(installs.user)

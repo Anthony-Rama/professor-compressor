@@ -21,7 +21,7 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 
 [tool.mypy]
 python_version = "3.11"
-files = ["bot.py", "dev_bot.py", "professor_compressor"]
+files = ["bot.py", "dev_bot.py", "professor_compressor", "tests"]
 warn_unused_ignores = true
 warn_redundant_casts = true
 

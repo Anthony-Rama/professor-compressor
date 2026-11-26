@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp import FormData
 
-from professor_compressor.domain import JobState, UploadJob
+from professor_compressor.domain import DeliveryRequest, JobState, UploadJob
 from professor_compressor.relay import upload as upload_relay
 from professor_compressor.relay.upload import safe_result_name
 from tests.support.media import valid_test_mp4
@@ -196,7 +196,7 @@ class UploadRouteTests(WebAppTestCase):
             claim_secret="claim-secret",
         )
         self.runtime.sessions.jobs[token] = job
-        queue = asyncio.Queue(maxsize=1)
+        queue: asyncio.Queue[DeliveryRequest] = asyncio.Queue(maxsize=1)
         received = []
 
         async def accept_delivery() -> None:
@@ -259,7 +259,7 @@ class UploadRouteTests(WebAppTestCase):
             claim_secret="claim-secret",
         )
         self.runtime.sessions.jobs[token] = job
-        queue = asyncio.Queue(maxsize=1)
+        queue: asyncio.Queue[DeliveryRequest] = asyncio.Queue(maxsize=1)
         form = FormData()
         form.add_field("caption", "x" * 1001)
         form.add_field(
