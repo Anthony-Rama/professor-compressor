@@ -32,14 +32,12 @@ from .delivery_policy import (
 from .delivery_worker import run_delivery_worker
 from .domain import (
     BrowserResult,
-    CompressionDiagnostic,
     DeliveryOutcome,
     DeliveryRequest,
     JobState,
     UploadJob,
 )
 from .landing_pages import BOT_INVITE_URL
-from .media_validation import valid_mp4_signature
 from .metrics import RuntimeMetrics
 from .notifications import (
     botstats_report,
@@ -50,9 +48,11 @@ from .notifications import (
 )
 from .observability import EventStore
 from .observability_contract import CLIENT_EVENTS, sanitize, valid_id
-from .relay_diagnostics import parse_compression_diagnostics, sanitize_telemetry
+from .relay_diagnostics import sanitize_telemetry
 from .topgg import TopGGStats
+from .upload_relay import RelayState, receive_results
 from .web_pages import browser_security_headers, page, register_public_pages
+from .web_responses import json_error, pending_response
 from .web_ui import browser_compressor, browser_delivery_status
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,6 @@ OUTCOME_TTL_SECONDS = 3600
 RESUME_COOKIE_NAME = "__Secure-pc-browser"
 RESUME_COOKIE_MAX_AGE_SECONDS = 3 * 3600
 PAGE_EXIT_GRACE_SECONDS = 5
-DELIVERY_RESPONSE_WAIT_SECONDS = 2
 
 
 def request_ip(request: web.Request) -> str:
@@ -78,14 +77,6 @@ def request_ip(request: web.Request) -> str:
         except ValueError:
             pass
     return peer
-
-
-def json_error(message: str, status: int, code: str, **extra: Any) -> web.Response:
-    return web.json_response(
-        {"ok": False, "error": message, "code": code, **extra},
-        status=status,
-        headers={"Cache-Control": "no-store"},
-    )
 
 
 def browser_cookie_matches(request: web.Request, secret: str | None) -> bool:
@@ -106,29 +97,6 @@ def set_browser_cookie(response: web.Response, token: str, secret: str) -> None:
         secure=True,
         httponly=True,
         samesite="Lax",
-    )
-
-
-def safe_result_name(name: str | None, number: int) -> str:
-    raw = (name or f"clip-{number}.mp4").replace("\\", "/").split("/")[-1]
-    cleaned = "".join(
-        character for character in raw if character.isalnum() or character in " ._-"
-    ).strip(" .")
-    stem = cleaned[:-4] if cleaned.lower().endswith(".mp4") else cleaned
-    stem = stem[:120].rstrip(" .")
-    return f"{stem or f'clip-{number}'}.mp4"
-
-
-def pending_response() -> web.Response:
-    return web.json_response(
-        {
-            "ok": False,
-            "pending": True,
-            "retry_after": 2,
-            "message": "Delivery is still being processed. Do not start another session.",
-        },
-        status=202,
-        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -163,7 +131,7 @@ class Runtime:
         self.last_job_at: dict[tuple[int, int], float] = {}
         self.request_times: dict[tuple[str, str], deque[float]] = {}
         self.diagnostic_event_counts: dict[str, int] = {}
-        self.delivery_queue: asyncio.Queue[DeliveryRequest] | None = None
+        self.relay = RelayState()
         self.delivery_workers: list[asyncio.Task[None]] = []
         self.background_tasks: set[asyncio.Task[Any]] = set()
         self.web_runner: web.AppRunner | None = None
@@ -171,8 +139,6 @@ class Runtime:
         self.command_sync_task: asyncio.Task[None] | None = None
         self.dsc_stats_task: asyncio.Task[None] | None = None
         self.topgg_stats_task: asyncio.Task[None] | None = None
-        self.active_relay_uploads = 0
-        self.delivery_bytes_held = 0
         self.draining = False
         self.commands_synced = False
         self.application_operator_ids: frozenset[int] | None = None
@@ -437,12 +403,12 @@ class Runtime:
                 "revision": os.getenv("APP_REVISION", "development")[:64],
                 "discord_ready": self.client.is_ready(),
                 "active_upload_links": len(self.jobs),
-                "active_relay_uploads": self.active_relay_uploads,
-                "delivery_queue_depth": self.delivery_queue.qsize()
-                if self.delivery_queue
+                "active_relay_uploads": self.relay.active_uploads,
+                "delivery_queue_depth": self.relay.queue.qsize()
+                if self.relay.queue
                 else 0,
                 "delivery_queue_capacity": self.settings.delivery_queue_size,
-                "delivery_buffer_mib": round(self.delivery_bytes_held / MIB, 1),
+                "delivery_buffer_mib": round(self.relay.buffered_bytes / MIB, 1),
                 "delivery_buffer_limit_mib": round(
                     self.settings.max_delivery_buffer_bytes / MIB, 1
                 ),
@@ -830,337 +796,16 @@ class Runtime:
         return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
 
     async def receive_results(self, request: web.Request) -> web.Response:
-        receive_started = time.monotonic()
-        job, response = self.session_access(request)
-        if response is not None:
-            return response
-        assert job is not None
-        if job.state in {JobState.UPLOADING, JobState.QUEUED}:
-            return pending_response()
-        if job.state is not JobState.CLAIMED:
-            return json_error(
-                "This one-use session is no longer available.",
-                410,
-                "session_used",
-            )
-        retry_after = self.rate_limit_retry_after(request, "upload")
-        if retry_after is not None:
-            return json_error(
-                f"Too many upload attempts. Try again in {retry_after} seconds.",
-                429,
-                "rate_limited",
-                retry_after=retry_after,
-            )
-        if self.active_relay_uploads >= self.settings.max_concurrent_uploads:
-            return json_error(
-                "The relay is receiving its maximum number of uploads. "
-                "It will retry automatically.",
-                503,
-                "relay_busy",
-                retry_after=3,
-            )
-        if self.delivery_queue is None or self.delivery_queue.full():
-            return json_error(
-                "The Discord delivery queue is full. It will retry automatically.",
-                503,
-                "queue_full",
-                retry_after=5,
-            )
-
-        results: list[BrowserResult] = []
-        caption = ""
-        caption_received = False
-        diagnostics: list[CompressionDiagnostic] = []
-        diagnostics_received = False
-        total_size = 0
-        last_chunk_at = receive_started
-        received_bytes = 0
-        job.relay_upload_attempts += 1
-
-        def upload_failure_facts(code: str) -> dict:
-            now = time.monotonic()
-            return {
-                "error_code": code,
-                "stage": "upload",
-                "upload_attempts": job.relay_upload_attempts,
-                "received_bytes": received_bytes,
-                "relay_receive_seconds": max(0, now - receive_started),
-                "receive_idle_seconds": max(0, now - last_chunk_at),
-            }
-
-        upload_slot_held = True
-        job.state = JobState.UPLOADING
-        upload_run = (
-            valid_id(request.headers.get("X-Diagnostic-Run")) or job.active_run_id
+        return await receive_results(
+            request,
+            state=self.relay,
+            limits=self.settings,
+            authorize=self.session_access,
+            rate_limit=self.rate_limit_retry_after,
+            track=self.track,
+            notify=self.schedule_owner_alert,
+            metrics=self.metrics,
         )
-        self.track(job, "upload_started", run_id=upload_run)
-        self.active_relay_uploads += 1
-        if not job.relay_upload_started:
-            job.relay_upload_started = True
-            self.schedule_owner_alert(
-                compression_progress_alert(
-                    job,
-                    "📨 **Relay upload started**",
-                    "Stage: browser began sending finished files; receipt is not yet confirmed.",
-                )
-            )
-        try:
-            if not request.content_type.startswith("multipart/"):
-                raise ValueError("The upload format was invalid. Please try again.")
-            reader = await request.multipart()
-            upload_deadline = time.monotonic() + 300
-            while True:
-                field = await asyncio.wait_for(
-                    reader.next(),
-                    timeout=max(0, min(30, upload_deadline - time.monotonic())),
-                )
-                if field is None:
-                    break
-                if field.name == "caption":
-                    if caption_received or results:
-                        raise ValueError(
-                            "The message field was repeated or out of order."
-                        )
-                    caption_received = True
-                    caption_data = bytearray()
-                    while chunk := await asyncio.wait_for(
-                        field.read_chunk(1024),
-                        timeout=max(0, min(30, upload_deadline - time.monotonic())),
-                    ):
-                        caption_data.extend(chunk)
-                        received_bytes += len(chunk)
-                        last_chunk_at = time.monotonic()
-                        if len(caption_data) > 4000:
-                            break
-                    if len(caption_data) > 4000:
-                        raise ValueError("The message is too long.")
-                    try:
-                        caption = " ".join(caption_data.decode("utf-8").split())
-                    except UnicodeDecodeError as error:
-                        raise ValueError(
-                            "The message contains invalid text."
-                        ) from error
-                    if len(caption) > 1000:
-                        raise ValueError(
-                            "The message must be 1,000 characters or fewer."
-                        )
-                    continue
-                if field.name == "diagnostics":
-                    if diagnostics_received or results:
-                        raise ValueError(
-                            "The diagnostics field was repeated or out of order."
-                        )
-                    diagnostics_received = True
-                    raw_diagnostics = bytearray()
-                    while chunk := await asyncio.wait_for(
-                        field.read_chunk(1024),
-                        timeout=max(0, min(30, upload_deadline - time.monotonic())),
-                    ):
-                        raw_diagnostics.extend(chunk)
-                        received_bytes += len(chunk)
-                        last_chunk_at = time.monotonic()
-                        if len(raw_diagnostics) > 16384:
-                            raise ValueError("The diagnostics field is too long.")
-                    diagnostics = parse_compression_diagnostics(
-                        bytes(raw_diagnostics), max_clips=self.settings.max_clips
-                    )
-                    continue
-                if field.name != "clips" or not field.filename:
-                    raise ValueError("Only video file fields are accepted.")
-                if len(results) >= self.settings.max_clips:
-                    raise ValueError(
-                        f"You can send at most {self.settings.max_clips} results."
-                    )
-
-                name = safe_result_name(field.filename, len(results) + 1)
-
-                file_data = bytearray()
-                while chunk := await asyncio.wait_for(
-                    field.read_chunk(1024 * 1024),
-                    timeout=max(0, min(30, upload_deadline - time.monotonic())),
-                ):
-                    if (
-                        self.delivery_bytes_held + len(chunk)
-                        > self.settings.max_delivery_buffer_bytes
-                    ):
-                        return json_error(
-                            "The relay memory buffer is full. Try again shortly.",
-                            503,
-                            "delivery_buffer_full",
-                            retry_after=5,
-                        )
-                    self.delivery_bytes_held += len(chunk)
-                    received_bytes += len(chunk)
-                    last_chunk_at = time.monotonic()
-                    total_size += len(chunk)
-                    file_data.extend(chunk)
-                    if len(file_data) > job.discord_limit:
-                        raise ValueError(
-                            f"{name} exceeds Discord's current file-size limit."
-                        )
-                    if total_size > self.settings.max_result_total_bytes:
-                        raise ValueError(
-                            "The combined compressed results exceed the relay limit."
-                        )
-                if not file_data:
-                    raise ValueError(f"{name} is empty.")
-                result_bytes = bytes(file_data)
-                del file_data
-                if not valid_mp4_signature(result_bytes):
-                    raise ValueError(
-                        f"{name} did not contain a complete MP4 video. "
-                        "Try the original again or convert it to MP4 first."
-                    )
-                results.append(BrowserResult(name=name, data=result_bytes))
-
-            if not results:
-                raise ValueError("No compressed MP4 results were received.")
-            if len(diagnostics) != len(results):
-                diagnostics = []
-            result_count = len(results)
-            loop = asyncio.get_running_loop()
-            completion: asyncio.Future[str] = loop.create_future()
-            # A disconnected request may never await this future again.
-            completion.add_done_callback(
-                lambda future: future.exception() if not future.cancelled() else None
-            )
-            delivery = DeliveryRequest(
-                job=job,
-                results=results,
-                completed=completion,
-                caption=caption,
-                diagnostics=diagnostics,
-                received_seconds=time.monotonic() - receive_started,
-                run_id=upload_run,
-            )
-            try:
-                self.delivery_queue.put_nowait(delivery)
-            except asyncio.QueueFull:
-                job.state = JobState.CLAIMED
-                return json_error(
-                    "The Discord delivery queue filled up. It will retry automatically.",
-                    503,
-                    "queue_full",
-                    retry_after=5,
-                )
-            self.metrics.increment("batches_queued")
-            self.metrics.increment("files_queued", len(results))
-            self.metrics.increment("bytes_queued", total_size)
-            self.active_relay_uploads -= 1
-            upload_slot_held = False
-            job.state = JobState.QUEUED
-            self.track(
-                job,
-                "received",
-                run_id=upload_run,
-                data={
-                    "files": len(results),
-                    "output_bytes": total_size,
-                    "relay_receive_seconds": delivery.received_seconds,
-                },
-            )
-            for number, (result, diagnostic) in enumerate(
-                zip(results, diagnostics, strict=False), 1
-            ):
-                self.track(
-                    job,
-                    "file_received",
-                    run_id=upload_run,
-                    file_index=number,
-                    data={
-                        **diagnostic.telemetry,
-                        "input_bytes": diagnostic.input_bytes,
-                        "output_bytes": len(result.data),
-                        "duration_seconds": diagnostic.duration_seconds,
-                        "encoding_seconds": diagnostic.encoding_seconds,
-                        "input_format": diagnostic.input_format,
-                    },
-                )
-            self.schedule_owner_alert(
-                compression_progress_alert(
-                    job,
-                    "📤 **Finished files reached relay**",
-                    f"Files: `{result_count}`; queued for Discord delivery.",
-                )
-            )
-            try:
-                message = await asyncio.wait_for(
-                    asyncio.shield(completion), timeout=DELIVERY_RESPONSE_WAIT_SECONDS
-                )
-            except TimeoutError:
-                return pending_response()
-            except RuntimeError as error:
-                _, response = self.session_access(request)
-                return (
-                    response
-                    if response is not None
-                    else json_error(str(error), 502, "discord_delivery_failed")
-                )
-            job.state = JobState.DONE
-            return web.json_response(
-                {
-                    "ok": True,
-                    "message": message,
-                    "count": result_count,
-                },
-                headers={"Cache-Control": "no-store"},
-            )
-        except TimeoutError:
-            self.track(
-                job,
-                "upload_failed",
-                run_id=upload_run,
-                data=upload_failure_facts("UPLOAD_TIMEOUT"),
-            )
-            return json_error(
-                "The upload stalled. Please try again.", 408, "upload_timeout"
-            )
-        except ConnectionResetError:
-            job.state = JobState.CLAIMED
-            self.track(
-                job,
-                "upload_failed",
-                run_id=upload_run,
-                data=upload_failure_facts("UPLOAD_CONNECTION_RESET"),
-            )
-            logger.warning(
-                "Upload connection reset (reference=%s)", job.diagnostic_reference
-            )
-            return json_error(
-                "The upload connection was interrupted. Keep this page open and retry sending; your prepared files do not need recompression.",
-                503,
-                "upload_connection_reset",
-                retry_after=3,
-            )
-        except (ValueError, web.HTTPException) as error:
-            self.track(
-                job,
-                "upload_failed",
-                run_id=upload_run,
-                data={"error_code": "INVALID_UPLOAD", "stage": "upload"},
-            )
-            job.state = JobState.CLAIMED
-            return json_error(str(error), 400, "invalid_upload")
-        except Exception as error:
-            job.state = JobState.CLAIMED
-            self.track(
-                job,
-                "upload_failed",
-                run_id=upload_run,
-                data=upload_failure_facts("RELAY_ERROR"),
-            )
-            logger.warning("Upload relay failed (%s)", type(error).__name__)
-            return json_error(
-                "The relay could not read the compressed files. "
-                "Check your connection and try again.",
-                500,
-                "relay_error",
-            )
-        finally:
-            if upload_slot_held:
-                self.active_relay_uploads -= 1
-                self.delivery_bytes_held = max(0, self.delivery_bytes_held - total_size)
-                job.state = JobState.CLAIMED
 
     async def receive_browser_telemetry(self, request: web.Request) -> web.Response:
         _job, response = self.session_access(request)
@@ -1410,19 +1055,15 @@ class Runtime:
             ) from error
 
     def finish_delivery(self, delivery: DeliveryRequest) -> None:
-        self.delivery_bytes_held = max(
-            0,
-            self.delivery_bytes_held
-            - sum(len(result.data) for result in delivery.results),
-        )
+        self.relay.release(sum(len(result.data) for result in delivery.results))
         delivery.job.state = JobState.DONE
         self.jobs.pop(delivery.job.token, None)
 
     async def delivery_worker(self, worker_number: int) -> None:
-        assert self.delivery_queue is not None
+        assert self.relay.queue is not None
         await run_delivery_worker(
             worker_number,
-            queue=self.delivery_queue,
+            queue=self.relay.queue,
             send=self._deliver_results or self.deliver_browser_results,
             is_closed=self.client.is_closed,
             track=self.track,
@@ -1667,14 +1308,14 @@ class Runtime:
             else None,
             "revision": os.getenv("APP_REVISION", "development")[:64],
             "active_sessions": len(self.jobs),
-            "active_uploads": self.active_relay_uploads,
-            "queue_depth": self.delivery_queue.qsize() if self.delivery_queue else 0,
+            "active_uploads": self.relay.active_uploads,
+            "queue_depth": self.relay.queue.qsize() if self.relay.queue else 0,
             "queue_capacity": self.settings.delivery_queue_size,
             "delivery_workers": sum(
                 not worker.done() for worker in self.delivery_workers
             ),
             "worker_capacity": self.settings.delivery_workers,
-            "buffer_bytes": self.delivery_bytes_held,
+            "buffer_bytes": self.relay.buffered_bytes,
             "buffer_limit_bytes": self.settings.max_delivery_buffer_bytes,
             "counters": self.metrics.snapshot(),
         }
@@ -1751,7 +1392,7 @@ class Runtime:
             await self.web_runner.cleanup()
             self.web_runner = None
             raise
-        self.delivery_queue = asyncio.Queue(maxsize=self.settings.delivery_queue_size)
+        self.relay.queue = asyncio.Queue(maxsize=self.settings.delivery_queue_size)
         for worker_number in range(1, self.settings.delivery_workers + 1):
             worker = asyncio.create_task(self.delivery_worker(worker_number))
             self.delivery_workers.append(worker)
@@ -1871,7 +1512,7 @@ class Runtime:
         self.draining = True
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            busy = self.active_relay_uploads or any(
+            busy = self.relay.active_uploads or any(
                 job.state is JobState.QUEUED or job.processing_until > time.time()
                 for job in self.jobs.values()
             )

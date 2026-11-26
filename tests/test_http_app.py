@@ -238,7 +238,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             content_type="video/mp4",
         )
         consumer = asyncio.create_task(accept_delivery())
-        with patch.object(self.runtime, "delivery_queue", queue):
+        with patch.object(self.runtime.relay, "queue", queue):
             response = await self.client.post(
                 f"/upload/{token}",
                 data=form,
@@ -275,7 +275,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
         form.add_field(
             "clips", valid_test_mp4(), filename="clip.mp4", content_type="video/mp4"
         )
-        with patch.object(self.runtime, "delivery_queue", queue):
+        with patch.object(self.runtime.relay, "queue", queue):
             response = await self.client.post(
                 f"/upload/{token}",
                 data=form,
@@ -434,7 +434,7 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
             form = FormData()
             form.add_field("clips", data, filename="clip.mp4")
             with (
-                patch.object(self.runtime, "delivery_queue", asyncio.Queue(1)),
+                patch.object(self.runtime.relay, "queue", asyncio.Queue(1)),
                 patch.object(
                     self.runtime,
                     "settings",
@@ -445,8 +445,8 @@ class HttpApplicationTests(unittest.IsolatedAsyncioTestCase):
                     "/upload/limits", data=form, headers={"X-Upload-Session": "secret"}
                 )
             self.assertEqual(response.status, expected)
-            self.assertEqual(self.runtime.delivery_bytes_held, 0)
-            self.assertEqual(self.runtime.active_relay_uploads, 0)
+            self.assertEqual(self.runtime.relay.buffered_bytes, 0)
+            self.assertEqual(self.runtime.relay.active_uploads, 0)
             self.assertIs(job.state, JobState.CLAIMED)
 
     async def test_malformed_secret_and_failure_reports(self) -> None:

@@ -10,7 +10,6 @@ from professor_compressor.application import (
     Runtime,
     UploadJob,
     compression_target,
-    safe_result_name,
 )
 from professor_compressor.config import Settings
 from professor_compressor.delivery_policy import (
@@ -18,6 +17,7 @@ from professor_compressor.delivery_policy import (
     DeliveryFailure,
     delivery_failure,
 )
+from professor_compressor.upload_relay import safe_result_name
 
 
 class DeliveryTests(unittest.IsolatedAsyncioTestCase):
@@ -49,8 +49,8 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 DeliveryRequest(job, [BrowserResult("clip.mp4", b"video")], completed)
             )
             with (
-                patch.object(self.runtime, "delivery_queue", queue),
-                patch.object(self.runtime, "delivery_bytes_held", 5),
+                patch.object(self.runtime.relay, "queue", queue),
+                patch.object(self.runtime.relay, "buffered_bytes", 5),
                 patch.object(self.runtime, "schedule_owner_alert"),
                 patch.object(self.runtime, "outcomes", {}),
                 patch.object(
@@ -62,7 +62,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                 worker = asyncio.create_task(self.runtime.delivery_worker(1))
                 try:
                     await asyncio.wait_for(queue.join(), 2)
-                    self.assertEqual(self.runtime.delivery_bytes_held, 0)
+                    self.assertEqual(self.runtime.relay.buffered_bytes, 0)
                     self.assertIs(job.state, JobState.DONE)
                     if failure is not None:
                         expected = delivery_failure(failure)
@@ -89,14 +89,14 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Future()
 
         runtime = Runtime(Settings(discord_token=""), deliver_results=send)
-        runtime.delivery_queue = asyncio.Queue(2)
+        runtime.relay.queue = asyncio.Queue(2)
         for token, payload in (("in-flight", b"first"), ("queued", b"second")):
             job = UploadJob(
                 token, 1, 2, 9999999999, 1000, Mock(), state=JobState.QUEUED
             )
             runtime.jobs[token] = job
-            runtime.delivery_bytes_held += len(payload)
-            runtime.delivery_queue.put_nowait(
+            runtime.relay.buffered_bytes += len(payload)
+            runtime.relay.queue.put_nowait(
                 DeliveryRequest(
                     job,
                     [BrowserResult("clip.mp4", payload)],
@@ -110,15 +110,15 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         finally:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
-        self.assertEqual(runtime.delivery_bytes_held, len(b"second"))
+        self.assertEqual(runtime.relay.buffered_bytes, len(b"second"))
         self.assertIs(in_flight.state, JobState.DONE)
         self.assertEqual(set(runtime.jobs), {"queued"})
         self.assertEqual(runtime.outcomes, {})
-        remaining = runtime.delivery_queue.get_nowait()
+        remaining = runtime.relay.queue.get_nowait()
         self.assertEqual(remaining.job.token, "queued")
         remaining.completed.cancel()
-        runtime.delivery_queue.task_done()
-        await asyncio.wait_for(runtime.delivery_queue.join(), 2)
+        runtime.relay.queue.task_done()
+        await asyncio.wait_for(runtime.relay.queue.join(), 2)
 
     def test_unknown_failures_are_not_rejections_or_raw_exception_messages(
         self,

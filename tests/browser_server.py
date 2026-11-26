@@ -97,7 +97,7 @@ async def capture_delivery(job: UploadJob, results: list, caption: str = "") -> 
 
 
 async def workers(application: web.Application):
-    runtime.delivery_queue = asyncio.Queue(maxsize=runtime.settings.delivery_queue_size)
+    runtime.relay.queue = asyncio.Queue(maxsize=runtime.settings.delivery_queue_size)
     task = asyncio.create_task(runtime.delivery_worker(1))
     try:
         yield

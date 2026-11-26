@@ -77,6 +77,10 @@ responsibilities:
   injects a fake sender rather than mutating application globals.
   Run independent instances with distinct diagnostic database paths when
   persistence is enabled.
+- `upload_relay.py` validates completed multipart uploads and owns buffer
+  reservations until enqueue. `delivery_worker.py` takes queued batches,
+  records delivery outcomes, and releases their reservations through the
+  runtime's completion hook.
 - `web_pages.py` registers public pages and owns document and security headers.
 - `web_ui.py` renders private session templates with a safely serialized JSON
   configuration. Browser controllers in `static/` contain no session-specific

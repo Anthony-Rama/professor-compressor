@@ -24,8 +24,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         sender_b = AsyncMock(return_value="Test sender B delivered")
         a = Runtime(settings, deliver_results=sender_a)
         b = Runtime(settings, deliver_results=sender_b)
-        a.delivery_queue = asyncio.Queue(settings.delivery_queue_size)
-        b.delivery_queue = asyncio.Queue(settings.delivery_queue_size)
+        a.relay.queue = asyncio.Queue(settings.delivery_queue_size)
+        b.relay.queue = asyncio.Queue(settings.delivery_queue_size)
         self.assertIsNot(a.client, b.client)
         self.assertIsNot(a.event_store, b.event_store)
         self.assertIs(a.tree.get_command("compress").binding, a)
@@ -86,8 +86,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         sender_a.assert_awaited_once()
         self.assertIs(sender_a.await_args.args[0], job)
         sender_b.assert_not_awaited()
-        self.assertEqual(a.delivery_bytes_held, 0)
-        self.assertEqual(b.delivery_bytes_held, 0)
+        self.assertEqual(a.relay.buffered_bytes, 0)
+        self.assertEqual(b.relay.buffered_bytes, 0)
         self.assertEqual(b.outcomes, {})
 
     async def test_transient_command_sync_retries(self):

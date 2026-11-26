@@ -7,7 +7,7 @@ import discord
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
 
-from professor_compressor import application
+from professor_compressor import application, upload_relay
 from professor_compressor.application import Runtime
 from professor_compressor.assets import ASSET_PREFIX
 from professor_compressor.config import Settings
@@ -32,18 +32,7 @@ def mp4():
 class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.runtime = Runtime(Settings(discord_token=""))
-        for key, value in {
-            "jobs": {},
-            "outcomes": {},
-            "request_times": {},
-            "delivery_queue": asyncio.Queue(8),
-            "delivery_bytes_held": 0,
-            "active_relay_uploads": 0,
-            "draining": False,
-        }.items():
-            patcher = patch.object(self.runtime, key, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.runtime.relay.queue = asyncio.Queue(8)
         self.http = TestClient(TestServer(self.runtime.create_web_application()))
         await self.http.start_server()
         self.addAsyncCleanup(self.http.close)
@@ -105,7 +94,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                         self.runtime, "rate_limit_retry_after", return_value=None
                     ),
                     patch.object(self.runtime, "schedule_owner_alert"),
-                    patch.object(application, "time", clock),
+                    patch.object(upload_relay, "time", clock),
                 ):
                     response = await asyncio.wait_for(
                         self.runtime.receive_results(request), 1
@@ -113,9 +102,9 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 408)
                 self.assertIn("upload_timeout", response.text)
                 self.assertTrue(cancelled.is_set())
-                self.assertEqual(self.runtime.active_relay_uploads, 0)
-                self.assertEqual(self.runtime.delivery_bytes_held, 0)
-                self.assertTrue(self.runtime.delivery_queue.empty())
+                self.assertEqual(self.runtime.relay.active_uploads, 0)
+                self.assertEqual(self.runtime.relay.buffered_bytes, 0)
+                self.assertTrue(self.runtime.relay.queue.empty())
                 self.assertIs(job.state, JobState.CLAIMED)
 
     async def test_stalled_metadata_read_has_thirty_second_idle_timeout(self):
@@ -147,7 +136,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             response = await self.runtime.receive_results(request)
         self.assertEqual(timeouts, [30, 30])
         self.assertEqual(response.status, 408)
-        self.assertEqual(self.runtime.active_relay_uploads, 0)
+        self.assertEqual(self.runtime.relay.active_uploads, 0)
 
     async def test_head_does_not_claim_or_extend_link(self):
         job = self.job(JobState.OPEN)
@@ -197,9 +186,49 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(facts["received_bytes"], 7)
         self.assertEqual(facts["upload_attempts"], 1)
         self.assertGreaterEqual(facts["receive_idle_seconds"], 0)
-        self.assertEqual(self.runtime.active_relay_uploads, 0)
-        self.assertEqual(self.runtime.delivery_bytes_held, 0)
-        self.assertTrue(self.runtime.delivery_queue.empty())
+        self.assertEqual(self.runtime.relay.active_uploads, 0)
+        self.assertEqual(self.runtime.relay.buffered_bytes, 0)
+        self.assertTrue(self.runtime.relay.queue.empty())
+        self.assertIs(job.state, JobState.CLAIMED)
+
+    async def test_upload_cancellation_releases_only_its_own_reservation(self):
+        job = self.job()
+        self.runtime.relay.buffered_bytes = 13
+        reading = asyncio.Event()
+        partial = b"partial"
+        reads = 0
+
+        async def read(_size):
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                return partial
+            reading.set()
+            await asyncio.Future()
+
+        field = Mock(filename="clip.mp4", read_chunk=read)
+        field.name = "clips"
+        reader = Mock(next=AsyncMock(return_value=field))
+        request = Mock(
+            content_type="multipart/form-data", multipart=AsyncMock(return_value=reader)
+        )
+        request.headers = {}
+        with (
+            patch.object(self.runtime, "session_access", return_value=(job, None)),
+            patch.object(self.runtime, "rate_limit_retry_after", return_value=None),
+        ):
+            upload = asyncio.create_task(self.runtime.receive_results(request))
+            try:
+                await asyncio.wait_for(reading.wait(), 2)
+                self.assertEqual(self.runtime.relay.active_uploads, 1)
+                self.assertEqual(self.runtime.relay.buffered_bytes, 13 + len(partial))
+            finally:
+                upload.cancel()
+                await asyncio.gather(upload, return_exceptions=True)
+        self.assertTrue(upload.cancelled())
+        self.assertEqual(self.runtime.relay.active_uploads, 0)
+        self.assertEqual(self.runtime.relay.buffered_bytes, 13)
+        self.assertTrue(self.runtime.relay.queue.empty())
         self.assertIs(job.state, JobState.CLAIMED)
 
     async def test_progress_reports_are_authenticated_bounded_and_deduplicated(self):
@@ -337,7 +366,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
             return "delivered once"
 
         with (
-            patch.object(application, "DELIVERY_RESPONSE_WAIT_SECONDS", 0.01),
+            patch.object(upload_relay, "DELIVERY_RESPONSE_WAIT_SECONDS", 0.01),
             patch.object(
                 self.runtime, "deliver_browser_results", AsyncMock(side_effect=deliver)
             ) as sender,
@@ -360,7 +389,7 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 second = await self.post_video()
                 self.assertEqual(second.status, 202)
                 gate.set()
-                await asyncio.wait_for(self.runtime.delivery_queue.join(), 2)
+                await asyncio.wait_for(self.runtime.relay.queue.join(), 2)
                 status = await self.http.get(
                     "/upload/audit/status", headers={"X-Upload-Session": "private"}
                 )
@@ -369,8 +398,8 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 duplicate = await self.post_video()
                 self.assertEqual(duplicate.status, 200)
                 sender.assert_awaited_once()
-                self.assertEqual(self.runtime.delivery_bytes_held, 0)
-                self.assertEqual(self.runtime.active_relay_uploads, 0)
+                self.assertEqual(self.runtime.relay.buffered_bytes, 0)
+                self.assertEqual(self.runtime.relay.active_uploads, 0)
                 self.assertNotIn(job.token, self.runtime.jobs)
             finally:
                 worker.cancel()
