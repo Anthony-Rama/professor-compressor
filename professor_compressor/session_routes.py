@@ -19,7 +19,13 @@ from .tracking import SessionTracker
 from .upload_relay import RelayState, receive_results
 from .web_pages import page
 from .web_responses import pending_response
-from .web_ui import browser_compressor, browser_delivery_status
+from .web_ui import (
+    LINK_UNAVAILABLE_BODY,
+    MAINTENANCE_BODY,
+    browser_compressor,
+    browser_delivery_status,
+    rate_limited_body,
+)
 
 RESUME_COOKIE_NAME = "__Secure-pc-browser"
 RESUME_COOKIE_MAX_AGE_SECONDS = 3 * 3600
@@ -108,18 +114,10 @@ class SessionRoutes:
         if request.method == "HEAD":
             return web.Response(headers={"Cache-Control": "no-store"})
         if self.sessions.draining:
-            return page(
-                "Maintenance",
-                "<h1>Brief maintenance</h1><p>Please try your link again shortly.</p>",
-            )
+            return page("Maintenance", MAINTENANCE_BODY)
         retry_after = self.rate_limiter.retry_after(request, "open")
         if retry_after is not None:
-            return page(
-                "Please wait",
-                "<h1>Too many requests</h1>"
-                f"<p>Please wait {retry_after} seconds and reopen this link. "
-                "If it has expired, run <strong>/compress</strong> again.</p>",
-            )
+            return page("Please wait", rate_limited_body(retry_after))
         token = request.match_info["token"]
         job = self.sessions.active_job(token)
         receipt = self.sessions.receipt(token)
@@ -170,13 +168,7 @@ class SessionRoutes:
                     else "",
                 ),
             )
-        return page(
-            "Private link unavailable",
-            "<h1>Private link unavailable</h1>"
-            "<p>This link has expired or cannot be reopened in this browser. "
-            "If you switched browsers or cleared site data, run "
-            "<strong>/compress</strong> in Discord for a new link.</p>",
-        )
+        return page("Private link unavailable", LINK_UNAVAILABLE_BODY)
 
     async def receive_results(self, request: web.Request) -> web.Response:
         return await receive_results(

@@ -76,7 +76,7 @@ def page(title: str, body: str) -> web.Response:
     )
 
 
-def legal_response(document: str) -> web.Response:
+def public_document_response(document: str) -> web.Response:
     return web.Response(
         text=document,
         content_type="text/html",
@@ -93,11 +93,11 @@ def register_public_pages(application: web.Application, base_url: str) -> None:
 
     async def home(request: web.Request) -> web.Response:
         del request
-        return legal_response(home_html(base_url))
+        return public_document_response(home_html(base_url))
 
     async def video_guide(request: web.Request) -> web.Response:
         del request
-        return legal_response(guide_html(base_url))
+        return public_document_response(guide_html(base_url))
 
     async def robots(request: web.Request) -> web.Response:
         del request
@@ -125,11 +125,11 @@ def register_public_pages(application: web.Application, base_url: str) -> None:
 
     async def privacy_policy(request: web.Request) -> web.Response:
         del request
-        return legal_response(privacy_policy_html())
+        return public_document_response(privacy_policy_html())
 
     async def terms_of_service(request: web.Request) -> web.Response:
         del request
-        return legal_response(terms_of_service_html())
+        return public_document_response(terms_of_service_html())
 
     application.router.add_get("/", home)
     application.router.add_get("/guide/compress-video-for-discord", video_guide)

@@ -1,7 +1,7 @@
 import unittest
 
 from professor_compressor.legal_pages import privacy_policy_html, terms_of_service_html
-from professor_compressor.web_pages import legal_response
+from professor_compressor.web_pages import public_document_response
 
 
 class LegalPageTests(unittest.TestCase):
@@ -39,8 +39,8 @@ class LegalPageTests(unittest.TestCase):
         self.assertIn("mailto:professorcompressor.support@gmail.com", document)
         self.assertIn('href="/privacy"', document)
 
-    def test_legal_response_is_public_html(self) -> None:
-        response = legal_response(privacy_policy_html())
+    def test_public_document_response_is_public_html(self) -> None:
+        response = public_document_response(privacy_policy_html())
 
         self.assertEqual(response.content_type, "text/html")
         self.assertEqual(response.headers["Cache-Control"], "public, max-age=3600")

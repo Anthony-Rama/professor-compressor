@@ -1,3 +1,5 @@
+"""Upload-session pages rendered for the browser."""
+
 import json
 from html import escape
 
@@ -5,15 +7,25 @@ from .assets import ASSET_PREFIX
 from .branding import TOPGG_LISTING_URL
 from .paths import TEMPLATES
 
+
+def _fragment(name: str) -> str:
+    """Load an HTML fragment that is inserted into another document."""
+    return (TEMPLATES / name).read_text(encoding="utf-8").rstrip("\n")
+
+
 _COMPRESSOR_TEMPLATE = (TEMPLATES / "compressor.html").read_text(encoding="utf-8")
 _DELIVERY_TEMPLATE = (TEMPLATES / "delivery-status.html").read_text(encoding="utf-8")
+REVIEW_PROMPT = _fragment("review-prompt.html").replace(
+    "__TOPGG_URL__", TOPGG_LISTING_URL
+)
+RECOVERY_NOTICE = _fragment("recovery-notice.html")
+MAINTENANCE_BODY = _fragment("session-maintenance.html")
+LINK_UNAVAILABLE_BODY = _fragment("session-unavailable.html")
+_RATE_LIMITED_BODY = _fragment("session-rate-limited.html")
 
-REVIEW_PROMPT = f"""<p id="review-prompt" class="privacy" hidden>
-  If you're enjoying Professor Compressor, please consider leaving a review and/or
-  upvoting on
-  <a href="{TOPGG_LISTING_URL}"
-    target="_blank" rel="noopener noreferrer">Top.gg</a>!
-</p>"""
+
+def rate_limited_body(retry_after: int) -> str:
+    return _RATE_LIMITED_BODY.replace("__RETRY_AFTER__", str(retry_after))
 
 
 def _json_script_value(value: object) -> str:
@@ -54,13 +66,7 @@ def browser_compressor(
         "DIAGNOSTIC_EVENTS_ENABLED": diagnostic_events_enabled,
         "EXPIRES_SECONDS": expires_in_seconds,
     }
-    recovery = (
-        '<div class="message" role="status"><strong>Page refreshed.</strong> '
-        "Videos selected in the previous page are no longer available here. "
-        "Choose them again to restart local processing.</div>"
-        if reopened
-        else ""
-    )
+    recovery = RECOVERY_NOTICE if reopened else ""
     return (
         _COMPRESSOR_TEMPLATE.replace("__MAX_CLIPS__", escape(str(max_clips)))
         .replace("__REVIEW_PROMPT__", REVIEW_PROMPT)
