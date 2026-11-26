@@ -85,6 +85,9 @@ responsibilities:
 - `web_ui.py` renders private session templates with a safely serialized JSON
   configuration. Browser controllers in `static/` contain no session-specific
   values; they read configuration from the private, non-cacheable document.
+  `compressor.js` coordinates the page, `file-selection.js` owns the picker
+  and local preparation, `video-encoder.js` owns FFmpeg lifecycle and encoding,
+  and `relay-client.js` owns upload, delivery polling, and download recovery.
 - `relay_diagnostics.py` validates optional per-batch and per-file measurements
   independently of the relay HTTP handler. These do not determine delivery.
 - `observability_contract.py` defines allowed event names and values;

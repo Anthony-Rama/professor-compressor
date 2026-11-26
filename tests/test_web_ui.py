@@ -93,7 +93,13 @@ class BrowserPageTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_external_modules_have_valid_javascript(self) -> None:
         static = Path(__file__).resolve().parents[1] / "professor_compressor" / "static"
-        for name in ("compressor.js", "delivery-status.js"):
+        for name in (
+            "compressor.js",
+            "delivery-status.js",
+            "file-selection.js",
+            "relay-client.js",
+            "video-encoder.js",
+        ):
             with self.subTest(asset=name):
                 subprocess.run(
                     ["node", "--input-type=module", "--check"],

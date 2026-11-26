@@ -83,7 +83,7 @@ jobs:
           # This HTTP-only process must not claim that Discord is ready.
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18765/readyz)" = 503
           curl --fail --silent --show-error --head http://127.0.0.1:18765/
-          for path in guide/compress-video-for-discord robots.txt sitemap.xml googlec910ef324dae35ac.html privacy terms brand/professor-compressor.png brand/compressor.js brand/delivery-status.js brand/third-party-notices.txt brand/COPYING.GPLv2 assets/core-esm/ffmpeg-core.wasm assets/core-mt-esm/ffmpeg-core.wasm; do
+          for path in guide/compress-video-for-discord robots.txt sitemap.xml googlec910ef324dae35ac.html privacy terms brand/professor-compressor.png brand/compressor.js brand/delivery-status.js brand/file-selection.js brand/relay-client.js brand/video-encoder.js brand/third-party-notices.txt brand/COPYING.GPLv2 assets/core-esm/ffmpeg-core.wasm assets/core-mt-esm/ffmpeg-core.wasm; do
             curl --fail --silent --show-error --head "http://127.0.0.1:18765/$path"
           done
 
