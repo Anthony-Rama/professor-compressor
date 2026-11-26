@@ -74,7 +74,7 @@ async function checkDelivery() {
       heading.textContent = "Delivery complete";
       explanation.hidden = true;
       statusLine.textContent =
-        "Delivered to Discord. You can return to your channel. To upload more videos, run /compress again.";
+        "Delivered to Discord. You can return to your channel.\nTo upload more videos, run /compress again.";
       statusLine.classList.add("success");
       document.getElementById("review-prompt").hidden = false;
     } else if (body.ready) {

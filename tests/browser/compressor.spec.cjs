@@ -234,11 +234,13 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
   expect(diagnostic.telemetry.input_width).toBeGreaterThan(0);
   expect(diagnostic.telemetry.output_width).toBeGreaterThan(0);
   expect(diagnostic.telemetry.output_fps).toBeGreaterThan(0);
-  await expect(page.locator("#message")).toContainText(
-    "To upload more videos, run /compress again.",
+  await expect(page.locator("#message")).toHaveJSProperty(
+    "textContent",
+    "You can close this page and return to Discord.\nTo upload more videos, run /compress again.",
   );
+  await expect(page.locator("#message")).toHaveCSS("white-space", "pre-line");
   await expect(page.locator(".file-meta")).toContainText("smaller");
-  await expect(page.locator("#feedback-actions")).toBeVisible();
+  await expect(page.locator("#feedback-actions")).toBeHidden();
   await expect(page.locator("#review-prompt")).toHaveText(
     "Enjoying Professor Compressor? Leave a review or upvote on Top.gg. Upvote",
   );
@@ -260,7 +262,7 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
   await expect(page.locator(".file-card progress")).toBeHidden();
   await expect(page.locator("#feedback-link")).toBeHidden();
   await expect(page.locator("#feedback-actions .support-link")).toBeHidden();
-  await expect(page.getByRole("link", { name: "Back to Discord" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to Discord" })).toHaveCount(0);
   await expect(page.locator("#page-intro")).toBeHidden();
   await expect(page.locator("#drop-zone")).toBeHidden();
   await expect(page.locator("#clear-selection")).toBeHidden();
@@ -1154,9 +1156,11 @@ test("completed session refresh shows delivered receipt, not duplicate uploader"
   await expect(page.getByRole("heading")).toHaveText("Delivery complete");
   await expect(page.locator("#review-prompt")).toBeVisible();
   await expect(page.locator("#delivery-explanation")).toBeHidden();
-  await expect(page.locator("#delivery-status")).toContainText(
-    "To upload more videos, run /compress again.",
+  await expect(page.locator("#delivery-status")).toHaveJSProperty(
+    "textContent",
+    "Delivered to Discord. You can return to your channel.\nTo upload more videos, run /compress again.",
   );
+  await expect(page.locator("#delivery-status")).toHaveCSS("white-space", "pre-line");
   await expect(page.locator("#clips")).toHaveCount(0);
 });
 

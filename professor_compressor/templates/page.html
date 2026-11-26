@@ -322,9 +322,8 @@ __THEME_CSS__
     .download-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis;
                           white-space: nowrap; }
     .download-link .icon { color: var(--accent-text); }
-    #feedback-actions .back-to-discord { display: none; }
-    .completed #feedback-actions .back-to-discord { display: inline-flex; }
-    .completed #feedback-actions :is(.feedback-link, .support-link) { display: none; }
+    .completed #feedback-actions { display: none; }
+    #message.success, #delivery-status.success { white-space: pre-line; }
     .next-steps { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0 8px;
                   color: var(--text-soft); font-size: 14px; list-style: none;
                   counter-reset: next; }

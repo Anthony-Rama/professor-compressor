@@ -741,7 +741,7 @@ export function startBatchController(config, modules) {
       setRunDetail("Complete");
       setPhase("done", "Delivered to Discord", response.message);
       showMessage(
-        "You can close this page and return to Discord. To upload more videos, run /compress again.",
+        "You can close this page and return to Discord.\nTo upload more videos, run /compress again.",
         "success",
       );
       deliveryComplete = true;
