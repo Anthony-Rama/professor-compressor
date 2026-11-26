@@ -13,7 +13,12 @@ from .config import Settings
 from .domain import DeliveryOutcome, JobState, UploadJob
 from .notifications import compression_outcome_alert, compression_progress_alert
 from .observability import EventStore
-from .observability_contract import CLIENT_EVENTS, sanitize, valid_id
+from .observability_contract import (
+    CLIENT_EVENTS,
+    diagnostic_reference,
+    sanitize,
+    valid_id,
+)
 from .relay_diagnostics import sanitize_telemetry
 from .web_responses import json_error
 
@@ -189,7 +194,7 @@ async def receive_diagnostic_events(
         else:
             context.event_store.record(
                 diagnostic_id,
-                "PC-" + diagnostic_id[:12].upper(),
+                diagnostic_reference(diagnostic_id),
                 item["event"],
                 is_test=receipt.is_test,
                 **kwargs,
@@ -264,7 +269,7 @@ async def receive_browser_telemetry(
     elif receipt and receipt.diagnostic_id:
         context.event_store.record(
             receipt.diagnostic_id,
-            "PC-" + receipt.diagnostic_id[:12].upper(),
+            diagnostic_reference(receipt.diagnostic_id),
             "client_complete",
             is_test=receipt.is_test,
             source="browser",

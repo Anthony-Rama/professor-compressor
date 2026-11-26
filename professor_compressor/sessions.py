@@ -13,6 +13,7 @@ from .delivery_policy import compression_target
 from .domain import DeliveryOutcome, JobState, UploadJob
 from .metrics import RuntimeMetrics
 from .notifications import compression_progress_alert
+from .observability_contract import diagnostic_reference
 from .web_pages import page
 from .web_responses import json_error, pending_response
 from .web_ui import browser_compressor, browser_delivery_status
@@ -255,7 +256,7 @@ async def upload_form(context: SessionContext, request: web.Request) -> web.Resp
             "Delivery status",
             browser_delivery_status(
                 receipt.secret,
-                diagnostic_reference="PC-" + receipt.diagnostic_id[:12].upper()
+                diagnostic_reference=diagnostic_reference(receipt.diagnostic_id)
                 if receipt.diagnostic_id
                 else "",
             ),

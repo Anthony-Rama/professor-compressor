@@ -10,6 +10,8 @@ from enum import StrEnum
 
 import discord
 
+from .observability_contract import diagnostic_reference
+
 
 class JobState(StrEnum):
     OPEN = "open"
@@ -51,7 +53,7 @@ class UploadJob:
 
     @property
     def diagnostic_reference(self) -> str:
-        return "PC-" + self.diagnostic_id[:12].upper()
+        return diagnostic_reference(self.diagnostic_id)
 
 
 @dataclass(frozen=True, slots=True)

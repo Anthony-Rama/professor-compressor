@@ -298,6 +298,11 @@ NUMBERS = {
 }
 
 
+def diagnostic_reference(diagnostic_id: str) -> str:
+    """Return the support reference shown to users for a diagnostic session."""
+    return "PC-" + diagnostic_id[:12].upper()
+
+
 def valid_id(value: object) -> str:
     return value if isinstance(value, str) and HEX_ID.fullmatch(value) else ""
 

@@ -18,7 +18,13 @@ import time
 import uuid
 from pathlib import Path
 
-from .observability_contract import CLIENT_EVENTS, EVENTS, sanitize, valid_id
+from .observability_contract import (
+    CLIENT_EVENTS,
+    EVENTS,
+    diagnostic_reference,
+    sanitize,
+    valid_id,
+)
 from .observability_queries import query_dashboard
 
 logger = logging.getLogger(__name__)
@@ -111,7 +117,7 @@ class EventStore:
                 return
             if source == "browser" and event not in CLIENT_EVENTS | {"client_complete"}:
                 return
-            if reference != "PC-" + session_id[:12].upper():
+            if reference != diagnostic_reference(session_id):
                 return
             if type(file_index) is not int or not 0 <= file_index <= 10:
                 return
