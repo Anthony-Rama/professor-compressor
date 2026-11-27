@@ -19,6 +19,11 @@ modified builds are the responsibility of their operators.
 ## Security boundaries
 
 - Videos needing conversion or compression are encoded locally in the browser.
+- Selected clips are copied into temporary, site-private browser storage on the
+  user's device while they are prepared; making those copies uploads nothing.
+- The browser keeps only a short-lived, path-scoped, HTTP-only session cookie
+  and, if chosen, a theme preference in `localStorage`; the theme preference is
+  never sent to the server.
 - Fitting MP4s may be uploaded unchanged for delivery.
 - Completed MP4 files pass through the relay in memory for Discord delivery.
 - The service does not intentionally persist video files to disk.
