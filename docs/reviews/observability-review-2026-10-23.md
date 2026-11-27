@@ -53,6 +53,12 @@ disk monitoring, and private backups, remain operational tasks.
 
 The previously discussed crafted-MP4 validation memory amplification issue remains
 deferred at the owner's request. This feature does not resolve that existing risk.
+
+> **Update, November 26, 2026:** resolved on November 15, 2026 in commit
+> `cae341e`. MP4 validation no longer copies the `ftyp` box or builds a set from
+> its contents; the box is limited to 4 KiB, brands are checked in place, and
+> only the three required box types are tracked, so validation memory no longer
+> grows with a crafted upload.
 Branch protection and reproducible FFmpeg source provenance also remain separate
 repository/release improvements. No push, merge, or production deployment was
 performed as part of this review.
