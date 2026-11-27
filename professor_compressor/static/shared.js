@@ -37,6 +37,25 @@ export function readableSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+// Display category of a per-file status label. It only selects the card's icon
+// and colours; the label itself is always shown as text.
+const FINISHED_FILE_STATUSES = [
+  "Delivered",
+  "Compressed",
+  "Already fits",
+  "Converted without re-encoding",
+  "Converted to MP4",
+  "Sent to relay",
+];
+export function fileStatusKind(status) {
+  if (status === "Ready") return "ready";
+  if (status === "Preparing local copy…") return "preparing";
+  if (status === "Needs attention") return "attention";
+  if (status === "Cancelled" || status === "Session expired") return "stopped";
+  if (FINISHED_FILE_STATUSES.includes(status)) return "done";
+  return "working";
+}
+
 export function readableTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return "--:--";
   const rounded = Math.max(0, Math.round(seconds));

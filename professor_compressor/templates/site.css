@@ -1,0 +1,40 @@
+    body { line-height: 1.6; }
+    p, li { color: var(--muted); }
+    h1, h2, h3 { color: var(--text); }
+    .wrap { width: min(100% - 40px, 1120px); margin: 0 auto; }
+    .site-header { border-bottom: 1px solid var(--border); }
+    .nav { display: flex; flex-wrap: wrap; align-items: center;
+           justify-content: space-between; gap: 12px 28px; min-height: 76px;
+           padding: 14px 0; }
+    .wordmark { font-size: 17px; }
+    .nav .theme-menu { order: 3; }
+    .nav .wordmark { margin-right: auto; }
+    .wordmark img { width: 38px; height: 38px; border-radius: 10px; }
+    .nav-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 24px;
+                 font-size: 15px; font-weight: 600; }
+    .nav-links a:not(.btn) { display: inline-flex; align-items: center; min-height: 44px;
+                             color: var(--text-soft); text-decoration: none; }
+    .nav-links a:not(.btn):hover, .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"] { text-decoration: underline;
+                                        text-underline-offset: 6px; }
+    .eyebrow { align-self: flex-start; padding: 6px 12px; border-radius: 999px;
+               background: var(--success-tint); color: var(--success-text);
+               font-size: 13px; font-weight: 700; }
+    .section-title { margin: 0; font-size: clamp(26px, 3vw, 34px); line-height: 1.2;
+                     font-weight: 800; letter-spacing: -.02em; }
+    .site-footer { margin-top: auto; border-top: 1px solid var(--border);
+                   color: var(--faint); font-size: 14px; }
+    .footer-inner { display: flex; flex-wrap: wrap; justify-content: space-between;
+                    gap: 16px 32px; padding: 32px 0 40px; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+    .footer-links a { display: inline-flex; align-items: center; min-height: 32px; }
+    .site-footer p { margin: 0; color: var(--faint); }
+    body { min-height: 100vh; display: flex; flex-direction: column; }
+    @media (max-width: 720px) {
+      .nav { padding: 12px 0; }
+      .nav .theme-menu { order: 2; }
+      .nav-links { order: 3; flex-basis: 100%; }
+      .nav-links { gap: 0 18px; }
+      .wordmark { font-size: 15px; }
+      .wordmark img { width: 32px; height: 32px; border-radius: 9px; }
+    }

@@ -189,7 +189,7 @@ test("required error handling classifies failures without optional diagnostics",
   await page.locator("#submit").click();
   await expect(page.locator("#message")).toContainText("H.264 MP4 with AAC audio");
   await expect(
-    page.getByRole("button", { name: "Reselect large-av1.mp4", exact: true }),
+    page.getByRole("button", { name: "Replace clip large-av1.mp4", exact: true }),
   ).toBeVisible();
 });
 
@@ -225,6 +225,77 @@ for (const outcome of ["unknown", "rejected"]) {
     });
   });
 }
+test("delivery status reports a lost connection separately from a busy relay", async ({
+  page,
+  request,
+}) => {
+  const session = await (await request.post("/test/session?slow=1")).json();
+  await page.goto(session.path);
+  await expect(page.locator("#clips")).toBeEnabled();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#page-heading")).toHaveText("Sending to Discord");
+  await page.route("**" + session.path + "/status", (route) => route.abort());
+  await page.reload();
+  await expect(page.locator("#delivery-status")).toContainText(
+    "Connection lost while checking delivery. Retrying safely",
+  );
+  // Drain this test's deliberately slow fake delivery before the next test.
+  await page.unroute("**" + session.path + "/status");
+  await expect(page.locator("#delivery-status")).toContainText("Delivered to Discord", {
+    timeout: 15000,
+  });
+});
+
+test("delivery status backs off on temporary failures and rechecks only on request", async ({
+  page,
+  request,
+}) => {
+  const session = await (await request.post("/test/session?slow=1")).json();
+  await page.goto(session.path);
+  await expect(page.locator("#clips")).toBeEnabled();
+  await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+  await page.locator("#submit").click();
+  await expect(page.locator("#page-heading")).toHaveText("Sending to Discord");
+  // An overloaded relay answers without a recognized delivery status.
+  let statusChecks = 0;
+  await page.route("**" + session.path + "/status", (route) => {
+    statusChecks += 1;
+    return route.fulfill({ status: 503, json: {} });
+  });
+  let uploads = 0;
+  page.on("request", (sent) => {
+    if (sent.method() === "POST" && new URL(sent.url()).pathname === session.path) uploads += 1;
+  });
+  await page.clock.install();
+  await page.reload();
+  await expect(page.locator("#delivery-status")).toContainText("The relay is busy");
+  // Advance page time in steps so each retry's request can finish and schedule the next.
+  for (
+    let second = 0;
+    second < 120 && !(await page.locator("#check-again").isVisible());
+    second++
+  ) {
+    await page.clock.runFor(1000);
+    await page.waitForTimeout(25);
+  }
+  await expect(page.locator("#delivery-status")).toContainText("could not be checked");
+  await expect(page.locator("#check-again")).toBeVisible();
+  const checksBeforeWaiting = statusChecks;
+  await page.clock.runFor(120000);
+  expect(statusChecks).toBe(checksBeforeWaiting);
+  expect(checksBeforeWaiting).toBe(6);
+
+  await page.unroute("**" + session.path + "/status");
+  await page.clock.resume();
+  await page.locator("#check-again").click();
+  await expect(page.locator("#check-again")).toBeHidden();
+  await expect(page.locator("#delivery-status")).toContainText("Delivered to Discord", {
+    timeout: 15000,
+  });
+  expect(uploads).toBe(0);
+});
+
 async function open(page, request, metadata = null) {
   await page.addInitScript((metadata) => {
     window.executions = [];
@@ -264,7 +335,7 @@ for (const diagnostics of [true, false]) {
       };
     });
     await open(page, request);
-    await expect(page.locator("#stay-open")).toContainText("keep the screen unlocked");
+    await expect(page.locator("#stay-open")).toContainText("Keep your screen on");
     await page.locator("#clips").setInputFiles(join(fixtures, "large-small.mp4"));
     await page.locator("#submit").click();
     await expect.poll(() => page.evaluate(() => Boolean(window.heldEncoder))).toBe(true);
@@ -339,7 +410,7 @@ for (const diagnostics of [true, false]) {
     await page.locator("#cancel").click();
     await expect(page.locator("#stall-warning")).toBeHidden();
     await expect(page.locator("#background-warning")).toBeHidden();
-    await expect(page.locator("#page-heading")).toHaveText("Compress videos for Discord");
+    await expect(page.locator("#page-heading")).toHaveText("Compress and Send Videos to Discord");
   });
 }
 for (const file of ["large-av1.mp4", "av1.webm"])
@@ -356,7 +427,9 @@ for (const file of ["large-av1.mp4", "av1.webm"])
     expect(await page.evaluate(() => window.executions.length)).toBe(0);
     await expect(page.locator("#caption")).toHaveValue("Keep my caption");
     await expect(page.locator(".file-card")).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "Reselect " + file, exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Replace clip " + file, exact: true }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Remove " + file, exact: true }).click();
     await page.locator("#submit").click();
     await expect(page.locator("#page-heading")).toHaveText("Delivered to Discord");

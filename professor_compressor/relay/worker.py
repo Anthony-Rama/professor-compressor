@@ -90,6 +90,54 @@ def outcome_alert(
     )
 
 
+def report_outcome(
+    delivery: DeliveryRequest,
+    started: float,
+    *,
+    track: Callable[..., None],
+    notify: Callable[[str], None],
+    batch_limit: int,
+    error_code: str | None = None,
+) -> None:
+    """Log, record, and alert a finished delivery; never affects its result."""
+    succeeded = error_code is None
+    try:
+        log_delivery_diagnostics(
+            delivery, started, "delivered" if succeeded else "delivery_failed"
+        )
+    except Exception:
+        logger.warning("Optional delivery diagnostic formatting failed")
+    try:
+        timing = delivery_timing(delivery, started)
+        total_bytes = sum(len(result.data) for result in delivery.results)
+        if succeeded:
+            data: dict[str, object] = {
+                "files": len(delivery.results),
+                "output_bytes": total_bytes,
+                **timing,
+            }
+        else:
+            data = {"error_code": error_code, "stage": "delivery", **timing}
+        track(
+            delivery.job,
+            "delivered" if succeeded else "delivery_failed",
+            run_id=delivery.run_id,
+            data=data,
+        )
+        notify(
+            outcome_alert(
+                delivery,
+                started,
+                batch_limit,
+                succeeded=succeeded,
+                total_bytes=total_bytes,
+                **({} if succeeded else {"stage": "Discord delivery"}),
+            )
+        )
+    except Exception:
+        logger.warning("Optional delivery report could not be completed")
+
+
 async def run_delivery_worker(
     worker_number: int,
     *,
@@ -114,89 +162,76 @@ async def run_delivery_worker(
             data={"queue_seconds": max(0, delivery_started - delivery.queued_at)},
         )
         try:
-            message = await asyncio.wait_for(
-                send(delivery.job, delivery.results, delivery.caption),
-                timeout=SEND_TIMEOUT_SECONDS,
-            )
-            total_bytes = sum(len(result.data) for result in delivery.results)
             try:
-                log_delivery_diagnostics(delivery, delivery_started, "delivered")
-            except Exception:
-                logger.warning("Optional delivery diagnostic formatting failed")
-            track(
-                delivery.job,
-                "delivered",
-                run_id=delivery.run_id,
-                data={
-                    "files": len(delivery.results),
-                    "output_bytes": total_bytes,
-                    **delivery_timing(delivery, delivery_started),
-                },
-            )
-            metrics.increment("deliveries_succeeded")
-            metrics.increment("files_delivered", len(delivery.results))
-            metrics.increment("bytes_delivered", total_bytes)
-            record_outcome(
-                delivery.job,
-                200,
-                {
-                    "ok": True,
-                    "message": message,
-                    "count": len(delivery.results),
-                },
-            )
-            notify(
-                outcome_alert(
+                message = await asyncio.wait_for(
+                    send(delivery.job, delivery.results, delivery.caption),
+                    timeout=SEND_TIMEOUT_SECONDS,
+                )
+            except Exception as error:
+                # The send failed: record the receipt and answer the browser first,
+                # then report. Reporting can fail without stopping this worker.
+                failure = delivery_failure(error)
+                message = str(failure)
+                metrics.increment("deliveries_failed")
+                record_outcome(
+                    delivery.job,
+                    502,
+                    {
+                        "ok": False,
+                        "error": message,
+                        "code": "discord_delivery_failed",
+                        "delivery_outcome": failure.outcome,
+                        "error_code": failure.error_code,
+                    },
+                )
+                if not delivery.completed.done():
+                    delivery.completed.set_exception(RuntimeError(message))
+                report_outcome(
                     delivery,
                     delivery_started,
-                    batch_limit,
-                    succeeded=True,
-                    total_bytes=total_bytes,
+                    track=track,
+                    notify=notify,
+                    batch_limit=batch_limit,
+                    error_code=failure.error_code,
                 )
-            )
-            if not delivery.completed.done():
-                delivery.completed.set_result(message)
+            else:
+                # Discord accepted the batch. That result is final: record it and
+                # answer the browser before any optional diagnostics or alerts.
+                total_bytes = sum(len(result.data) for result in delivery.results)
+                metrics.increment("deliveries_succeeded")
+                metrics.increment("files_delivered", len(delivery.results))
+                metrics.increment("bytes_delivered", total_bytes)
+                record_outcome(
+                    delivery.job,
+                    200,
+                    {
+                        "ok": True,
+                        "message": message,
+                        "count": len(delivery.results),
+                    },
+                )
+                if not delivery.completed.done():
+                    delivery.completed.set_result(message)
+                report_outcome(
+                    delivery,
+                    delivery_started,
+                    track=track,
+                    notify=notify,
+                    batch_limit=batch_limit,
+                )
         except Exception as error:
-            failure = delivery_failure(error)
-            try:
-                log_delivery_diagnostics(delivery, delivery_started, "delivery_failed")
-            except Exception:
-                logger.warning("Optional delivery diagnostic formatting failed")
-            track(
-                delivery.job,
-                "delivery_failed",
-                run_id=delivery.run_id,
-                data={
-                    "error_code": failure.error_code,
-                    "stage": "delivery",
-                    **delivery_timing(delivery, delivery_started),
-                },
-            )
-            metrics.increment("deliveries_failed")
-            message = str(failure)
-            record_outcome(
-                delivery.job,
-                502,
-                {
-                    "ok": False,
-                    "error": message,
-                    "code": "discord_delivery_failed",
-                    "delivery_outcome": failure.outcome,
-                    "error_code": failure.error_code,
-                },
-            )
-            notify(
-                outcome_alert(
-                    delivery,
-                    delivery_started,
-                    batch_limit,
-                    succeeded=False,
-                    total_bytes=sum(len(result.data) for result in delivery.results),
-                    stage="Discord delivery",
-                )
+            # Never let one batch stop this worker. Recording failed partway, so
+            # the outcome cannot be confirmed; tell the browser rather than
+            # leaving it waiting. finish() below still releases the batch.
+            logger.warning(
+                "Delivery worker %d could not finish recording a delivery (%s)",
+                worker_number,
+                type(error).__name__,
             )
             if not delivery.completed.done():
-                delivery.completed.set_exception(RuntimeError(message))
+                delivery.completed.set_exception(
+                    RuntimeError(str(delivery_failure(error)))
+                )
         finally:
             try:
                 finish(delivery)

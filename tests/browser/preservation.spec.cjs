@@ -93,7 +93,7 @@ test("unreadable sources explain the problem above the picker and can be reselec
   await page
     .locator("#clips")
     .setInputFiles([join(fixtures, "clip.mp4"), join(fixtures, "unreadable.mp4")]);
-  await expect(page.locator(".file-status")).toHaveText(["Ready", "Reselect file"]);
+  await expect(page.locator(".file-status")).toHaveText(["Ready", "Needs attention"]);
   await expect(page.locator("#submit")).toBeDisabled();
   await expect(page.locator("#message")).toContainText("could not be read");
   await expect(page.locator("#message")).not.toContainText("PRIVATE_SOURCE_PATH");
@@ -112,7 +112,7 @@ test("unreadable sources explain the problem above the picker and can be reselec
     window.rejectLocalSource = false;
   });
   const picker = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Reselect unreadable.mp4", exact: true }).click();
+  await page.getByRole("button", { name: "Replace clip unreadable.mp4", exact: true }).click();
   await (await picker).setFiles(join(fixtures, "unreadable.mp4"));
   await expect(page.locator("#submit")).toBeEnabled();
   await expect(page.locator(".file-card")).toHaveCount(2);
@@ -387,7 +387,7 @@ test("batch and per-file preflight reject additions without creating failed card
       new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }),
     );
   });
-  await expect(page.locator("#message")).toContainText("above the 4 GiB batch limit");
+  await expect(page.locator("#message")).toContainText("above the 4 GB batch limit");
   await expect(page.locator(".file-status")).toHaveText(["Ready"]);
   await page.evaluate(() => {
     const transfer = new DataTransfer();
@@ -396,7 +396,7 @@ test("batch and per-file preflight reject additions without creating failed card
       new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }),
     );
   });
-  await expect(page.locator("#message")).toContainText("Each video must be 1 GiB or smaller");
+  await expect(page.locator("#message")).toContainText("Each video must be 1 GB or smaller");
   await expect(page.locator(".file-name")).toHaveText("clip.mp4");
   await expect(page.locator("#submit")).toBeEnabled();
   await expect.poll(() => storedFiles(page)).toBe(1);
@@ -418,7 +418,7 @@ test("rapid selections are admitted sequentially without losing an earlier addit
   });
   await expect(page.locator(".file-name")).toHaveText(["first.mp4", "second.mp4"]);
   await expect(page.locator(".file-status")).toHaveText(["Ready", "Ready"]);
-  await expect(page.locator("#selection")).toContainText("/ 4 GiB");
+  await expect(page.locator("#selection")).toContainText("/ 4 GB");
   await expect(page.locator("#submit")).toBeEnabled();
 });
 
@@ -526,13 +526,15 @@ test("a later saved-copy read failure is classified as file access, not bad medi
       ),
     ),
   ).toBe(true);
-  await expect(page.getByRole("button", { name: "Reselect clip.mp4", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Replace clip clip.mp4", exact: true }),
+  ).toBeVisible();
   await expect(page.locator("#submit")).toBeDisabled();
   await page.evaluate(() => {
     File.prototype.slice = window.originalFileSlice;
   });
   const picker = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Reselect clip.mp4", exact: true }).click();
+  await page.getByRole("button", { name: "Replace clip clip.mp4", exact: true }).click();
   await (await picker).setFiles(join(fixtures, "clip.mp4"));
   await ready(page);
   await page.locator("#submit").click();
@@ -904,9 +906,9 @@ test("reselecting an oversized replacement keeps the previous selection and capt
   await page
     .locator("#clips")
     .setInputFiles([join(fixtures, "clip.mp4"), join(fixtures, "unreadable.mp4")]);
-  await expect(page.locator(".file-status")).toHaveText(["Ready", "Reselect file"]);
+  await expect(page.locator(".file-status")).toHaveText(["Ready", "Needs attention"]);
   const picker = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Reselect unreadable.mp4", exact: true }).click();
+  await page.getByRole("button", { name: "Replace clip unreadable.mp4", exact: true }).click();
   await (await picker).setFiles({ name: "huge.mp4", mimeType: "video/mp4", buffer: original });
   await expect(page.locator("#message")).toContainText("replacement exceeds");
   await expect(page.locator(".file-name")).toHaveText(["clip.mp4", "unreadable.mp4"]);

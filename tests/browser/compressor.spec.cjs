@@ -234,13 +234,15 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
   expect(diagnostic.telemetry.input_width).toBeGreaterThan(0);
   expect(diagnostic.telemetry.output_width).toBeGreaterThan(0);
   expect(diagnostic.telemetry.output_fps).toBeGreaterThan(0);
-  await expect(page.locator("#message")).toContainText(
-    "To upload more videos, run /compress again.",
+  await expect(page.locator("#message")).toHaveJSProperty(
+    "textContent",
+    "You can close this page and return to Discord.\nTo upload more videos, run /compress again.",
   );
+  await expect(page.locator("#message")).toHaveCSS("white-space", "pre-line");
   await expect(page.locator(".file-meta")).toContainText("smaller");
-  await expect(page.locator("#feedback-actions")).toBeVisible();
+  await expect(page.locator("#feedback-actions")).toBeHidden();
   await expect(page.locator("#review-prompt")).toHaveText(
-    "If you're enjoying Professor Compressor, please consider leaving a review and/or upvoting on Top.gg!",
+    "Enjoying Professor Compressor? Leave a review or upvote on Top.gg. Upvote",
   );
   await expect(page.locator("#review-prompt")).toBeVisible();
   await expect(page.locator("#contact-help")).toBeHidden();
@@ -258,11 +260,9 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
   await expect(page.locator("#completion-summary")).toBeVisible();
   await expect(page.locator("#work")).toBeHidden();
   await expect(page.locator(".file-card progress")).toBeHidden();
-  await expect(page.locator("#feedback-link")).toHaveCSS("background-color", "rgb(88, 101, 242)");
-  await expect(page.locator("#feedback-actions .support-link")).toHaveCSS(
-    "border-top-color",
-    "rgb(89, 103, 125)",
-  );
+  await expect(page.locator("#feedback-link")).toBeHidden();
+  await expect(page.locator("#feedback-actions .support-link")).toBeHidden();
+  await expect(page.getByRole("link", { name: "Back to Discord" })).toHaveCount(0);
   await expect(page.locator("#page-intro")).toBeHidden();
   await expect(page.locator("#drop-zone")).toBeHidden();
   await expect(page.locator("#clear-selection")).toBeHidden();
@@ -272,26 +272,20 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
   await expect(page.locator("#performance-help")).toBeHidden();
   await expect(page.locator("#format-help")).toBeHidden();
   await expect(page.locator("#message")).toHaveCSS("text-align", "center");
-  await expect(page.getByRole("link", { name: "Contact Us" })).toHaveAttribute(
+  const footer = page.getByRole("navigation", { name: "Support and legal" });
+  await expect(footer.getByRole("link", { name: "Website" })).toHaveAttribute(
+    "href",
+    "https://professor-compressor.duckdns.org/",
+  );
+  await expect(footer.locator('a > svg[aria-hidden="true"]')).toHaveCount(5);
+  await expect(footer.getByRole("link", { name: "Contact Support" })).toHaveAttribute(
     "href",
     /^mailto:professorcompressor\.support@gmail\.com\?/,
   );
-  await expect(page.getByRole("link", { name: "Join Discord Server" })).toHaveAttribute(
+  await expect(footer.getByRole("link", { name: "Support Discord" })).toHaveAttribute(
     "href",
     "https://discord.com/invite/32RWwNWyEH",
   );
-  const actions = page.locator("#feedback-actions");
-  const firstAction = await actions.getByRole("link", { name: "Contact Us" }).boundingBox();
-  const secondAction = await actions
-    .getByRole("link", { name: "Join Discord Server" })
-    .boundingBox();
-  const actionsBox = await actions.boundingBox();
-  expect(
-    Math.abs(
-      (firstAction.x + secondAction.x + secondAction.width) / 2 -
-        (actionsBox.x + actionsBox.width / 2),
-    ),
-  ).toBeLessThan(2);
 });
 
 test("single-thread fallback still encodes when multithread core is unavailable", async ({
@@ -634,10 +628,10 @@ for (const width of [375, 1440]) {
     await expect(page.locator("#page-heading")).toHaveText("Compression in progress");
     await expect(page.locator("#stay-open")).toBeVisible();
     await expect(page.locator("#stay-open")).toContainText(
-      "Keep this page open and active until it finishes.",
+      "Keep this page open until it finishes.",
     );
     await expect(page.locator("#stay-open")).toContainText(
-      "This helps compression run at full speed.",
+      "Keep your screen on and this tab visible for best performance.",
     );
     for (const selector of [
       "#picker-row",
@@ -675,7 +669,7 @@ for (const width of [375, 1440]) {
     await expect(page.locator("#caption")).toHaveValue("Preserve my caption");
     expect(await page.locator("#clips").evaluate((el) => el.files.length)).toBe(1);
     await expect(page.locator(".file-card")).toHaveCount(1);
-    await expect(page.locator("#page-heading")).toHaveText("Compress videos for Discord");
+    await expect(page.locator("#page-heading")).toHaveText("Compress and Send Videos to Discord");
     await page.unroute("**/heartbeat");
     await page.locator("#submit").click();
     await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord");
@@ -726,7 +720,7 @@ test("unsupported AV1 fails without uploading and allows a supported replacement
   );
   await expect(page.locator("#feedback-actions")).toBeVisible();
   await expect(page.locator("#format-help")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Contact Us" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Contact us" })).toBeVisible();
   await expect(page.locator("#feedback-link")).toHaveAttribute("href", /feedback%20\(failure\)/);
   expect(uploads).toBe(0);
   await page.getByRole("button", { name: "Remove av1.mkv" }).click();
@@ -1090,7 +1084,7 @@ test("same browser can refresh and reselect without retaining local files", asyn
   const url = page.url();
   await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
   await page.reload();
-  await expect(page.getByRole("heading")).toHaveText("Compress videos for Discord");
+  await expect(page.getByRole("heading")).toHaveText("Compress and Send Videos to Discord");
   await expect(page.getByRole("status")).toContainText("Page refreshed");
   await expect(page.getByRole("status")).not.toContainText("Check Discord first");
   await expect(page.locator("#selection")).toHaveText("No videos selected");
@@ -1125,10 +1119,11 @@ test("refresh during local compression restarts with explicit file re-selection"
   await page.locator("#submit").click();
   await expect(page.locator("#work")).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading")).toHaveText("Compress videos for Discord");
+  await expect(page.getByRole("heading")).toHaveText("Compress and Send Videos to Discord");
   await expect(page.getByRole("status")).toContainText("Choose them again");
   await expect(page.locator("#selection")).toHaveText("No videos selected");
   await deliver(page, join(fixtures, "small.mp4"));
+  await expect(page.locator("#recovery-notice")).toBeHidden();
 });
 
 test("refresh while Discord delivery is pending shows receipt status, not uploader", async ({
@@ -1166,9 +1161,11 @@ test("completed session refresh shows delivered receipt, not duplicate uploader"
   await expect(page.getByRole("heading")).toHaveText("Delivery complete");
   await expect(page.locator("#review-prompt")).toBeVisible();
   await expect(page.locator("#delivery-explanation")).toBeHidden();
-  await expect(page.locator("#delivery-status")).toContainText(
-    "To upload more videos, run /compress again.",
+  await expect(page.locator("#delivery-status")).toHaveJSProperty(
+    "textContent",
+    "Delivered to Discord. You can return to your channel.\nTo upload more videos, run /compress again.",
   );
+  await expect(page.locator("#delivery-status")).toHaveCSS("white-space", "pre-line");
   await expect(page.locator("#clips")).toHaveCount(0);
 });
 
