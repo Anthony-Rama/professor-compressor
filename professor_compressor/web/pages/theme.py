@@ -41,21 +41,6 @@ THEME_BOOT_SCRIPT = (
 
 _THEME_OPTIONS = (("system", "System"), ("light", "Light"), ("dark", "Dark"))
 
-# Footer control on session pages: a radio group of the three choices. Shown by
-# /brand/theme-toggle.js once it has loaded; it does nothing without it.
-THEME_SWITCH = (
-    '<fieldset class="theme-switch" hidden>'
-    '<legend class="visually-hidden">Theme</legend>'
-    + "".join(
-        f'<label title="{name}"><input type="radio" name="theme-choice"'
-        f' value="{value}"{" checked" if value == "system" else ""}>'
-        f'<span class="icon icon-theme-{value}" aria-hidden="true"></span>'
-        f'<span class="visually-hidden">{name}</span></label>'
-        for value, name in _THEME_OPTIONS
-    )
-    + "</fieldset>"
-)
-
 # Header control on the public website: a menu button listing the choices.
 THEME_MENU = (
     '<div class="theme-menu" hidden>'
@@ -120,6 +105,5 @@ def with_shared_markup(fragment: str) -> str:
         fragment.replace("__BRAND__", BRAND_MARK)
         .replace("__DISCORD_ICON__", DISCORD_ICON)
         .replace("__MAIL_ICON__", MAIL_ICON)
-        .replace("__THEME_SWITCH__", THEME_SWITCH)
         .replace("__THEME_MENU__", THEME_MENU)
     )
