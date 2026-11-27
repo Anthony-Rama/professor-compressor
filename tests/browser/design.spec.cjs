@@ -51,15 +51,17 @@ for (const scheme of ["dark", "light"]) {
     await page.emulateMedia({ colorScheme: scheme });
     await openSession(page, request);
     await expectTheme(page, scheme);
-    const clear = page.getByRole("button", { name: "Clear selected videos" });
+    const clear = page.locator("#clear-selection");
     await expect(clear).toBeDisabled();
+    await expect(clear).toBeHidden();
+    await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
+    await expect(clear).toBeVisible();
     for (const property of ["color", "background-color", "border-top-color"]) {
       const cancelColor = await page
         .locator("#cancel")
         .evaluate((button, name) => getComputedStyle(button).getPropertyValue(name), property);
       await expect(clear).toHaveCSS(property, cancelColor);
     }
-    await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
     const remove = page.locator(".remove-file");
     const neutralColor = await remove.evaluate((button) => getComputedStyle(button).color);
     const dangerColor = await clear.evaluate((button) => getComputedStyle(button).color);
