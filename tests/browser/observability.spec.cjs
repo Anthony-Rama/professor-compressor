@@ -1137,6 +1137,9 @@ for (const scheme of ["dark", "light"]) {
           () => getComputedStyle(document.body).backgroundColor,
         );
         expect(background).toBe(scheme === "dark" ? "rgb(14, 17, 32)" : "rgb(245, 246, 251)");
+        await expect(
+          page.getByRole("banner").getByRole("button", { name: "Theme: System" }),
+        ).toBeVisible();
         for (const tab of ["Overview", "Failures", "Performance", "Growth", "Sessions", "System"]) {
           await page.getByRole("tab", { name: tab, exact: true }).click();
           expect(

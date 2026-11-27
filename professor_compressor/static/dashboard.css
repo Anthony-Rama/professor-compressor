@@ -203,7 +203,6 @@ td.number, th.number { text-align: right; font-variant-numeric: tabular-nums; }
                       background: var(--surface-2); color: var(--text-soft); font-size: 12px; }
 .page-footer { padding-top: 8px; border-top: 1px solid var(--border); }
 .page-footer p { margin: 8px 0 0; color: var(--faint); font-size: 12px; }
-.theme-switch label { display: grid; }
 
 @media (max-width: 960px) {
   .two-column, .three-column { grid-template-columns: minmax(0, 1fr); }

@@ -12,7 +12,7 @@ from collections.abc import Callable
 from aiohttp import BasicAuth, web
 
 from ..paths import TEMPLATES
-from ..web.pages.theme import THEME_BOOT_SCRIPT, THEME_CSS, THEME_SWITCH
+from ..web.pages.theme import THEME_BOOT_SCRIPT, THEME_CSS, THEME_MENU
 from .queries import FILTER_DIMENSIONS, MAX_DAYS
 from .report import SCHEMA_VERSION, anomalies, summary_markdown
 from .store import EventStore
@@ -22,7 +22,7 @@ HTML = (
     .read_text(encoding="utf-8")
     .replace("__THEME_CSS__", THEME_CSS)
     .replace("__THEME_BOOT__", THEME_BOOT_SCRIPT)
-    .replace("__THEME_SWITCH__", THEME_SWITCH)
+    .replace("__THEME_MENU__", THEME_MENU)
 )
 # The support reference shown to users: "PC-" and 12 uppercase hex digits.
 REFERENCE = re.compile(r"PC-[0-9A-F]{12}")
