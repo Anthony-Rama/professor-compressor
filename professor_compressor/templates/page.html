@@ -129,6 +129,18 @@ __THEME_CSS__
                    background: var(--surface-2); text-align: center; cursor: pointer; }
     .file-picker:hover { border-color: var(--accent-fill); }
     .file-picker.drag-over { border-color: var(--accent-fill); background: var(--accent-tint); }
+    /* Shown while files are dragged over the page: a drop anywhere adds them. It
+       ignores the pointer so the drag events keep reaching the page beneath. */
+    .drop-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+                    padding: 16px; visibility: hidden; opacity: 0; pointer-events: none;
+                    background: var(--bg);
+                    background: color-mix(in srgb, var(--bg) 85%, transparent); }
+    .dragging-files .drop-overlay { visibility: visible; opacity: 1; }
+    .drop-overlay-card { display: flex; flex-direction: column; align-items: center; gap: 14px;
+                         width: min(100%, 520px); padding: 48px 24px;
+                         border: 2px dashed var(--accent-fill); border-radius: 24px;
+                         background: var(--accent-tint); color: var(--text);
+                         text-align: center; font-size: 18px; }
     .file-input:focus + .file-picker { outline: 3px solid var(--focus); outline-offset: 2px; }
     .picker-icon { display: grid; place-items: center; width: 64px; height: 64px; flex: none;
                    border-radius: 18px; background: var(--accent-tint); color: var(--accent-text); }
@@ -155,7 +167,8 @@ __THEME_CSS__
                                             font-size: 14px; }
     .clear-selection { display: grid; flex: 0 0 56px; place-items: center; width: 56px;
                        margin: 0; padding: 0; border-radius: 18px; cursor: pointer; }
-    .clear-selection:disabled { opacity: .45; cursor: not-allowed; }
+    /* Nothing to clear yet: hide it so the drop zone takes the full row. */
+    .clear-selection:disabled { display: none; }
     .selection { color: var(--muted); font-size: 13px; }
     #preparation-help { color: var(--faint); font-size: 12px; }
     #upload:not(:has(.file-card)) #preparation-help { display: none; }

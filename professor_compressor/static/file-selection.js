@@ -539,6 +539,7 @@ export function createFileSelection({
   function clearDrag() {
     dragDepth = 0;
     dropZone.classList.remove("drag-over");
+    document.documentElement.classList.remove("dragging-files");
   }
   // Prevent dropped files from navigating away from this single-use session.
   document.addEventListener("dragenter", (event) => {
@@ -547,6 +548,7 @@ export function createFileSelection({
     if (isRunning() || clips.disabled) return;
     dragDepth += 1;
     dropZone.classList.add("drag-over");
+    document.documentElement.classList.add("dragging-files");
   });
   document.addEventListener("dragleave", () => {
     dragDepth = Math.max(0, dragDepth - 1);

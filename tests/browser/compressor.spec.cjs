@@ -818,8 +818,13 @@ test("page-wide file drag feedback clears and text drops do not select files", a
     );
   });
   await expect(page.locator("#drop-zone")).toHaveClass(/drag-over/);
+  const overlay = page.locator("#drop-overlay");
+  await expect(overlay).toBeVisible();
+  await expect(overlay).toHaveCSS("pointer-events", "none");
+  await expect(overlay).toContainText("Drop to add videos");
   await page.evaluate(() => window.dispatchEvent(new Event("dragend")));
   await expect(page.locator("#drop-zone")).not.toHaveClass(/drag-over/);
+  await expect(overlay).toBeHidden();
   await page.evaluate(() => {
     const transfer = new DataTransfer();
     transfer.setData("text/plain", "not a video");
@@ -831,6 +836,7 @@ test("page-wide file drag feedback clears and text drops do not select files", a
     );
   });
   await expect(page.locator("#drop-zone")).not.toHaveClass(/drag-over/);
+  await expect(overlay).toBeHidden();
   await expect(page.locator(".file-card")).toHaveCount(0);
   await expect(page.locator("#message")).toBeHidden();
 });
@@ -922,16 +928,23 @@ test("trash button clears chosen or dropped videos before processing", async ({
   request,
 }) => {
   await openSession(page, request);
-  const clear = page.getByRole("button", { name: "Clear selected videos" });
+  const clear = page.locator("#clear-selection");
   await expect(clear).toBeDisabled();
+  await expect(clear).toBeHidden();
+  const pickerWidth = await page.locator("#drop-zone").evaluate((zone) => zone.offsetWidth);
+  const rowWidth = await page.locator("#picker-row").evaluate((row) => row.clientWidth);
+  expect(pickerWidth).toBe(rowWidth);
   await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
   await expect(clear).toBeEnabled();
+  await expect(clear).toBeVisible();
   await expect(page.locator(".file-card")).toHaveCount(1);
   await clear.click();
   await expect(page.locator("#selection")).toHaveText("No videos selected");
   await expect(page.locator(".file-card")).toHaveCount(0);
   await expect(page.locator("#submit")).toBeDisabled();
   await expect(clear).toBeDisabled();
+  await expect(clear).toBeHidden();
+  await expect(page.locator("#clips")).toBeFocused();
   expect(await page.locator("#clips").evaluate((input) => input.files.length)).toBe(0);
   await dropFiles(page, 2);
   await expect(page.locator(".file-card")).toHaveCount(2);
