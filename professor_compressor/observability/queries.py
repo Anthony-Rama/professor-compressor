@@ -196,48 +196,65 @@ def history_panel(connection: sqlite3.Connection, sessions: list[dict]) -> list[
     return history
 
 
+GROUP_FIELDS = (
+    "stage",
+    "error_code",
+    "engine_signal",
+    "input_format",
+    "browser",
+    "device",
+    "engine",
+    "path",
+)
+
+
 def groups_panel(
     connection: sqlite3.Connection, where: str, args: list
 ) -> dict[str, list[dict]]:
-    groups = {}
-    for field in (
-        "stage",
-        "error_code",
-        "engine_signal",
-        "input_format",
-        "browser",
-        "device",
-        "engine",
-        "path",
+    """Sessions and events per category value, top 20 per field.
+
+    The window's events are read once into a temporary result; each field is
+    then counted from it rather than by another scan of the event table.
+    """
+    columns = ", ".join(
+        f"json_extract(e.data,'$.{field}') {field}" for field in GROUP_FIELDS
+    )
+    counts = " UNION ALL ".join(
+        f"SELECT '{field}' field, {field} value, COUNT(DISTINCT session_id) sessions, "
+        f"COUNT(*) events FROM x WHERE {field} IS NOT NULL GROUP BY 2"
+        for field in GROUP_FIELDS
+    )
+    failure_stage = (
+        "SELECT 'failure_stage' field, stage value, COUNT(DISTINCT session_id) sessions, "
+        "NULL events FROM x WHERE error_code IS NOT NULL AND error_code!='CANCELLED' "
+        "AND stage IS NOT NULL GROUP BY 2"
+    )
+    groups: dict[str, list[dict]] = {field: [] for field in GROUP_FIELDS}
+    groups["failure_stage"] = []
+    for row in connection.execute(
+        "WITH x AS MATERIALIZED (SELECT e.session_id session_id, "
+        + columns
+        + " FROM events e JOIN sessions s ON s.id=e.session_id WHERE "
+        + where
+        + ") "
+        + counts
+        + " UNION ALL "
+        + failure_stage,
+        args,
     ):
-        groups[field] = [
-            dict(row)
-            for row in connection.execute(
-                "SELECT json_extract(e.data,?) value, COUNT(DISTINCT e.session_id) sessions, COUNT(*) events "
-                "FROM events e JOIN sessions s ON s.id=e.session_id WHERE "
-                + where
-                + " AND json_extract(e.data,?) IS NOT NULL GROUP BY 1 ORDER BY sessions DESC LIMIT 20",
-                ["$." + field, *args, "$." + field],
-            )
-        ]
+        item = {"value": row["value"], "sessions": row["sessions"]}
+        if row["field"] != "failure_stage":
+            item["events"] = row["events"]
+        groups[row["field"]].append(item)
+    for rows in groups.values():
+        rows.sort(key=lambda item: -item["sessions"])
+        del rows[20:]
     groups["revision"] = [
         dict(row)
         for row in connection.execute(
             "SELECT revision value,COUNT(*) sessions,SUM(delivered) delivered FROM sessions s WHERE "
             + where
             + " GROUP BY revision ORDER BY sessions DESC LIMIT 20",
-            args,
-        )
-    ]
-    groups["failure_stage"] = [
-        dict(row)
-        for row in connection.execute(
-            "SELECT json_extract(e.data,'$.stage') value,COUNT(DISTINCT e.session_id) sessions "
-            "FROM events e JOIN sessions s ON s.id=e.session_id WHERE "
-            + where
-            + " AND json_extract(e.data,'$.error_code') IS NOT NULL "
-            "AND json_extract(e.data,'$.error_code')!='CANCELLED' "
-            "AND json_extract(e.data,'$.stage') IS NOT NULL GROUP BY 1 ORDER BY sessions DESC LIMIT 20",
             args,
         )
     ]
