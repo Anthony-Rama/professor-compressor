@@ -71,7 +71,7 @@ __THEME_CSS__
       <section class="card"><h2>Final outcomes</h2><p>Each session counts once, by its latest state.</p><div id="outcomes" class="outcome-grid"></div><p id="failure-rate" class="footnote"></p></section>
     </div>
     <section class="card"><div class="card-heading"><div><h2>Delivered and failed sessions</h2><p id="trend-caption">By session start time.</p></div><div class="legend" aria-hidden="true"><span class="key delivered"></span> Delivered <span class="key failed"></span> Failed</div></div><div id="trend" class="trend"></div><details class="data-table"><summary>Show trend data</summary><div id="trend-table"></div></details></section>
-    <section class="card"><div class="card-heading"><div><h2>Top failure causes</h2><p>Grouped by error code and stage.</p></div><button type="button" class="text-button" data-open="failures">All failures →</button></div><div id="top-failures"></div></section>
+    <section class="card"><div class="card-heading"><div><h2>Top failure causes</h2><p>Grouped by error code and stage.</p></div><button type="button" class="text-button" data-open="failures">All failures →</button></div><div id="top-failures" tabindex="0" role="region" aria-label="Top failure causes, scrolls horizontally on narrow screens"></div></section>
   </section>
 
   <section id="panel-failures" role="tabpanel" aria-labelledby="tab-failures" tabindex="0" hidden>
@@ -82,19 +82,19 @@ __THEME_CSS__
 
   <section id="panel-performance" role="tabpanel" aria-labelledby="tab-performance" tabindex="0" hidden>
     <div id="performance-summary" class="stat-grid"></div>
-    <section class="card"><h2>Speed and waiting time</h2><p>p50 and p90 of up to 5,000 recent samples each. Samples can include failed attempts.</p><div id="percentiles"></div></section>
+    <section class="card"><h2>Speed and waiting time</h2><p>p50 and p90 of up to 5,000 recent samples each. Samples can include failed attempts.</p><div id="percentiles" tabindex="0" role="region" aria-label="Speed and waiting time, scrolls horizontally on narrow screens"></div></section>
     <div class="two-column">
       <section class="card"><h2>File sizes</h2><p>Delivered files with a server receipt. Input sizes are browser-reported.</p><div id="file-summary" class="outcome-grid"></div></section>
       <section class="card"><h2>Engines and processing paths</h2><p>Sessions per video engine; files per processing path.</p><div id="engine-share"></div></section>
     </div>
-    <section class="card"><h2>Stage timings</h2><p>Encoding is per file; other timings are per run or delivery.</p><div id="timings"></div></section>
-    <section class="card"><h2>Comparable encoding groups</h2><p>Grouped by format, duration and output height. Higher “× real time” is faster; this is not a controlled device benchmark or a quality score.</p><div id="performance"></div></section>
+    <section class="card"><h2>Stage timings</h2><p>Encoding is per file; other timings are per run or delivery.</p><div id="timings" tabindex="0" role="region" aria-label="Stage timings, scrolls horizontally on narrow screens"></div></section>
+    <section class="card"><h2>Comparable encoding groups</h2><p>Grouped by format, duration and output height. Higher “× real time” is faster; this is not a controlled device benchmark or a quality score.</p><div id="performance" tabindex="0" role="region" aria-label="Comparable encoding groups, scrolls horizontally on narrow screens"></div></section>
   </section>
 
   <section id="panel-growth" role="tabpanel" aria-labelledby="tab-growth" tabindex="0" hidden>
     <div id="adoption" class="stat-grid"></div>
     <section class="card"><h2>Connected servers</h2><p id="servers-caption">Server count recorded with each install or removal.</p><div id="servers-chart" class="trend"></div></section>
-    <section class="card"><h2>Daily installs, removals and deliveries</h2><p>UTC days. Removals within a minute of a recorded process start or a new release are marked as likely reconnect artifacts; stored history is unchanged. Category filters do not apply.</p><div id="growth-table"></div></section>
+    <section class="card"><h2>Daily installs, removals and deliveries</h2><p>UTC days. Removals within a minute of a recorded process start or a new release are marked as likely reconnect artifacts; stored history is unchanged. Category filters do not apply.</p><div id="growth-table" tabindex="0" role="region" aria-label="Daily installs, removals and deliveries, scrolls horizontally on narrow screens"></div></section>
     <div class="three-column"><section class="card"><h2>Input formats</h2><div id="group-input_format"></div></section><section class="card"><h2>Browsers</h2><div id="group-browser"></div></section><section class="card"><h2>Devices</h2><div id="group-device"></div></section></div>
   </section>
 

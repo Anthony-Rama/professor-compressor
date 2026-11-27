@@ -14,13 +14,17 @@ const seconds = (value) =>
     ? "—"
     : value < 1
       ? Math.round(value * 1000) + " ms"
-      : value.toFixed(1) + " s";
+      : value < 120
+        ? value.toFixed(1) + " s"
+        : (value / 60).toFixed(1) + " min";
 const bytes = (value) =>
   typeof value !== "number"
     ? "—"
     : value < 1048576
       ? (value / 1024).toFixed(1) + " KiB"
-      : (value / 1048576).toFixed(1) + " MiB";
+      : value < 1073741824
+        ? (value / 1048576).toFixed(1) + " MiB"
+        : (value / 1073741824).toFixed(2) + " GiB";
 const percent = (value) => (typeof value === "number" ? value.toFixed(1) + "%" : "—");
 const when = (value) =>
   typeof value === "number"
@@ -353,12 +357,12 @@ function group(target, rows, kind = "Sessions") {
     "Try another window or include test servers.",
   );
 }
-function bar(fraction, text) {
+function bar(fraction, text, tone = "") {
   const box = document.createElement("div"),
     track = document.createElement("div"),
     fill = document.createElement("div"),
     caption = document.createElement("span");
-  box.className = "share";
+  box.className = "share" + (tone ? " " + tone : "");
   track.className = "track";
   track.setAttribute("aria-hidden", "true");
   fill.className = "track-fill";
@@ -851,7 +855,7 @@ function failureTable(target, groups, compact = false) {
     ["Cause", "error_code", (value) => cause(value)],
     ["Stage", "stage", stageName],
     ["Sessions", "sessions", number, "number"],
-    ["Share", "share_percent", (value) => bar((value || 0) / 100, percent(value))],
+    ["Share", "share_percent", (value) => bar((value || 0) / 100, percent(value), "danger")],
   ];
   if (!compact)
     columns.push(

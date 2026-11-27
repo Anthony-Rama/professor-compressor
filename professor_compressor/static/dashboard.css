@@ -173,7 +173,7 @@ td.number, th.number { text-align: right; font-variant-numeric: tabular-nums; }
 .subtle { display: block; color: var(--faint); font-size: 12px; }
 .share { display: grid; gap: 4px; min-width: 70px; }
 .share .track { height: 6px; }
-.share .track-fill { background: var(--danger); }
+.share.danger .track-fill { background: var(--danger); }
 .references { display: flex; flex-wrap: wrap; gap: 4px; }
 .reference-button { min-height: 32px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 8px;
                     background: transparent; color: var(--accent-text);
