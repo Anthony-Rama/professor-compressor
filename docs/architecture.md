@@ -94,8 +94,11 @@ one-directional responsibilities:
   progress and diagnostic reports separately. `security.py` applies security
   and caching headers to every response, `rate_limit.py` enforces per-client
   windows, and `health.py` serves liveness, readiness, and aggregate metrics.
-  `pages/` renders public documents and private session pages; the private
-  page embeds a safely serialized JSON configuration.
+  `pages/` renders the public website (`landing.py`, `legal.py`, with the
+  shared header and footer in `site.py`) and the private session pages
+  (`compressor.py`, `document.py`); `theme.py` holds the shared colour tokens,
+  theme menu, and the small head script that applies a saved theme before the
+  first paint. The private page embeds a safely serialized JSON configuration.
 - `relay/` owns result handling. `upload.py` validates completed multipart
   uploads and owns buffer reservations until enqueue; `media_validation.py`
   checks untrusted MP4 structure without trusting filenames or MIME headers;
@@ -114,10 +117,17 @@ Browser modules in `static/` contain no session-specific values; they read
 configuration from the private, non-cacheable document. `compressor.js` is the
 entry point that loads the other modules; `batch-controller.js` runs the batch
 workflow and `compressor-view.js` renders it; `file-selection.js` owns the
-picker and local preparation, `video-encoder.js` owns FFmpeg lifecycle and
-encoding, `relay-client.js` owns upload and delivery polling, and
-`prepared-downloads.js` offers save links when delivery cannot be confirmed.
-`shared.js` holds pure helpers and limits.
+picker and `input-preservation.js` the temporary browser-local copies of
+selected clips; `video-encoder.js` owns FFmpeg lifecycle and encoding, over the
+worker transport in `encoder-client.js`; `relay-client.js` owns upload and
+delivery polling, and `prepared-downloads.js` offers save links when delivery
+cannot be confirmed. `processing-errors.js` classifies required errors and
+`diagnostics.js` sends optional, best-effort reports. `delivery-status.js` runs
+the status page shown after a refresh during delivery, and `theme-toggle.js`
+runs the theme menu on every page. `shared.js` holds pure helpers and limits.
+Modules under `/brand/` are served with `Cache-Control: no-cache` so a browser
+never combines cached modules with newly deployed ones; the pinned FFmpeg
+packages use versioned, immutable URLs.
 
 Log records keep the logger names they had before the package was split into
 subpackages, so existing log searches continue to match.
@@ -131,7 +141,9 @@ components can be imported and tested without production credentials.
 The relay uses bounded concurrency, queue depth, and in-memory byte limits.
 When any limit is reached, it returns a retryable response instead of accepting
 unbounded work. A delivery request has one terminal success or failure result;
-the worker releases its accounted bytes in a `finally` block. Browser failure
+the worker releases its accounted bytes in a `finally` block. Operator alerts
+and diagnostic events are optional: their failures cannot fail an upload or
+change a delivery result. Browser failure
 reports are authenticated with the claimed session secret and deduplicated
 before they generate an operator alert. A browser-side failure does not consume
 the session, so the page's retry action remains usable until the session
@@ -145,7 +157,7 @@ link, and the worker checks permissions and the current bot allowance again
 before sending. Threads have separate send permissions.
 
 A HEAD inspection never claims a link. The first GET claims it; later GETs from
-the same browser reopen the page while local encoding is active, but cannot
+the same browser reopen the page until the batch is uploaded, but cannot
 restore selected files. Refreshing during relay upload or Discord delivery shows
 status only, so an accepted batch cannot be sent twice. Authenticated heartbeats
 renew an active lease up to a two-hour total lifetime (or a longer configured
@@ -163,6 +175,11 @@ receipt without sending another message. Receipts contain no media or filenames.
 After receipt expiry or a process restart, a user must check Discord before
 starting another session. Exactly-once delivery across process failure or an
 ambiguous Discord API timeout is not guaranteed.
+
+A refresh during upload or delivery opens a status page that only reads the
+delivery status. It polls while delivery is pending; after a network error or a busy
+relay it retries with increasing delays, then stops and offers **Check status
+again**. Checking never resends clips.
 
 Prepared browser files survive recoverable upload failures until the page closes
 or succeeds. Send-only retries use those files; optional local download links
