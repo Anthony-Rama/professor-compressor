@@ -54,8 +54,8 @@ class CommandSync:
             if not self.client.guilds:
                 logger.warning(
                     "Warning: the bot is not installed as a member of any server. "
-                    "Install it to your server so long compression jobs can fall "
-                    "back to normal channel messages after interactions expire."
+                    "Install it to a server so /compress is available there and "
+                    "finished videos can be posted to its channels."
                 )
             if self.settings.allowed_guild_ids:
                 logger.info(
