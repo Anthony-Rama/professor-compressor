@@ -141,10 +141,11 @@ test("the shared footer stays available on the compressor and completed delivery
     const footer = page.getByRole("contentinfo");
     const links = footer.getByRole("link");
     await expect(links).toHaveText([
+      "Website",
       "Privacy Policy",
       "Terms of Service",
       "Contact Support",
-      "Join Discord",
+      "Support Discord",
     ]);
     await expect(footer.locator(".theme-menu, .theme-switch")).toHaveCount(0);
     await expectNoHorizontalOverflow(page);

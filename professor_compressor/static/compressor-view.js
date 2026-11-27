@@ -35,6 +35,7 @@ export function createCompressorView({ diagnosticReference: DIAGNOSTIC_REFERENCE
   const submitHelp = document.getElementById("submit-help");
   const sizeSummary = document.getElementById("size-summary");
   const ORIGINAL_TITLE = document.title;
+  const uploadHeading = pageHeading.textContent;
 
   let tabProgress = "Preparing files";
   // Files with a known finished size, for the totals shown after delivery.
@@ -195,7 +196,7 @@ export function createCompressorView({ diagnosticReference: DIAGNOSTIC_REFERENCE
     formatHelp.hidden = active;
     performanceHelp.hidden = active;
     submit.hidden = active;
-    pageHeading.textContent = active ? "Compression in progress" : "Send videos to Discord";
+    pageHeading.textContent = active ? "Compression in progress" : uploadHeading;
   }
 
   // Explains the primary action, and why it is unavailable, beside the button.

@@ -140,12 +140,12 @@ export class InputPreserver {
       );
     if (file.size > INPUT_FILE_LIMIT)
       throw codedError(
-        "Local preparation supports clips up to 1 GiB each. Choose a smaller exported clip.",
+        "Local preparation supports clips up to 1 GB each. Choose a smaller exported clip.",
         "INPUT_TOO_LARGE",
       );
     if (this.entries.size >= 10 || this.reservedBytes + file.size > INPUT_BATCH_LIMIT)
       throw codedError(
-        "Local preparation supports up to 10 clips and 4 GiB total. Remove some clips before adding more.",
+        "Local preparation supports up to 10 clips and 4 GB total. Remove some clips before adding more.",
         "INPUT_TOO_LARGE",
       );
     const entry = { id: crypto.randomUUID(), size: file.size, cancelled: false };

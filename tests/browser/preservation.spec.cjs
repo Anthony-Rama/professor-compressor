@@ -387,7 +387,7 @@ test("batch and per-file preflight reject additions without creating failed card
       new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }),
     );
   });
-  await expect(page.locator("#message")).toContainText("above the 4 GiB batch limit");
+  await expect(page.locator("#message")).toContainText("above the 4 GB batch limit");
   await expect(page.locator(".file-status")).toHaveText(["Ready"]);
   await page.evaluate(() => {
     const transfer = new DataTransfer();
@@ -396,7 +396,7 @@ test("batch and per-file preflight reject additions without creating failed card
       new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }),
     );
   });
-  await expect(page.locator("#message")).toContainText("Each video must be 1 GiB or smaller");
+  await expect(page.locator("#message")).toContainText("Each video must be 1 GB or smaller");
   await expect(page.locator(".file-name")).toHaveText("clip.mp4");
   await expect(page.locator("#submit")).toBeEnabled();
   await expect.poll(() => storedFiles(page)).toBe(1);
@@ -418,7 +418,7 @@ test("rapid selections are admitted sequentially without losing an earlier addit
   });
   await expect(page.locator(".file-name")).toHaveText(["first.mp4", "second.mp4"]);
   await expect(page.locator(".file-status")).toHaveText(["Ready", "Ready"]);
-  await expect(page.locator("#selection")).toContainText("/ 4 GiB");
+  await expect(page.locator("#selection")).toContainText("/ 4 GB");
   await expect(page.locator("#submit")).toBeEnabled();
 });
 

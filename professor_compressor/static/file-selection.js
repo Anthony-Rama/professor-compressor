@@ -349,7 +349,7 @@ export function createFileSelection({
           preparationReport(0, replacementBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
           events.emit(
             "selectionError",
-            "That replacement exceeds the 1 GiB per-video or 4 GiB batch limit. Your existing selection was kept.",
+            "That replacement exceeds the 1 GB per-video or 4 GB batch limit. Your existing selection was kept.",
           );
           return;
         }
@@ -391,7 +391,7 @@ export function createFileSelection({
         (files.length === 1 ? " video" : " videos") +
         " selected · " +
         bytesToGiB(totalBytes).toFixed(2) +
-        " / 4 GiB";
+        " / 4 GB";
     }
     renderSelectedFiles(files);
     refreshPreparation();
@@ -454,16 +454,12 @@ export function createFileSelection({
     if (!additions.length) return "Those videos are already selected.";
     if (additions.some((file) => file.size > INPUT_FILE_LIMIT)) {
       preparationReport(0, totalSize(additions))("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
-      return "Each video must be 1 GiB or smaller. Existing clips were kept.";
+      return "Each video must be 1 GB or smaller. Existing clips were kept.";
     }
     const totalBytes = totalSize([...current, ...additions]);
     if (totalBytes > INPUT_BATCH_LIMIT) {
       preparationReport(0, totalBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
-      return (
-        "This selection would total " +
-        bytesToGiB(totalBytes).toFixed(2) +
-        " GiB, above the 4 GiB batch limit. Existing clips were kept. Add fewer videos or remove some first."
-      );
+      return "This selection is above the 4 GB batch limit. Existing clips were kept. Add fewer videos or remove some first.";
     }
     return null;
   }

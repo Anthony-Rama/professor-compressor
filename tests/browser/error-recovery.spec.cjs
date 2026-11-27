@@ -410,7 +410,7 @@ for (const diagnostics of [true, false]) {
     await page.locator("#cancel").click();
     await expect(page.locator("#stall-warning")).toBeHidden();
     await expect(page.locator("#background-warning")).toBeHidden();
-    await expect(page.locator("#page-heading")).toHaveText("Send videos to Discord");
+    await expect(page.locator("#page-heading")).toHaveText("Compress and Send Videos to Discord");
   });
 }
 for (const file of ["large-av1.mp4", "av1.webm"])

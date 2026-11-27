@@ -631,7 +631,7 @@ for (const width of [375, 1440]) {
       "Keep this page open until it finishes.",
     );
     await expect(page.locator("#stay-open")).toContainText(
-      "Keep your screen on and this tab in front.",
+      "Keep your screen on and this tab visible for best performance.",
     );
     for (const selector of [
       "#picker-row",
@@ -669,7 +669,7 @@ for (const width of [375, 1440]) {
     await expect(page.locator("#caption")).toHaveValue("Preserve my caption");
     expect(await page.locator("#clips").evaluate((el) => el.files.length)).toBe(1);
     await expect(page.locator(".file-card")).toHaveCount(1);
-    await expect(page.locator("#page-heading")).toHaveText("Send videos to Discord");
+    await expect(page.locator("#page-heading")).toHaveText("Compress and Send Videos to Discord");
     await page.unroute("**/heartbeat");
     await page.locator("#submit").click();
     await expect(page.locator("#phase-title")).toHaveText("Delivered to Discord");
@@ -1084,7 +1084,7 @@ test("same browser can refresh and reselect without retaining local files", asyn
   const url = page.url();
   await page.locator("#clips").setInputFiles(join(fixtures, "small.mp4"));
   await page.reload();
-  await expect(page.getByRole("heading")).toHaveText("Send videos to Discord");
+  await expect(page.getByRole("heading")).toHaveText("Compress and Send Videos to Discord");
   await expect(page.getByRole("status")).toContainText("Page refreshed");
   await expect(page.getByRole("status")).not.toContainText("Check Discord first");
   await expect(page.locator("#selection")).toHaveText("No videos selected");
@@ -1119,7 +1119,7 @@ test("refresh during local compression restarts with explicit file re-selection"
   await page.locator("#submit").click();
   await expect(page.locator("#work")).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading")).toHaveText("Send videos to Discord");
+  await expect(page.getByRole("heading")).toHaveText("Compress and Send Videos to Discord");
   await expect(page.getByRole("status")).toContainText("Choose them again");
   await expect(page.locator("#selection")).toHaveText("No videos selected");
   await deliver(page, join(fixtures, "small.mp4"));

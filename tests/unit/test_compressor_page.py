@@ -81,7 +81,7 @@ class BrowserPageTests(unittest.TestCase):
         self.assertIn('id="clear-selection" type="button"', self.page)
         self.assertIn('aria-label="Clear selected videos"', self.page)
         self.assertNotIn("a new selection replaces the previous one", self.page)
-        self.assertIn("Up to 10 clips · 1 GiB each · 4 GiB total", self.page)
+        self.assertIn("Up to 10 clips · 1 GB each · 4 GB total", self.page)
 
     def test_feedback_is_optional_and_has_a_support_link(self) -> None:
         self.assertIn(
