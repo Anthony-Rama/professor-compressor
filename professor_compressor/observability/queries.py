@@ -1,5 +1,6 @@
 """Read-only dashboard queries over one bounded SQLite snapshot."""
 
+import bisect
 import json
 import math
 import sqlite3
@@ -25,6 +26,41 @@ FILTER_DIMENSIONS = frozenset(
 )
 
 
+FAILURE_EVENTS = "('client_failed','upload_failed','delivery_failed')"
+# A session without an update for this long is no longer treated as active.
+STALE_SECONDS = 7200
+# One final outcome per session; the buckets are exclusive and sum to all
+# sessions. Its single placeholder is the STALE_SECONDS cutoff.
+OUTCOME = (
+    "CASE WHEN s.delivered=1 THEN 'delivered' "
+    "WHEN s.status IN ('client_failed','upload_failed','delivery_failed') THEN 'failed' "
+    "WHEN s.status='cancelled' THEN 'cancelled' "
+    "WHEN s.updated >= ? AND s.status IN ('created','opened','selected','processing','uploading','queued','delivering') THEN 'in_progress' "
+    "WHEN s.started=1 THEN 'unknown' "
+    "WHEN s.opened=1 OR s.selected=1 THEN 'abandoned' ELSE 'expired' END"
+)
+OUTCOMES = (
+    "delivered",
+    "failed",
+    "cancelled",
+    "in_progress",
+    "unknown",
+    "abandoned",
+    "expired",
+)
+# Bounds for the grouped and listed panels.
+MAX_FAILURE_GROUPS = 12
+MAX_GROUP_REFERENCES = 3
+MAX_FAILURE_ROWS = 20000
+MAX_SAMPLES = 5000
+MAX_MEMBERSHIP_EVENTS = 2000
+# Removals this soon after a recorded process start are likely reconnect
+# artifacts: Discord can report servers as removed while the cache refills.
+RECONNECT_SECONDS = 60
+# A shutdown marker is recorded before the restart it precedes.
+SHUTDOWN_RECONNECT_SECONDS = 180
+
+
 def query_dashboard(
     path: str,
     health: Callable[[], Mapping[str, object]],
@@ -34,6 +70,7 @@ def query_dashboard(
     reference: str = "",
     dimension: str = "",
     value: str = "",
+    process_started: float | None = None,
 ) -> dict:
     """Bounded operator-only query. All browser facts are explicitly untrusted."""
     connection = sqlite3.connect(
@@ -45,7 +82,9 @@ def query_dashboard(
         connection.execute("BEGIN")  # One consistent WAL snapshot for all panels.
         deadline = time.monotonic() + QUERY_BUDGET_SECONDS
         connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
-        cutoff = time.time() - max(1, min(MAX_DAYS, days)) * 86400
+        now = time.time()
+        span = max(1, min(MAX_DAYS, days)) * 86400
+        cutoff = now - span
         where, args, search = session_filter(
             cutoff, include_tests, reference, dimension, value
         )
@@ -60,7 +99,22 @@ def query_dashboard(
         performance = performance_panel(connection, where, args)
         files = files_panel(connection, where, args)
         collection = collection_panel(connection, where, args, cutoff, include_tests)
-        return {
+        bucket = 3600 if span <= 86400 else 86400
+        funnel = funnel_panel(connection, where, args, now, bucket)
+        previous_where, previous_args, _ = session_filter(
+            cutoff - span, include_tests, reference, dimension, value
+        )
+        previous_where += " AND s.created < ?"
+        previous_args.append(cutoff)
+        comparison = comparison_panel(connection, previous_where, previous_args, now)
+        result = {
+            "window": {
+                "days": span // 86400,
+                "start": cutoff,
+                "end": now,
+                "previous_start": cutoff - span,
+                "include_tests": include_tests,
+            },
             "storage": health(),
             "totals": totals,
             "statuses": statuses,
@@ -74,9 +128,426 @@ def query_dashboard(
             "collection": collection,
             "sessions": sessions,
             "events": history,
+            "funnel": funnel,
+            "comparison": comparison,
+            "failures": failures_panel(connection, where, args),
+            "percentiles": percentiles_panel(connection, where, args),
+            "growth": growth_panel(connection, cutoff, include_tests, process_started),
+            "store": store_panel(connection, path),
         }
+        if search:
+            result["lookup"] = lookup_panel(search, sessions, history)
+        return result
     finally:
         connection.close()
+
+
+def percentile(samples: list[float], fraction: float) -> float:
+    """Nearest-rank percentile of already sorted samples."""
+    return samples[max(0, math.ceil(len(samples) * fraction) - 1)]
+
+
+def summarize(samples: list[float]) -> dict:
+    samples = sorted(samples)
+    return {
+        "samples": len(samples),
+        "p50": percentile(samples, 0.5),
+        "p90": percentile(samples, 0.9),
+    }
+
+
+def funnel_panel(
+    connection: sqlite3.Connection, where: str, args: list, now: float, bucket: int
+) -> dict:
+    """Sessions reaching each step, final outcomes, and an outcome trend.
+
+    A later step implies the earlier ones, so the steps never increase even
+    when an older client skipped a report.
+    """
+    reached = (
+        "SELECT CAST(s.created / ? AS INTEGER) * ? start, "
+        + OUTCOME
+        + " outcome, COUNT(*) created, "
+        "SUM(MAX(s.opened,s.selected,s.started,s.uploaded,s.delivered)) opened, "
+        "SUM(MAX(s.selected,s.started,s.uploaded,s.delivered)) selected, "
+        "SUM(MAX(s.started,s.uploaded,s.delivered)) started, "
+        "SUM(MAX(s.uploaded,s.delivered)) uploaded, SUM(s.delivered) delivered "
+        "FROM (SELECT s.created, s.updated, s.status, s.opened, s.selected, s.started, "
+        "s.delivered, EXISTS(SELECT 1 FROM events r WHERE r.session_id=s.id "
+        "AND r.event='received') uploaded FROM sessions s WHERE " + where + ") s "
+        "GROUP BY 1, 2"
+    )
+    names = ("created", "opened", "selected", "started", "uploaded", "delivered")
+    reach = dict.fromkeys(names, 0)
+    outcomes = dict.fromkeys(OUTCOMES, 0)
+    trend: dict[int, dict] = {}
+    for item in connection.execute(
+        reached, [bucket, bucket, now - STALE_SECONDS, *args]
+    ):
+        for name in names:
+            reach[name] += item[name]
+        outcomes[item["outcome"]] += item["created"]
+        point = trend.setdefault(
+            item["start"],
+            {"start": item["start"], "sessions": 0, "delivered": 0, "failed": 0},
+        )
+        point["sessions"] += item["created"]
+        if item["outcome"] in {"delivered", "failed"}:
+            point[item["outcome"]] += item["created"]
+    steps = []
+    previous = None
+    for name in names:
+        count = reach[name]
+        steps.append(
+            {
+                "step": name,
+                "sessions": count,
+                "step_percent": (
+                    round(100 * count / previous, 1) if previous else None
+                ),
+                "overall_percent": (
+                    round(100 * count / reach["created"], 1)
+                    if reach["created"]
+                    else None
+                ),
+            }
+        )
+        previous = count
+    finished = outcomes["delivered"] + outcomes["failed"]
+    return {
+        "steps": steps,
+        "outcomes": outcomes,
+        "failure_percent": (
+            round(100 * outcomes["failed"] / finished, 1) if finished else None
+        ),
+        "bucket_seconds": bucket,
+        "trend": [trend[start] for start in sorted(trend)],
+    }
+
+
+def comparison_panel(
+    connection: sqlite3.Connection, where: str, args: list, now: float
+) -> dict:
+    """Outcomes and failure codes for the equally long window before this one."""
+    outcomes = dict.fromkeys(OUTCOMES, 0)
+    for row in connection.execute(
+        "SELECT "
+        + OUTCOME
+        + " outcome, COUNT(*) count FROM sessions s WHERE "
+        + where
+        + " GROUP BY 1",
+        [now - STALE_SECONDS, *args],
+    ):
+        outcomes[row["outcome"]] = row["count"]
+    finished = outcomes["delivered"] + outcomes["failed"]
+    codes = {
+        row["code"]: row["sessions"]
+        for row in connection.execute(
+            "SELECT COALESCE(json_extract(e.data,'$.error_code'),'UNKNOWN') code, "
+            "COUNT(DISTINCT e.session_id) sessions FROM events e JOIN sessions s ON s.id=e.session_id "
+            "WHERE " + where + " AND " + failure_condition("e") + " GROUP BY 1",
+            args,
+        )
+    }
+    return {
+        "sessions": sum(outcomes.values()),
+        "outcomes": outcomes,
+        "failure_percent": (
+            round(100 * outcomes["failed"] / finished, 1) if finished else None
+        ),
+        "error_codes": codes,
+    }
+
+
+def failure_condition(alias: str) -> str:
+    """Reported failures, including failed preparation steps; never cancellations."""
+    return (
+        f"({alias}.event IN {FAILURE_EVENTS} OR ({alias}.event='stage_finished' "
+        f"AND json_extract({alias}.data,'$.outcome')='failed' "
+        f"AND json_extract({alias}.data,'$.error_code') IS NOT NULL)) "
+        f"AND COALESCE(json_extract({alias}.data,'$.error_code'),'')!='CANCELLED'"
+    )
+
+
+def failures_panel(connection: sqlite3.Connection, where: str, args: list) -> dict:
+    """Failure reports grouped by error code and stage, counted per session."""
+    rows = connection.execute(
+        "SELECT code, stage, s.reference reference, s.delivered delivered, last_at, reports, "
+        "COALESCE(browser, (SELECT json_extract(b.data,'$.browser') FROM events b "
+        "WHERE b.session_id=f.session_id AND b.source='browser' "
+        "AND json_extract(b.data,'$.browser') IS NOT NULL ORDER BY b.id DESC LIMIT 1)) browser, "
+        "COALESCE(device, (SELECT json_extract(b.data,'$.device') FROM events b "
+        "WHERE b.session_id=f.session_id AND b.source='browser' "
+        "AND json_extract(b.data,'$.device') IS NOT NULL ORDER BY b.id DESC LIMIT 1)) device "
+        "FROM (SELECT e.session_id session_id, "
+        "COALESCE(json_extract(e.data,'$.error_code'),'UNKNOWN') code, "
+        "COALESCE(json_extract(e.data,'$.stage'), CASE e.event WHEN 'upload_failed' THEN 'upload' "
+        "WHEN 'delivery_failed' THEN 'delivery' ELSE 'unknown' END) stage, "
+        "MAX(e.at) last_at, COUNT(*) reports, MAX(json_extract(e.data,'$.browser')) browser, "
+        "MAX(json_extract(e.data,'$.device')) device "
+        "FROM events e JOIN sessions s ON s.id=e.session_id WHERE "
+        + where
+        + " AND "
+        + failure_condition("e")
+        + " GROUP BY 1, 2, 3) f JOIN sessions s ON s.id=f.session_id "
+        "ORDER BY last_at DESC LIMIT ?",
+        [*args, MAX_FAILURE_ROWS],
+    ).fetchall()
+    groups: dict[tuple[str, str], dict] = {}
+    failed_sessions = set()
+    for row in rows:
+        failed_sessions.add(row["reference"])
+        group = groups.setdefault(
+            (row["code"], row["stage"]),
+            {
+                "error_code": row["code"],
+                "stage": row["stage"],
+                "sessions": 0,
+                "reports": 0,
+                "recovered": 0,
+                "last_seen": row["last_at"],
+                "browsers": {},
+                "devices": {},
+                "references": [],
+            },
+        )
+        group["sessions"] += 1
+        group["reports"] += row["reports"]
+        group["recovered"] += row["delivered"]
+        for field, key in (("browsers", "browser"), ("devices", "device")):
+            name = row[key] or "Not reported"
+            group[field][name] = group[field].get(name, 0) + 1
+        # Rows arrive newest first, so the first references are the latest.
+        if len(group["references"]) < MAX_GROUP_REFERENCES:
+            group["references"].append(row["reference"])
+    ranked = sorted(
+        groups.values(), key=lambda item: (-item["sessions"], -item["last_seen"])
+    )
+    for group in ranked:
+        group["share_percent"] = round(
+            100 * group["sessions"] / len(failed_sessions), 1
+        )
+    return {
+        "sessions": len(failed_sessions),
+        "group_count": len(ranked),
+        "truncated": len(rows) == MAX_FAILURE_ROWS,
+        "groups": ranked[:MAX_FAILURE_GROUPS],
+    }
+
+
+def percentiles_panel(connection: sqlite3.Connection, where: str, args: list) -> dict:
+    """p50/p90 of recent samples for speed, waiting and size measurements."""
+    queries = {
+        # Media seconds encoded per wall-clock second; higher is faster. Files
+        # sent unchanged or only stream-copied are not encodes.
+        "encode_speed": (
+            "json_extract(e.data,'$.duration_seconds') / json_extract(e.data,'$.encoding_seconds')",
+            "e.event='file_ready' AND json_extract(e.data,'$.encoding_seconds')>0 "
+            "AND json_extract(e.data,'$.duration_seconds')>0 "
+            "AND COALESCE(json_extract(e.data,'$.path'),'compressed') IN ('compressed','converted')",
+        ),
+        # Server arrival of Compress to server-confirmed delivery.
+        "time_to_delivery_seconds": (
+            "e.at - (SELECT MAX(st.at) FROM events st WHERE st.session_id=e.session_id "
+            "AND st.event='started' AND st.id<e.id)",
+            "e.event='delivered' AND e.source='server'",
+        ),
+        "relay_receive_seconds": (
+            "json_extract(e.data,'$.relay_receive_seconds')",
+            "e.event='received' AND json_type(e.data,'$.relay_receive_seconds') IN ('integer','real')",
+        ),
+        "queue_seconds": (
+            "json_extract(e.data,'$.queue_seconds')",
+            "e.event='delivered' AND json_type(e.data,'$.queue_seconds') IN ('integer','real')",
+        ),
+        "input_bytes": (
+            "json_extract(e.data,'$.input_bytes')",
+            "e.event='file_received' AND e.source='server' AND json_extract(e.data,'$.input_bytes')>0",
+        ),
+        "output_bytes": (
+            "json_extract(e.data,'$.output_bytes')",
+            "e.event='file_received' AND e.source='server' AND json_extract(e.data,'$.output_bytes')>0",
+        ),
+    }
+    result = {}
+    for name, (expression, condition) in queries.items():
+        samples = [
+            row[0]
+            for row in connection.execute(
+                "SELECT "
+                + expression
+                + " FROM events e JOIN sessions s ON s.id=e.session_id WHERE "
+                + where
+                + " AND "
+                + condition
+                + " ORDER BY e.id DESC LIMIT ?",
+                [*args, MAX_SAMPLES],
+            )
+            if isinstance(row[0], int | float) and row[0] >= 0
+        ]
+        if samples:
+            result[name] = summarize(samples)
+    return result
+
+
+def growth_panel(
+    connection: sqlite3.Connection,
+    cutoff: float,
+    include_tests: bool,
+    process_started: float | None,
+) -> dict:
+    """Server installs and removals, with likely reconnect artifacts marked.
+
+    Stored history is never changed; the marking is computed for this view.
+    """
+    # Each membership event has its own session row with the event as status;
+    # starting from those rows avoids scanning every event in the window.
+    rows = connection.execute(
+        "SELECT e.at at, e.event event, json_extract(e.data,'$.connected_servers') servers "
+        "FROM sessions s CROSS JOIN events e ON e.session_id=s.id "
+        "WHERE s.status IN ('installed','removed') AND s.updated >= ? AND e.at >= ? "
+        "AND (? OR s.is_test=0) AND e.event IN ('installed','removed') "
+        "ORDER BY e.at DESC LIMIT ?",
+        [cutoff, cutoff, include_tests, MAX_MEMBERSHIP_EVENTS],
+    ).fetchall()
+    rows.reverse()
+    # A process start, the first event recorded by each release, and the
+    # shutdown markers written when a running process stops.
+    starts = [process_started] if process_started else []
+    releases = [
+        row[0]
+        for row in connection.execute(
+            "SELECT MIN(created) first FROM sessions GROUP BY revision ORDER BY first"
+        )
+    ]
+    shutdowns = [
+        row[0]
+        for row in connection.execute(
+            "SELECT at FROM events WHERE at >= ? AND event='interrupted' ORDER BY at LIMIT 1000",
+            [cutoff - SHUTDOWN_RECONNECT_SECONDS],
+        )
+    ]
+    removed = [row["at"] for row in rows if row["event"] == "removed"]
+    daily: dict[str, dict] = {}
+    series = []
+    for row in rows:
+        day = time.strftime("%Y-%m-%d", time.gmtime(row["at"]))
+        point = daily.setdefault(
+            day,
+            {
+                "day": day,
+                "installs": 0,
+                "removals": 0,
+                "likely_reconnect_removals": 0,
+                "connected_servers": None,
+            },
+        )
+        if isinstance(row["servers"], int):
+            point["connected_servers"] = row["servers"]
+        if row["event"] == "installed":
+            point["installs"] += 1
+            artifact = False
+        else:
+            point["removals"] += 1
+            artifact = likely_reconnect(row["at"], removed, starts, releases, shutdowns)
+            point["likely_reconnect_removals"] += artifact
+        series.append(
+            {
+                "at": row["at"],
+                "event": row["event"],
+                "connected_servers": row["servers"],
+                "likely_reconnect": artifact,
+            }
+        )
+    installs = sum(point["installs"] for point in daily.values())
+    removals = sum(point["removals"] for point in daily.values())
+    artifacts = sum(point["likely_reconnect_removals"] for point in daily.values())
+    return {
+        "installs": installs,
+        "removals": removals,
+        "likely_reconnect_removals": artifacts,
+        "net_change": installs - (removals - artifacts),
+        "truncated": len(rows) == MAX_MEMBERSHIP_EVENTS,
+        "daily": [daily[day] for day in sorted(daily)],
+        "events": series[-200:],
+    }
+
+
+def likely_reconnect(
+    at: float,
+    removals: list[float],
+    starts: list[float],
+    releases: list[float],
+    shutdowns: list[float],
+) -> bool:
+    """Whether a removal is probably a startup artifact rather than a removal.
+
+    Near the current process start or a recorded shutdown, any removal
+    qualifies. Near the first event of a release, only a burst of at least two
+    removals does, because a quiet release's first event can be much later
+    than its start.
+    """
+
+    def within(markers: list[float], seconds: float) -> bool:
+        # Markers are sorted: is there one in [at - seconds, at]?
+        index = bisect.bisect_right(markers, at)
+        return index > 0 and at - markers[index - 1] <= seconds
+
+    if within(starts, RECONNECT_SECONDS) or within(
+        shutdowns, SHUTDOWN_RECONNECT_SECONDS
+    ):
+        return True
+    nearby = bisect.bisect_right(removals, at + RECONNECT_SECONDS) - bisect.bisect_left(
+        removals, at - RECONNECT_SECONDS
+    )
+    return nearby >= 2 and within(releases, RECONNECT_SECONDS)
+
+
+def store_panel(connection: sqlite3.Connection, path: str) -> dict:
+    """Size and age of the retained history."""
+    row = connection.execute(
+        "SELECT (SELECT COUNT(*) FROM events) events, (SELECT COUNT(*) FROM sessions) sessions, "
+        "(SELECT MIN(at) FROM events) oldest_event, (SELECT MAX(at) FROM events) newest_event"
+    ).fetchone()
+    page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+    pages = connection.execute("PRAGMA page_count").fetchone()[0]
+    free = connection.execute("PRAGMA freelist_count").fetchone()[0]
+    try:
+        wal_bytes = Path(path + "-wal").stat().st_size
+    except OSError:
+        wal_bytes = 0
+    return {
+        **dict(row),
+        "database_bytes": page_size * pages,
+        "free_bytes": page_size * free,
+        "wal_bytes": wal_bytes,
+    }
+
+
+def lookup_panel(reference: str, sessions: list[dict], history: list[dict]) -> dict:
+    """One session's timeline, without its internal or pseudonymous identifiers."""
+    if not sessions:
+        return {"reference": reference, "found": False, "session": None, "events": []}
+    session = {
+        key: sessions[0][key]
+        for key in (
+            "reference",
+            "created",
+            "updated",
+            "revision",
+            "is_test",
+            "status",
+            "files",
+            "failures",
+            "failure_data",
+        )
+    }
+    return {
+        "reference": reference,
+        "found": True,
+        "session": session,
+        "events": history,
+    }
 
 
 def session_filter(
@@ -287,8 +758,9 @@ def timings_panel(connection: sqlite3.Connection, where: str, args: list) -> dic
         if samples:
             timings[field] = {
                 "samples": len(samples),
-                "p50": samples[math.ceil(len(samples) * 0.5) - 1],
-                "p95": samples[math.ceil(len(samples) * 0.95) - 1],
+                "p50": percentile(samples, 0.5),
+                "p90": percentile(samples, 0.9),
+                "p95": percentile(samples, 0.95),
             }
     return timings
 
@@ -364,6 +836,12 @@ def files_panel(connection: sqlite3.Connection, where: str, args: list) -> dict:
         if files["input_bytes"]
         else None
     )
+    for path in ("unchanged", "remuxed"):
+        files[path + "_percent"] = (
+            round(100 * files[path] / files["measured_files"], 1)
+            if files["measured_files"]
+            else None
+        )
     return files
 
 
