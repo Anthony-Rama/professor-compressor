@@ -53,7 +53,12 @@ class Runtime:
         deliver_results: DeliverResults | None = None,
     ) -> None:
         self.settings = settings
-        self.client = discord.Client(intents=discord.Intents.default())
+        self.client = discord.Client(
+            intents=discord.Intents.default(),
+            activity=discord.CustomActivity(
+                name="Run /compress · Share oversized clips"
+            ),
+        )
         self.tree = app_commands.CommandTree(self.client)
         self.metrics = RuntimeMetrics()
         self.event_store = EventStore(
