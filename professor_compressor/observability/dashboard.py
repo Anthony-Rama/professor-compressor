@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 import time
 from collections import deque
@@ -11,9 +12,20 @@ from collections.abc import Callable
 from aiohttp import BasicAuth, web
 
 from ..paths import TEMPLATES
+from ..web.pages.theme import THEME_BOOT_SCRIPT, THEME_CSS, THEME_SWITCH
+from .queries import FILTER_DIMENSIONS, MAX_DAYS
+from .report import SCHEMA_VERSION, anomalies, summary_markdown
 from .store import EventStore
 
-HTML = (TEMPLATES / "dashboard.html").read_text(encoding="utf-8")
+HTML = (
+    (TEMPLATES / "dashboard.html")
+    .read_text(encoding="utf-8")
+    .replace("__THEME_CSS__", THEME_CSS)
+    .replace("__THEME_BOOT__", THEME_BOOT_SCRIPT)
+    .replace("__THEME_SWITCH__", THEME_SWITCH)
+)
+# The support reference shown to users: "PC-" and 12 uppercase hex digits.
+REFERENCE = re.compile(r"PC-[0-9A-F]{12}")
 
 
 def register_dashboard(
@@ -93,6 +105,17 @@ def register_dashboard(
             return web.json_response(
                 {"error": "Invalid days"}, status=400, headers=headers
             )
+        reference = request.query.get("reference", "").strip().upper()
+        if reference and not REFERENCE.fullmatch(reference):
+            return web.json_response(
+                {"error": "Invalid reference"}, status=400, headers=headers
+            )
+        include_tests = request.query.get("tests") == "1"
+        dimension = request.query.get("dimension", "")
+        value = request.query.get("value", "")
+        # The Discord cache belongs to the event loop, never the SQL reader thread.
+        runtime = runtime_snapshot() if runtime_snapshot else {}
+        uptime = (runtime.get("counters") or {}).get("uptime_seconds")
         if slots.locked():
             return web.json_response(
                 {"error": "Dashboard busy"}, status=429, headers=headers
@@ -102,10 +125,13 @@ def register_dashboard(
                 result = await asyncio.to_thread(
                     store.query,
                     days=days,
-                    include_tests=request.query.get("tests") == "1",
-                    reference=request.query.get("reference", ""),
-                    dimension=request.query.get("dimension", ""),
-                    value=request.query.get("value", ""),
+                    include_tests=include_tests,
+                    reference=reference,
+                    dimension=dimension,
+                    value=value,
+                    process_started=(
+                        time.time() - uptime if isinstance(uptime, int) else None
+                    ),
                 )
             except Exception:
                 return web.json_response(
@@ -113,9 +139,27 @@ def register_dashboard(
                     status=503,
                     headers=headers,
                 )
-        # The Discord cache belongs to the event loop, never the SQL reader thread.
-        result["runtime"] = runtime_snapshot() if runtime_snapshot else {}
-        result["generated_at"] = time.time()
+        now = time.time()
+        span = max(1, min(MAX_DAYS, days)) * 86400
+        window = result.setdefault(
+            "window",
+            {
+                "days": span // 86400,
+                "start": now - span,
+                "end": now,
+                "previous_start": now - 2 * span,
+                "include_tests": include_tests,
+            },
+        )
+        if dimension in FILTER_DIMENSIONS and value:
+            window.update(dimension=dimension, value=value[:64])
+        if reference:
+            window["reference"] = reference
+        result["schema_version"] = SCHEMA_VERSION
+        result["runtime"] = runtime
+        result["generated_at"] = now
+        result["anomalies"] = anomalies(result)
+        result["summary"] = summary_markdown(result)
         return web.json_response(result, headers=headers)
 
     application.router.add_get("/ops", dashboard)

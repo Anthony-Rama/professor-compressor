@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 from aiohttp import BasicAuth
 
 from tests.support.runtime import DiagnosticsTestCase
+from tests.support.waiting import wait_until
 
 
 class DashboardTests(DiagnosticsTestCase):
@@ -34,7 +35,8 @@ class DashboardTests(DiagnosticsTestCase):
         )
         with patch.object(self.runtime.health, "client", fake):
             response = await self.client.get(
-                "/ops/data?reference=PC-NONE&tests=0", auth=BasicAuth("admin", self.key)
+                "/ops/data?reference=PC-000000000000&tests=0",
+                auth=BasicAuth("admin", self.key),
             )
             result = await response.json()
             self.assertEqual(result["runtime"]["connected_servers"], 2)
@@ -65,3 +67,67 @@ class DashboardTests(DiagnosticsTestCase):
         self.assertEqual(response.status, 429)
         response = await self.client.get("/ops", auth=BasicAuth("admin", self.key))
         self.assertEqual(response.status, 200)
+
+    async def test_data_has_schema_version_summary_and_strict_reference_lookup(self):
+        auth = BasicAuth("admin", self.key)
+        self.assertTrue(wait_until(lambda: self.store.ready, timeout=3))
+        self.runtime.track(self.job, "created")
+        self.runtime.track(
+            self.job,
+            "client_failed",
+            source="browser",
+            data={"error_code": "BROWSER_MEMORY", "stage": "encoding"},
+        )
+        self.store._queue.join()
+        response = await self.client.get("/ops/data?tests=1", auth=auth)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        result = await response.json()
+        self.assertEqual(result["schema_version"], 1)
+        self.assertEqual(result["window"]["days"], 7)
+        self.assertTrue(result["window"]["include_tests"])
+        for key in ("funnel", "failures", "percentiles", "growth", "store"):
+            self.assertIn(key, result)
+        summary = result["summary"]
+        self.assertIn(self.job.diagnostic_reference, summary)
+        for private in (
+            "private-page-secret",
+            self.job.diagnostic_id,
+            "diagnostic-test",
+            result["sessions"][0]["user_key"],
+            result["sessions"][0]["guild_key"],
+        ):
+            self.assertNotIn(private, summary)
+        for bad in (
+            "PC-NONE",
+            "PC-12345",
+            "PC-0123456789AG",
+            "x" * 64,
+            "PC-0123456789ABC",
+        ):
+            response = await self.client.get(
+                "/ops/data", params={"reference": bad}, auth=auth
+            )
+            self.assertEqual(response.status, 400, bad)
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+        response = await self.client.get(
+            "/ops/data?tests=1&reference=PC-000000000000", auth=auth
+        )
+        missing = await response.json()
+        self.assertFalse(missing["lookup"]["found"])
+        self.assertEqual(missing["lookup"]["events"], [])
+        response = await self.client.get(
+            "/ops/data",
+            params={
+                "tests": "1",
+                "reference": " " + self.job.diagnostic_reference.lower() + " ",
+            },
+            auth=auth,
+        )
+        lookup = (await response.json())["lookup"]
+        self.assertTrue(lookup["found"])
+        self.assertEqual(lookup["reference"], self.job.diagnostic_reference)
+        self.assertEqual(
+            [event["event"] for event in lookup["events"]],
+            ["created", "client_failed"],
+        )
+        self.assertNotIn("user_key", json.dumps(lookup))
