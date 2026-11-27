@@ -55,9 +55,7 @@ class Runtime:
         self.settings = settings
         self.client = discord.Client(
             intents=discord.Intents.default(),
-            activity=discord.CustomActivity(
-                name="Run /compress · Share oversized clips"
-            ),
+            activity=discord.CustomActivity(name="Run /compress to start!"),
         )
         self.tree = app_commands.CommandTree(self.client)
         self.metrics = RuntimeMetrics()

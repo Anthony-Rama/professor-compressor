@@ -20,9 +20,7 @@ class RuntimeTests(RuntimeTestCase):
     def test_member_list_status_points_users_to_compress(self):
         activity = self.runtime.client.activity
         self.assertIsInstance(activity, discord.CustomActivity)
-        self.assertEqual(
-            activity.to_dict()["state"], "Run /compress · Share oversized clips"
-        )
+        self.assertEqual(activity.to_dict()["state"], "Run /compress to start!")
 
     async def test_two_apps_isolate_uploads_delivery_and_metrics(self):
         settings = Settings(discord_token="")
