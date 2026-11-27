@@ -160,8 +160,8 @@ def home_html(base_url: str) -> str:
         finished size.</p></div>
       <div><h3>Works with common formats</h3><p>MP4, MOV, WebM, MKV, AVI, MPEG and
         more. Codec support varies.</p></div>
-      <div><h3>One private session</h3><p>Links expire and open once. Each session
-        takes up to 10 videos.</p></div>
+      <div><h3>One private session</h3><p>Links expire and work in one browser.
+        Each session takes up to 10 videos.</p></div>
       <div><h3>Delivered for you</h3><p>No downloading and re-uploading. Finished
         MP4s go straight to Discord.</p></div>
     </div>
@@ -268,7 +268,8 @@ def guide_html(base_url: str) -> str:
         to your server.</span></li>
       <li><span>Run <strong>/compress</strong> in the channel where you want the
         video.</span></li>
-      <li><span>Open the private link and select or drag in up to 10 files.</span></li>
+      <li><span>Open the private link and select or drag in up to 10 files, up to
+        1 GB each and 4 GB in total.</span></li>
       <li><span>Keep the browser page open and active while the files are
         processed.</span></li>
       <li><span>Wait for the bot to deliver the finished MP4 files in that
@@ -295,8 +296,9 @@ def guide_html(base_url: str) -> str:
       memory and processing time. The page shows progress for each file.</p>
     <h2 id="trouble">When something does not work</h2>
     <div class="trouble"><h3>The private link says it expired</h3>
-    <p>Each link is short-lived and can only be opened once. Return to Discord
-      and run <strong>/compress</strong> again to get a new one.</p></div>
+    <p>Each link is short-lived and works only in the browser that first opened
+      it. Return to Discord and run <strong>/compress</strong> again to get a new
+      one.</p></div>
     <div class="trouble"><h3>A video cannot be converted</h3>
     <p>A file extension does not guarantee that its video codec is supported.
       Try an MP4 with a common video codec, or test one shorter clip first.
