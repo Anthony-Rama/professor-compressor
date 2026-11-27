@@ -7,14 +7,16 @@ from ...paths import TEMPLATES
 from .site import SITE_CSS, site_footer, site_header
 from .theme import THEME_BOOT_SCRIPT, THEME_TOGGLE_LOADER
 
-EFFECTIVE_DATE = "October 31, 2026"
+# Each document keeps its own date; change it only when that document's text changes.
+PRIVACY_EFFECTIVE_DATE = "November 26, 2026"
+TERMS_EFFECTIVE_DATE = "October 31, 2026"
 
 _SECTION_HEADING = re.compile(r"<h2>((\d+)\. [^<]+)</h2>")
 
 _LEGAL_CSS = (TEMPLATES / "legal.css").read_text(encoding="utf-8")
 
 
-def _document(title: str, content: str) -> str:
+def _document(title: str, effective_date: str, content: str) -> str:
     sections: list[tuple[str, str]] = []
 
     def anchor(match: re.Match[str]) -> str:
@@ -60,7 +62,7 @@ def _document(title: str, content: str) -> str:
     <main class="legal">
       <header>
         <h1>{escape(title)}</h1>
-        <p class="effective">Effective date: {EFFECTIVE_DATE}</p>
+        <p class="effective">Effective date: {effective_date}</p>
       </header>
       {content}
     </main>
@@ -74,6 +76,7 @@ def _document(title: str, content: str) -> str:
 def privacy_policy_html() -> str:
     return _document(
         "Privacy Policy",
+        PRIVACY_EFFECTIVE_DATE,
         """
     <p class="notice"><strong>Summary:</strong> Professor Compressor processes
       videos locally in your browser. Finished files, including fitting MP4s
@@ -200,13 +203,22 @@ def privacy_policy_html() -> str:
       Keyed pseudonyms are used to measure repeat usage without storing raw
       Discord user/server IDs in this history.</p>
 
-    <h2>7. Cookies and tracking</h2>
+    <h2>7. Cookies, browser storage, and tracking</h2>
     <p>The compressor does not use advertising trackers or third-party analytics.
       It uses one short-lived, first-party, HTTP-only browser cookie to let the
       same browser reopen a claimed link after a refresh and check a delivery
       already in progress. The cookie contains a random secret, not your name
       or video, and expires after at most three hours. The relay also uses a
       separate short-lived page secret to authorize uploads and status checks.</p>
+    <p>If you choose the Light or Dark theme, your browser saves that choice in
+      this site's local storage under the name <code>pc-theme</code> so other
+      Professor Compressor pages use the same theme. The choice stays on your
+      device and is never sent to the Service. Choosing System removes it, and
+      clearing this site's browser data also deletes it. The temporary local
+      copies of selected clips described in section 3 are kept in this site's
+      browser storage on your device. Apart from ordinary browser caching of
+      the site's files, the Service does not set other cookies or store other
+      information in your browser.</p>
 
     <h2>8. Security</h2>
     <p>The Service uses HTTPS, expiring single-use links, browser-bound session
@@ -243,6 +255,7 @@ def privacy_policy_html() -> str:
 def terms_of_service_html() -> str:
     return _document(
         "Terms of Service",
+        TERMS_EFFECTIVE_DATE,
         """
     <p class="notice">By installing or using Professor Compressor, you agree to
       these Terms. If you do not agree, do not use the Service.</p>

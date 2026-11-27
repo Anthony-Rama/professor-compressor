@@ -9,7 +9,9 @@ accepted. See the README for the original code's reuse terms.
 1. Create a focused branch from `main`.
 2. Create a private `dev.env` for the separate development Discord application.
 3. Install Python and browser dependencies, using Python 3.11 and Node.js 22
-   (`.python-version` and `.nvmrc`), which match CI and the production image.
+   (`.python-version` and `.nvmrc`), which match CI. The production image runs
+   Python 3.11 and uses a Node.js 26 build stage only to install the pinned
+   browser packages.
 4. Add or update tests for behavior changes.
 5. Run the complete local quality suite before opening a pull request.
 
@@ -31,6 +33,11 @@ docker build --tag professor-compressor:local .
 ```
 
 Browser tests also require `ffmpeg` on PATH and simulate Discord delivery.
+Playwright starts `tests/harness/browser_server.py`, a credential-free loopback
+server on port 18764, so keep that port free. The opt-in encoder stress suite
+runs only with `RUN_ENCODER_STRESS=1`. CI runs the same checks in five jobs:
+lint, audit, unit (with the coverage floor in `pyproject.toml`), browser, and
+container.
 
 Use the protected local `qa` branch with the isolated dev bot for manual tests.
 Start from the current `main` and test only the candidate changes you intend to
@@ -53,6 +60,9 @@ the security or privacy impact, and how the change was verified.
   identity-data policy documented in the Privacy Policy.
 - Keep browser compression local. Only completed output files may cross the
   relay boundary.
+- Keep the theme choice (`pc-theme` in `localStorage`) in the browser. The
+  Privacy Policy states that it is never sent to the server; update the policy
+  before adding any cookie or other browser storage.
 - Pin production dependencies and explain new third-party services.
 - Treat filenames, HTTP headers, Discord names, and uploaded bytes as untrusted.
 
@@ -165,7 +175,13 @@ Messages, and Attach Files; thread tests also need Send Messages in Threads.
 
 The browser tests do not need credentials and never connect to Discord.
 On a Mac with Chrome already installed, set `CHROME_EXECUTABLE` to the Chrome
-executable and `TEST_PYTHON` to the Python environment used for the test server.
+executable and `TEST_PYTHON` to the Python environment used for the test server,
+for example:
+
+```bash
+CHROME_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  TEST_PYTHON=.venv/bin/python npx playwright test
+```
 
 The normal bot-message size target excludes the invoking user's Nitro allowance.
 `BOT_BASE_UPLOAD_MIB` defaults to 20, following the current
@@ -214,6 +230,8 @@ count. A mock API test cannot establish that a real token is accepted.
 - Browser package URLs include a version fingerprint and are immutable. Legacy
   unversioned paths remain available without long-lived cache headers. Change
   package versions when updating assets; do not modify installed npm distributions.
+- Application modules under `/brand/` are unversioned and served with
+  `Cache-Control: no-cache`, so browsers revalidate them after each release.
 
 ## Live acceptance checks
 
@@ -222,5 +240,6 @@ Nitro accounts in an unboosted server, a boosted server, a permission-denied
 channel, normal and private threads, and a permission change after creating a
 link. Verify the actual attachment and audio playback, not only the success
 alert. Also check Firefox/Safari, portrait and variable-frame-rate recordings,
-and large media on a memory-constrained device. Automated tests simulate Discord
+large media on a memory-constrained device, and the System, Light, and Dark
+themes on the website and session pages. Automated tests simulate Discord
 delivery and do not establish these external-platform results.

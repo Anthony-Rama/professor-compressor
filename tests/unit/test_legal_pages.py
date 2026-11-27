@@ -32,6 +32,16 @@ class LegalPageTests(unittest.TestCase):
         )
         self.assertIn('href="/terms"', document)
 
+    def test_privacy_policy_discloses_browser_storage(self) -> None:
+        document = privacy_policy_html()
+
+        self.assertIn("HTTP-only browser cookie", document)
+        self.assertIn("<code>pc-theme</code>", document)
+        self.assertIn("never sent to the Service", document)
+        self.assertIn("Choosing System removes it", document)
+        self.assertIn("copies of selected clips described in section 3", document)
+        self.assertIn("Effective date: November 26, 2026", document)
+
     def test_terms_cover_content_abuse_and_service_limits(self) -> None:
         document = terms_of_service_html()
 
@@ -41,6 +51,7 @@ class LegalPageTests(unittest.TestCase):
         self.assertIn("not affiliated with or endorsed by Discord Inc.", document)
         self.assertIn("mailto:professorcompressor.support@gmail.com", document)
         self.assertIn('href="/privacy"', document)
+        self.assertIn("Effective date: October 31, 2026", document)
 
     def test_public_document_response_is_public_html(self) -> None:
         response = public_document_response(privacy_policy_html())
