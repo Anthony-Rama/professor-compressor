@@ -231,13 +231,14 @@ class ThemeChoiceMarkupTests(unittest.TestCase):
                 body = documents[name].split("<body>", 1)[1]
                 footer = body.split('<footer class="page-footer session-footer">', 1)[1]
                 container = footer.split("</footer>", 1)[0]
-                self.assertEqual(container.count("<a href="), 5)
-                self.assertEqual(container.count('aria-hidden="true"'), 5)
-                self.assertEqual(container.count('rel="noopener noreferrer"'), 4)
+                self.assertEqual(container.count("<a href="), 6)
+                self.assertEqual(container.count('aria-hidden="true"'), 6)
+                self.assertEqual(container.count('rel="noopener noreferrer"'), 5)
                 for target in (
                     "https://professor-compressor.duckdns.org/",
                     "/privacy",
                     "/terms",
+                    "/brand/third-party-notices.txt",
                     "mailto:professorcompressor.support@gmail.com?",
                     "https://discord.com/invite/32RWwNWyEH",
                 ):

@@ -277,7 +277,11 @@ test("oversized video loads WebAssembly and compresses under the real CSP", asyn
     "href",
     "https://professor-compressor.duckdns.org/",
   );
-  await expect(footer.locator('a > svg[aria-hidden="true"]')).toHaveCount(5);
+  await expect(footer.locator('a > svg[aria-hidden="true"]')).toHaveCount(6);
+  await expect(footer.getByRole("link", { name: "Third-party notices" })).toHaveAttribute(
+    "href",
+    "/brand/third-party-notices.txt",
+  );
   await expect(footer.getByRole("link", { name: "Contact Support" })).toHaveAttribute(
     "href",
     /^mailto:professorcompressor\.support@gmail\.com\?/,
