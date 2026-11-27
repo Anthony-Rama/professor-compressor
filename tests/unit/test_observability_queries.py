@@ -133,7 +133,8 @@ class DashboardQueryTests(EventStoreTestCase):
             )
         result = self.view()
         self.assertEqual(
-            result["timings"]["encoding_seconds"], {"samples": 3, "p50": 10, "p95": 20}
+            result["timings"]["encoding_seconds"],
+            {"samples": 3, "p50": 10, "p90": 20, "p95": 20},
         )
         self.assertEqual(result["performance"][0]["files"], 3)
         self.assertAlmostEqual(result["performance"][0]["speed"], 90 / 35)

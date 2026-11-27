@@ -387,6 +387,7 @@ class EventStore:
         reference: str = "",
         dimension: str = "",
         value: str = "",
+        process_started: float | None = None,
     ) -> dict:
         """Return the current operator view without exposing the write connection."""
         if not self.ready:
@@ -399,4 +400,5 @@ class EventStore:
             reference=reference,
             dimension=dimension,
             value=value,
+            process_started=process_started,
         )

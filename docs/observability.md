@@ -1,48 +1,121 @@
 # Session observability
 
-The private `/ops` dashboard provides a session explorer and reliability,
-performance, and adoption summaries. No encoding or media-analysis passes are
-added. Tracking is disabled until configured and does not backfill old alerts.
+The private `/ops` dashboard shows current health, an outcome funnel, failures
+grouped by cause, performance percentiles, growth, and a per-session timeline.
+No encoding or media-analysis passes are added. Tracking is disabled until
+configured and does not backfill old alerts. The dashboard uses only the event
+history described below; it adds no collection of its own.
 
-## Dashboard sections and live information
+## Dashboard sections
 
-The live snapshot shows the bot's current installed-server count from the Discord
-gateway cache, service readiness, active sessions/uploads, queue depth, uptime,
-and release. It does not depend on history filters or Include tests. During a
-disconnect it labels the count as last known; before a connection has populated
-the cache it shows unavailable rather than claiming zero installations. No extra
-Discord API calls, member intents, raw guild names, or guild IDs are required.
+**Health now** (top of the page) is a live process snapshot: service readiness,
+Discord connection and gateway latency, connected servers from the gateway
+cache, release and uptime, active links, uploads, delivery queue depth and
+workers, and diagnostic store health (stored events, database size, oldest
+event, write errors, drops and queued writes). It ignores the time window and
+filters. During a disconnect the server count is labelled last known; before a
+connection has populated the cache it shows unavailable rather than zero. No
+extra Discord API calls, member intents, guild names or guild IDs are used.
 
-History is organized into Overview, Activity & adoption, Reliability, Performance,
-Session explorer, and System health. Server installations are distinct from
-servers with usage in a selected window. Daily activity uses UTC event dates;
-session/event timestamps are displayed in the operator browser's local timezone.
-Daily activity ignores reference/category filters, as its captions explain.
+Below it, the **window** (24 hours, 7 days, 30 days or 90 days), the **Include
+test servers** setting and an optional category filter apply to every tab:
 
-Use the session explorer for file-number-based size, format, resolution, frame
-rate, and encoding details, followed by the run timeline. Private filenames are
-not collected. File-size summaries count the latest server receipt per file index
-in delivered sessions with both input/output measurements; browser file-ready
-reports are not added again. Input sizes remain browser-reported. Measurement
-coverage can be smaller than the number of delivered files.
+- **Overview**: session stat cards, the outcome funnel (link created → opened →
+  files selected → compression started → uploaded to relay → delivered), final
+  outcomes, a delivered-versus-failed trend (hourly for 24 hours, otherwise per
+  UTC day, with a data table), and the top three failure groups.
+- **Failures**: failures grouped by error code and stage with sessions, share,
+  sessions later delivered, last seen, browser and device mix and the three most
+  recent references; engine signals; latest session states.
+- **Performance**: p50/p90 for encode speed, compress-to-delivery time, relay
+  receive, queue wait, Discord delivery and other stage timings; file sizes;
+  engine and processing-path shares; comparable encoding groups.
+- **Growth**: installs, removals (with likely reconnect artifacts separated),
+  net change, servers with delivery, a connected-server chart and a daily table
+  of installs, removals, sessions and deliveries; input formats, browsers and
+  devices.
+- **Sessions**: a reference lookup with the session's timeline, file
+  diagnostics and attempt evidence, a per-session JSON export, and the 100 most
+  recently updated sessions.
+- **System**: storage details, process counters and release comparison.
+
+**Worth a look** lists anomalies for the current view (see `anomalies` below).
+**Copy summary** copies a short Markdown report of the view: health, funnel,
+top failure groups with example references, percentiles, growth and anomalies.
+It contains no pseudonymous user/server keys, internal session IDs, filenames
+or other identifiers beyond diagnostic references and release names, so it can
+be pasted into an issue or a chat when investigating. If the browser blocks the
+clipboard, the text is shown for manual copying. **Export JSON** saves the
+latest successfully loaded view; stale or failed refreshes cannot export old
+data.
+
+Daily figures use UTC; event times are shown in the operator browser's local
+timezone. Growth and daily activity ignore the category filter. File-size
+summaries count the latest server receipt per file index in delivered sessions
+with both measurements; input sizes remain browser-reported. Private filenames
+are not collected.
 
 Blocked before compression counts distinct sessions with a browser-reported
-preparation failure and no recorded compression start. Repeated failures count
-once; starting later on the same link removes that session from this count.
-Filter by error code `INPUT_WRITE_UNSUPPORTED` for browsers that lack the
-temporary-file write capability. Older generic storage errors are not reclassified.
-
-Needs attention counts latest reported failure states. Cancelled, in-progress,
-and unknown outcomes remain separate. Delivered / started includes pending starts
-and is not a final success-rate estimate. Recovery requires a failure recorded
-before server-confirmed delivery. Manual runs require recorded run IDs; automatic
-retries and all other browser events are best-effort.
+preparation failure and no recorded compression start. Filter by error code
+`INPUT_WRITE_UNSUPPORTED` for browsers that lack the temporary-file write
+capability. Older generic storage errors are not reclassified.
 
 Process counters and storage-error/drop counts reset on restart and include tests.
-The system section makes this boundary explicit. Optional auto-refresh runs every
-30 seconds only while the dashboard is visible and no refresh is already pending.
-The password-protected endpoint authenticates every refresh. Export captures the
-latest successfully loaded view; stale/failed refreshes cannot export old data.
+Optional auto-refresh runs every 30 seconds only while the dashboard is visible
+and no refresh is already pending. Every request is authenticated.
+
+### Likely reconnect removals
+
+Discord can report a few servers as removed while a restarting bot refills its
+cache. Without changing stored history, a removal is marked as a likely
+reconnect artifact when it is recorded within 60 seconds after the current
+process started, within 180 seconds after a recorded `interrupted` shutdown
+marker, or as part of two or more removals within 60 seconds of the first event
+recorded by a release. A restart of the same release with no active sessions
+leaves no marker, so an older artifact can still count as a removal. Removal
+counts that exclude artifacts are labelled as such.
+
+## `/ops/data` reference (schema version 1)
+
+`GET /ops/data` returns JSON with `Cache-Control: no-store`, behind the same
+Basic authentication, rate limits and two-reader limit as `/ops`.
+
+Query parameters:
+
+| Parameter | Meaning |
+| --- | --- |
+| `days` | Window length in days, clamped to 1–90 (default 7). Not an integer: 400. |
+| `tests` | `1` includes test-server sessions. |
+| `dimension`, `value` | Optional category filter: `stage`, `error_code`, `engine_signal`, `input_format`, `browser`, `device`, `engine`, `path` or `revision`. |
+| `reference` | Optional `PC-` plus 12 hex digits. Surrounding spaces and lower case are normalized; any other value returns 400. Filters the session panels and adds `lookup`. |
+
+Times are Unix seconds (UTC); durations are seconds; sizes are bytes; shares
+and rates are percentages rounded to one decimal place. `null` means not
+measurable (for example a rate with no denominator). Browser-reported values
+are untrusted. Additive fields may appear without a version change; a removed
+or redefined field increments `schema_version`.
+
+| Field | Contents |
+| --- | --- |
+| `schema_version` | `1`. |
+| `generated_at` | Response time. |
+| `window` | `days`, `start`, `end`, `previous_start` (the comparison window starts here and ends at `start`), `include_tests`, plus `dimension`/`value`/`reference` when filtered. |
+| `runtime` | Live process snapshot: `ready`, `discord_ready`, `draining`, `commands_synced`, `gateway_latency_ms`, `connected_servers`, `server_count_current`, `unavailable_servers`, `revision`, `active_sessions`, `active_uploads`, `queue_depth`, `queue_capacity`, `delivery_workers`, `worker_capacity`, `buffer_bytes`, `buffer_limit_bytes`, `counters` (process counters including `uptime_seconds`). |
+| `storage` | Writer health: `configured`, `ready`, `queued`, `dropped`, `errors` (since process start), `retention_days`, `max_events`. When storage is not ready, only `storage`, `sessions` and `events` come from the store. |
+| `store` | Retained history: `events`, `sessions`, `oldest_event`, `newest_event`, `database_bytes`, `free_bytes`, `wal_bytes`. |
+| `funnel` | `steps`: `{step, sessions, step_percent, overall_percent}` for `created`, `opened`, `selected`, `started`, `uploaded`, `delivered` (a later step counts as reaching the earlier ones). `outcomes`: exclusive final outcome counts `delivered`, `failed`, `cancelled`, `in_progress` (updated within 2 hours), `unknown` (started, no confirmed result), `abandoned` (opened, never started), `expired` (never opened). `failure_percent` = failed / (delivered + failed). `bucket_seconds` (3600 for a 1-day window, else 86400) and `trend`: `{start, sessions, delivered, failed}` per bucket of session creation time, empty buckets omitted. |
+| `comparison` | The previous, equally long window: `sessions`, `outcomes`, `failure_percent`, `error_codes` (sessions per reported error code). |
+| `failures` | `sessions` (distinct sessions with a reported failure), `group_count`, `truncated` (only the latest 20,000 session/cause rows were read), `groups` (top 12): `error_code`, `stage`, `sessions`, `reports`, `recovered` (later delivered), `share_percent` (of failing sessions), `last_seen`, `browsers`, `devices` (sessions per value), `references` (up to 3 latest). Failures are `client_failed`, `upload_failed`, `delivery_failed` and failed `stage_finished` steps with an error code; `CANCELLED` is excluded. |
+| `percentiles` | `{samples, p50, p90}` over up to 5,000 recent samples each: `encode_speed` (media seconds per encoding second, re-encoded files only), `time_to_delivery_seconds` (server arrival of Compress to server-confirmed delivery), `relay_receive_seconds`, `queue_seconds`, `input_bytes`, `output_bytes` (per file, from relay receipts). |
+| `timings` | `{samples, p50, p90, p95}` per stage timing: `engine_seconds`, `encoding_seconds`, `relay_receive_seconds`, `queue_seconds`, `discord_delivery_seconds`, `total_seconds`. |
+| `growth` | `installs`, `removals`, `likely_reconnect_removals`, `net_change` (installs minus removals that are not artifacts), `truncated`, `daily` (`day`, `installs`, `removals`, `likely_reconnect_removals`, `connected_servers` at the last change that day), `events` (latest 200: `at`, `event`, `connected_servers`, `likely_reconnect`). |
+| `anomalies` | `{severity, code, message}`, warnings first. Codes: `service_not_ready`, `discord_disconnected`, `draining`, `queue_near_capacity`, `storage_unavailable`, `storage_loss`, `failure_rate_spike` (at least 10 points and 1.5× the previous window, each with 5+ finished sessions), `failure_rate_high` (25%+ with no comparable previous window), `new_error_code` (2+ sessions, absent from the previous window), `unknown_outcomes`, `deliveries_dropped`, `net_server_loss`, `failures_truncated`. |
+| `summary` | The Markdown text used by **Copy summary**. |
+| `lookup` | Only with `reference`: `reference`, `found`, `session` (`reference`, `created`, `updated`, `revision`, `is_test`, `status`, `files`, `failures`, `failure_data`) and `events` (up to 500, oldest first: `at`, `run_id`, `file_index`, `event`, `source`, `data`). Pseudonymous keys and the internal session ID are omitted. An unknown reference returns `found: false`. |
+| Earlier panels | `totals`, `statuses`, `groups` (top 20 per category plus `revision` and `failure_stage`), `activity` (UTC day × event counts), `adoption`, `performance` (comparable encoding groups), `files` (adds `unchanged_percent`, `remuxed_percent`), `retries`, `collection`, `sessions` (latest 100, including pseudonymous `user_key`/`guild_key`), `events` (the reference's timeline). |
+
+The page's **Export session JSON** saves `lookup` with `schema_version` and an
+`exported_at` time.
 
 ## Configuration
 
@@ -61,7 +134,7 @@ DIAGNOSTIC_TEST_GUILD_IDS=comma-separated-development-server-ids
 
 For an existing deployment, explicitly update its private environment file to
 the 90-day/300,000-event values above; an existing 30-day setting still takes
-precedence over the new defaults. Select **Last 90 days** in the dashboard to
+precedence over the new defaults. Select **90 days** in the dashboard to
 search the full window. Older history that has already been pruned cannot be
 recovered by extending retention.
 
@@ -82,7 +155,7 @@ use a private profile on a shared machine. The dashboard is read-only.
 3. Verify `/ops` denies unauthenticated requests, accepts operator credentials,
    and reports storage ready with no drops or errors.
 4. Complete a test-server session. Search its reference, inspect its timeline,
-   and verify **Include tests** controls whether it appears in summaries.
+   and verify **Include test servers** controls whether it appears in summaries.
 
 Preserve the volume and operator key across releases. Key rotation changes
 HMAC user/server pseudonyms and splits cohorts; it does not invalidate upload
@@ -123,9 +196,9 @@ the cause has not been established. Raw error text remains in the user's browser
 ### Engine failure evidence
 
 The private `/ops` dashboard uses this same bounded SQLite event history; there
-is no second raw-log database. Session explorer includes files that failed
+is no second raw-log database. A session lookup includes files that failed
 before upload, grouped by manual run and file number, plus an attempts/evidence
-table. Reliability can filter/group by `engine_signal`; Export JSON includes
+table. The category filter accepts `engine_signal`; Export JSON includes
 the sanitized fields in the selected view.
 File summaries use client sequence within each run when available, so late
 batches do not overwrite newer browser facts. Relay receipt values take
@@ -214,7 +287,7 @@ be monitored alongside processing failures.
   classification is not retroactive and is not inferred from usernames.
 - Timelines use server arrival time, not exact browser execution order. Reports
   are batched and best-effort. Missing data does not prove inactivity.
-- Median/p95 stage times use at most 5,000 recent samples per measurement and
+- Median/p90/p95 stage times use at most 5,000 recent samples per measurement and
   can include failed runs unless filtered. Encoding samples require a file-ready
   report and include that file's failed encoding attempts before recovery;
   files that never became ready are not included in those encoding percentiles.
@@ -243,7 +316,14 @@ Freed DB pages are reused, so the file need not shrink after pruning. Compose
 rotates bot logs at 10 MiB × 3 files. Exports need private storage and retention.
 
 Dashboard queries are read-only, limited to two concurrent readers and a SQLite
-execution deadline. Results show at most 100 sessions and 500 timeline events.
+execution deadline shared by every panel of one request. Results show at most
+100 sessions, 500 timeline events, 12 failure groups with 3 references each,
+5,000 samples per percentile and 2,000 install/removal events. All panels read
+one consistent snapshot; the window's events are scanned a bounded number of
+times, and the previous-window comparison reads only session rows and failure
+reports. On a 300,000-event store a 90-day view took about 2.6 seconds on a
+development laptop; a slower host can reach the 3-second deadline, which
+returns 503 for that request without affecting the bot.
 Check the time window/filters before treating missing rows as missing reports.
 External uptime and disk-space monitoring are still needed: a stopped host
 cannot report its own outage. No promise of complete event capture is made.

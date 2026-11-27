@@ -188,18 +188,14 @@ for (const width of [375, 1440]) {
       await page.locator("#tests").check();
       await page.getByRole("button", { name: "Refresh", exact: true }).click();
       await page.screenshot({ path: `/tmp/professor-ops-${width}.png`, fullPage: true });
-      await page.getByRole("tab", { name: "Session explorer", exact: true }).click();
+      await page.getByRole("tab", { name: "Sessions", exact: true }).click();
       await expect(page.locator("#sessions")).toContainText("PC-");
       await page.getByRole("button", { name: sample.reference, exact: true }).click();
       await expect(page.locator("#events")).toContainText("delivered");
+      await expect(page.locator("#lookup-status")).toContainText(sample.reference);
+      await expect(page.locator("#lookup-export")).toBeEnabled();
       await page.screenshot({ path: `/tmp/professor-ops-sessions-${width}.png`, fullPage: true });
-      for (const name of [
-        "Activity & adoption",
-        "Reliability",
-        "Performance",
-        "System health",
-        "Overview",
-      ]) {
+      for (const name of ["Failures", "Performance", "Growth", "System", "Overview"]) {
         await page.getByRole("tab", { name, exact: true }).click();
         expect(
           await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
@@ -527,9 +523,9 @@ test("engine OOM outranks a misleading wrapper and failed files appear in the pr
     expect(filtered.sessions.some((s) => s.reference === session.reference)).toBe(true);
     await page.goto("/ops");
     await page.locator("#tests").check();
+    await page.getByRole("tab", { name: "Sessions", exact: true }).click();
     await page.locator("#reference").fill(session.reference);
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await page.getByRole("tab", { name: "Session explorer", exact: true }).click();
+    await page.getByRole("button", { name: "Look up", exact: true }).click();
     await expect(page.locator("#session-files")).toContainText("320 × 240");
     await expect(page.locator("#session-attempts")).toContainText("Out of memory");
     await expect(page.locator("#session-attempts")).toContainText("TypeError");
@@ -806,7 +802,9 @@ test("file summaries keep runs separate and prefer newer browser facts and relay
     );
     await page.goto("/ops");
     await expect(page.locator("#status")).toContainText("Updated");
-    await page.getByRole("tab", { name: "Session explorer", exact: true }).click();
+    await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+    await page.locator("#reference").fill("PC-0123456789AB");
+    await page.getByRole("button", { name: "Look up", exact: true }).click();
     const rows = page.locator("#session-files tbody tr");
     await expect(rows).toHaveCount(2);
     await expect(rows.nth(0)).toContainText("1280 × 720");
@@ -929,12 +927,12 @@ test("dashboard explains known and unknown failures and exposes the 90-day histo
     await page.goto("/ops");
     await expect(page.locator("#status")).toContainText("Updated");
     await expect(page.locator("#retention-note")).toContainText("90 days");
-    await page.locator("#days").selectOption("90");
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await page.getByLabel("90 days").check();
     await expect.poll(() => days).toBe("90");
-    await page.getByRole("tab", { name: "Session explorer", exact: true }).click();
+    await page.getByRole("tab", { name: "Sessions", exact: true }).click();
     await expect(page.locator("#sessions")).toContainText("could not allocate enough memory");
     await expect(page.locator("#sessions")).toContainText("cause was not captured");
+    await page.getByRole("button", { name: "PC-111111111111", exact: true }).click();
     await expect(page.locator("#events summary")).toContainText("Encoding failed");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
@@ -981,36 +979,184 @@ test("explicit unsupported-codec evidence gets a specific user-facing explanatio
     .toBe(true);
 });
 
-test("90-day history chart scales only against visible recent activity", async ({ browser }) => {
+test("overview trend and growth tables follow the selected window", async ({ browser }) => {
   const context = await browser.newContext({ httpCredentials: operator });
   try {
     const page = await context.newPage();
-    const today = new Date().toISOString().slice(0, 10);
-    const old = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+    const now = Math.floor(Date.now() / 1000);
+    const day = Math.floor(now / 86400) * 86400;
+    const old = new Date((day - 60 * 86400) * 1000).toISOString().slice(0, 10);
     await page.route("**/ops/data?**", (route) =>
       route.fulfill({
         json: {
           storage: { ready: true, retention_days: 90 },
-          activity: [
-            { day: old, event: "created", count: 1000 },
-            { day: today, event: "created", count: 2 },
-          ],
+          window: { days: 90, start: now - 90 * 86400, end: now },
+          funnel: {
+            bucket_seconds: 86400,
+            outcomes: { delivered: 5, failed: 2 },
+            trend: [
+              { start: day - 60 * 86400, sessions: 4, delivered: 3, failed: 1 },
+              { start: day, sessions: 3, delivered: 2, failed: 1 },
+            ],
+          },
+          activity: [{ day: old, event: "created", count: 4 }],
+          growth: {
+            installs: 1,
+            removals: 3,
+            likely_reconnect_removals: 2,
+            net_change: 0,
+            daily: [
+              {
+                day: old,
+                installs: 1,
+                removals: 3,
+                likely_reconnect_removals: 2,
+                connected_servers: 9,
+              },
+            ],
+            events: [],
+          },
         },
       }),
     );
     await page.goto("/ops");
-    await page.locator("#days").selectOption("90");
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await expect(page.locator("#chart .chart-day").last().locator(".bar").first()).toHaveCSS(
-      "height",
-      "125px",
-    );
-    await page.getByRole("tab", { name: "Activity & adoption", exact: true }).click();
-    await expect(page.locator("#activity")).toContainText(old);
+    await page.getByLabel("90 days").check();
+    await expect(page.locator("#trend svg .bar-delivered")).toHaveCount(2);
+    await expect(page.locator("#trend svg .bar-failed")).toHaveCount(2);
+    await expect(page.locator("#trend svg")).toHaveAttribute("role", "img");
+    await expect(page.locator("#trend-table tbody tr")).toHaveCount(2);
+    await page.getByRole("tab", { name: "Growth", exact: true }).click();
+    await expect(page.locator("#growth-table")).toContainText(old);
+    await expect(page.locator("#growth-table")).toContainText("3 (2 likely reconnect)");
+    await expect(page.locator('#adoption [data-metric="removals"] strong')).toHaveText("1");
   } finally {
     await context.close();
   }
 });
+
+test("failure groups open a reference timeline and the summary copies as text", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ httpCredentials: operator });
+  try {
+    const page = await context.newPage();
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const requests = [];
+    await page.route("**/ops/data?**", (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      requests.push(params.get("reference"));
+      const reference = params.get("reference");
+      return route.fulfill({
+        json: {
+          schema_version: 1,
+          storage: { ready: true },
+          summary: "# Professor Compressor operations summary\n",
+          anomalies: [
+            { severity: "warning", code: "failure_rate_spike", message: "Failure rate spiked." },
+          ],
+          failures: {
+            sessions: 2,
+            group_count: 1,
+            groups: [
+              {
+                error_code: "BROWSER_MEMORY",
+                stage: "encoding",
+                sessions: 2,
+                reports: 2,
+                recovered: 0,
+                share_percent: 100,
+                last_seen: Date.now() / 1000,
+                browsers: { Safari: 2 },
+                devices: { mobile: 2 },
+                references: ["PC-AAAAAAAAAAAA"],
+              },
+            ],
+          },
+          ...(reference
+            ? {
+                lookup: {
+                  reference,
+                  found: true,
+                  session: { reference, status: "client_failed", failure_data: {} },
+                  events: [
+                    {
+                      event: "client_failed",
+                      source: "browser",
+                      run_id: "aaaa",
+                      file_index: 1,
+                      data: { stage: "encoding", error_code: "BROWSER_MEMORY" },
+                    },
+                  ],
+                },
+              }
+            : {}),
+        },
+      });
+    });
+    await page.goto("/ops");
+    await expect(page.locator("#anomalies")).toContainText("Failure rate spiked.");
+    await page.getByRole("button", { name: "Copy summary" }).click();
+    await expect(page.locator("#status")).toContainText("Summary copied");
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+      "operations summary",
+    );
+    await page.getByRole("tab", { name: "Failures", exact: true }).click();
+    await expect(page.locator("#failure-groups")).toContainText("Safari 2");
+    await page.getByRole("button", { name: "PC-AAAAAAAAAAAA" }).last().click();
+    await expect(page.locator("#panel-sessions")).toBeVisible();
+    await expect(page.locator("#events summary")).toContainText("Encoding failed");
+    expect(requests).toContain("PC-AAAAAAAAAAAA");
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export session JSON" }).click();
+    expect((await download).suggestedFilename()).toBe("professor-session-PC-AAAAAAAAAAAA.json");
+    const before = requests.length;
+    await page.locator("#reference").fill("PC-NOT-VALID");
+    await page.getByRole("button", { name: "Look up", exact: true }).click();
+    await expect(page.locator("#lookup-status")).toContainText("Enter a reference like");
+    expect(requests.length).toBe(before);
+  } finally {
+    await context.close();
+  }
+});
+
+for (const scheme of ["dark", "light"]) {
+  for (const width of [360, 1280]) {
+    test(`dashboard fits ${width}px in the ${scheme} theme`, async ({ browser }) => {
+      const context = await browser.newContext({
+        // Send credentials up front: each challenge counts against the
+        // dashboard's failed-sign-in limit.
+        extraHTTPHeaders: auth,
+        viewport: { width, height: 800 },
+        colorScheme: scheme,
+      });
+      try {
+        const page = await context.newPage();
+        await page.goto("/ops");
+        await expect(page.locator("#status")).toContainText("Updated");
+        const background = await page.evaluate(
+          () => getComputedStyle(document.body).backgroundColor,
+        );
+        expect(background).toBe(scheme === "dark" ? "rgb(14, 17, 32)" : "rgb(245, 246, 251)");
+        await expect(
+          page.getByRole("banner").getByRole("button", { name: "Theme: System" }),
+        ).toBeVisible();
+        for (const tab of ["Overview", "Failures", "Performance", "Growth", "Sessions", "System"]) {
+          await page.getByRole("tab", { name: tab, exact: true }).click();
+          expect(
+            await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+            tab,
+          ).toBe(true);
+        }
+        await page.getByRole("tab", { name: "Overview", exact: true }).focus();
+        await page.keyboard.press("ArrowRight");
+        await expect(page.getByRole("tab", { name: "Failures", exact: true })).toBeFocused();
+        await expect(page.locator("#panel-failures")).toBeVisible();
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
 
 for (const kind of ["error", "messageerror"]) {
   test(`worker ${kind} rejects encoding and displays a useful failure`, async ({
