@@ -112,10 +112,11 @@ is required for this workflow.
 
 ### Browser-local input preservation acceptance
 
-Selected sources are copied into OPFS in 1 MiB reads, with a 1 GiB per-file and
-4 GiB per-page batch cap (10 files maximum). This adds local disk I/O, not server
-storage. The copy must finish before the file is marked Ready or compression
-can start. Chrome/Edge with OPFS and Web Locks support are required for this
+Selected sources are copied into OPFS in 1 MiB reads, with a 1 GB per-file and
+4 GB per-page batch cap (10 files maximum; the limits are binary units, so 1 GB here is 1,073,741,824 bytes).
+This adds local disk I/O, not server storage. The copy must finish before the
+file is marked Ready or compression can start. Chrome/Edge with OPFS and Web
+Locks support are required for this
 workflow; missing/blocked storage fails explicitly rather than retaining an
 unsafe source reference or falling back to unbounded RAM copies.
 

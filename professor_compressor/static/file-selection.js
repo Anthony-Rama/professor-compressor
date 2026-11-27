@@ -4,8 +4,23 @@ import {
   INPUT_FILE_LIMIT,
   bytesToGiB,
   codedError,
+  fileStatusKind,
   readableSize,
 } from "./shared.js";
+
+// The submit label while the selection can be (or is about to be) sent.
+function sendLabel(count) {
+  return count
+    ? "Compress & send " + count + (count === 1 ? " video" : " videos")
+    : "Add videos to continue";
+}
+
+function iconElement(name) {
+  const icon = document.createElement("span");
+  icon.className = "icon " + name;
+  icon.setAttribute("aria-hidden", "true");
+  return icon;
+}
 
 export function createFileSelection({
   sessionSecret: SESSION_SECRET,
@@ -151,8 +166,11 @@ export function createFileSelection({
   function fileCard(file, index) {
     const card = document.createElement("div");
     card.className = "file-card";
-    const head = document.createElement("div");
-    head.className = "file-head";
+    const thumbnail = document.createElement("span");
+    thumbnail.className = "file-icon";
+    thumbnail.append(iconElement("icon-video"));
+    const body = document.createElement("div");
+    body.className = "file-body";
     const name = document.createElement("span");
     name.className = "file-name";
     name.textContent = file.name;
@@ -164,21 +182,23 @@ export function createFileSelection({
       copy.phase === "ready"
         ? "Ready"
         : copy.phase === "failed"
-          ? "Reselect file"
+          ? "Needs attention"
           : "Preparing local copy…";
-    const actions = document.createElement("div");
-    actions.className = "file-actions";
+    card.dataset.status = fileStatusKind(status.textContent);
+    const meta = document.createElement("span");
+    meta.className = "file-meta";
+    meta.textContent = copy.error || readableSize(file.size) + " original";
+    const line = document.createElement("div");
+    line.className = "file-line";
+    line.append(status, meta);
+    body.append(name, line);
     const remove = removeButton(file, index);
     const reselect = reselectButton(file, index, copy);
-    actions.append(status, reselect, remove);
-    head.append(name, actions);
     const progress = document.createElement("progress");
     progress.max = 100;
     progress.value = copy.phase === "preparing" ? copy.fraction * 100 : 0;
-    const meta = document.createElement("div");
-    meta.className = "file-meta";
-    meta.textContent = copy.error || readableSize(file.size) + " original";
-    card.append(head, progress, meta);
+    progress.setAttribute("aria-label", "Progress for " + file.name);
+    card.append(thumbnail, body, remove, reselect, progress);
     filesElement.append(card);
     return {
       file: copy.file,
@@ -218,10 +238,7 @@ export function createFileSelection({
     remove.type = "button";
     remove.setAttribute("aria-label", "Remove " + file.name);
     remove.title = "Remove " + file.name;
-    const icon = clearSelectionButton.querySelector("svg").cloneNode(true);
-    icon.setAttribute("width", "18");
-    icon.setAttribute("height", "18");
-    remove.append(icon);
+    remove.append(iconElement("icon-close"));
     remove.addEventListener("click", () => removeSelectedFile(index));
     return remove;
   }
@@ -230,8 +247,8 @@ export function createFileSelection({
     const reselect = document.createElement("button");
     reselect.type = "button";
     reselect.className = "secondary reselect-file";
-    reselect.textContent = "Reselect";
-    reselect.setAttribute("aria-label", "Reselect " + file.name);
+    reselect.textContent = "Replace clip";
+    reselect.setAttribute("aria-label", "Replace clip " + file.name);
     reselect.hidden = copy.phase !== "failed";
     reselect.addEventListener("click", () => reselectFile(index));
     return reselect;
@@ -251,7 +268,7 @@ export function createFileSelection({
         ? "Checking storage…"
         : preparing
           ? "Preparing videos…"
-          : "Compress and send to Discord";
+          : sendLabel(selectedFiles.length);
   }
 
   function discardInputCopy(copy) {
@@ -294,7 +311,7 @@ export function createFileSelection({
         : "Local file preparation could not start. Reload this page and reselect the clip, or try an updated Chrome or Edge browser.";
       const state = selectedFiles.find((item) => item.identity === copy.identity);
       if (state) {
-        events.emit("fileStatus", state, "Reselect file", 0);
+        events.emit("fileStatus", state, "Needs attention", 0);
         state.meta.textContent = copy.error;
         state.reselect.hidden = false;
         events.emit("selectionError", "Video " + state.index + ": " + copy.error);
@@ -332,7 +349,7 @@ export function createFileSelection({
           preparationReport(0, replacementBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
           events.emit(
             "selectionError",
-            "That replacement exceeds the 1 GiB per-video or 4 GiB batch limit. Your existing selection was kept.",
+            "That replacement exceeds the 1 GB per-video or 4 GB batch limit. Your existing selection was kept.",
           );
           return;
         }
@@ -361,7 +378,7 @@ export function createFileSelection({
     clearSelectionButton.disabled = files.length === 0 || isRunning() || clips.disabled;
     const validCount = files.length >= 1 && files.length <= MAX_CLIPS;
     submit.disabled = !validCount || isRunning() || sessionExpired();
-    submit.textContent = "Compress and send to Discord";
+    submit.textContent = sendLabel(files.length);
     selection.className = validCount || files.length === 0 ? "selection" : "selection error";
     if (files.length === 0) {
       selection.textContent = "No videos selected";
@@ -374,7 +391,7 @@ export function createFileSelection({
         (files.length === 1 ? " video" : " videos") +
         " selected · " +
         bytesToGiB(totalBytes).toFixed(2) +
-        " / 4 GiB";
+        " / 4 GB";
     }
     renderSelectedFiles(files);
     refreshPreparation();
@@ -437,16 +454,12 @@ export function createFileSelection({
     if (!additions.length) return "Those videos are already selected.";
     if (additions.some((file) => file.size > INPUT_FILE_LIMIT)) {
       preparationReport(0, totalSize(additions))("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
-      return "Each video must be 1 GiB or smaller. Existing clips were kept.";
+      return "Each video must be 1 GB or smaller. Existing clips were kept.";
     }
     const totalBytes = totalSize([...current, ...additions]);
     if (totalBytes > INPUT_BATCH_LIMIT) {
       preparationReport(0, totalBytes)("failed", { diagnosticCode: "INPUT_TOO_LARGE" });
-      return (
-        "This selection would total " +
-        bytesToGiB(totalBytes).toFixed(2) +
-        " GiB, above the 4 GiB batch limit. Existing clips were kept. Add fewer videos or remove some first."
-      );
+      return "This selection is above the 4 GB batch limit. Existing clips were kept. Add fewer videos or remove some first.";
     }
     return null;
   }
@@ -577,7 +590,7 @@ export function createFileSelection({
     copy.phase = "failed";
     copy.error = errorMessage;
     if (copy.task) void copy.task.dispose().catch(() => {});
-    events.emit("fileStatus", state, "Reselect file", 0);
+    events.emit("fileStatus", state, "Needs attention", 0);
     state.meta.textContent = copy.error;
     state.reselect.hidden = false;
     refreshPreparation();

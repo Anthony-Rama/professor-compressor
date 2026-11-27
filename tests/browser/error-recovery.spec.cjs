@@ -189,7 +189,7 @@ test("required error handling classifies failures without optional diagnostics",
   await page.locator("#submit").click();
   await expect(page.locator("#message")).toContainText("H.264 MP4 with AAC audio");
   await expect(
-    page.getByRole("button", { name: "Reselect large-av1.mp4", exact: true }),
+    page.getByRole("button", { name: "Replace clip large-av1.mp4", exact: true }),
   ).toBeVisible();
 });
 
@@ -335,7 +335,7 @@ for (const diagnostics of [true, false]) {
       };
     });
     await open(page, request);
-    await expect(page.locator("#stay-open")).toContainText("keep the screen unlocked");
+    await expect(page.locator("#stay-open")).toContainText("Keep your screen on");
     await page.locator("#clips").setInputFiles(join(fixtures, "large-small.mp4"));
     await page.locator("#submit").click();
     await expect.poll(() => page.evaluate(() => Boolean(window.heldEncoder))).toBe(true);
@@ -410,7 +410,7 @@ for (const diagnostics of [true, false]) {
     await page.locator("#cancel").click();
     await expect(page.locator("#stall-warning")).toBeHidden();
     await expect(page.locator("#background-warning")).toBeHidden();
-    await expect(page.locator("#page-heading")).toHaveText("Compress videos for Discord");
+    await expect(page.locator("#page-heading")).toHaveText("Compress and Send Videos to Discord");
   });
 }
 for (const file of ["large-av1.mp4", "av1.webm"])
@@ -427,7 +427,9 @@ for (const file of ["large-av1.mp4", "av1.webm"])
     expect(await page.evaluate(() => window.executions.length)).toBe(0);
     await expect(page.locator("#caption")).toHaveValue("Keep my caption");
     await expect(page.locator(".file-card")).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "Reselect " + file, exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Replace clip " + file, exact: true }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Remove " + file, exact: true }).click();
     await page.locator("#submit").click();
     await expect(page.locator("#page-heading")).toHaveText("Delivered to Discord");

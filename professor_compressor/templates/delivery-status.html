@@ -1,15 +1,29 @@
-<img class="brand" src="/brand/professor-compressor.png" alt="Professor Compressor mascot">
-<h1 id="delivery-heading">Checking Discord delivery</h1>
-<p id="delivery-explanation" class="intro">Your browser may have refreshed while
-  finished files were being sent. Below is the current status:</p>
+<header class="topbar">__BRAND____THEME_MENU__</header>
+<main class="status-page" id="delivery-page" data-state="checking">
+<section class="status-hero">
+  <span class="status-visual" aria-hidden="true"><span class="icon"></span></span>
+  <h1 id="delivery-heading">Checking Discord delivery</h1>
+  <p id="delivery-explanation" class="intro">Your browser may have refreshed while
+    finished files were being sent. Below is the current status:</p>
+</section>
 <p id="delivery-status" class="message" role="status">Checking status…</p>
-<button type="button" id="check-again" class="secondary" hidden>Check status again</button>
-<p id="diagnostic-reference" class="privacy" hidden></p>
-<p id="reselect" hidden>That upload did not complete. Videos held by the previous
-  page cannot be restored. <a href="" id="return-to-compressor">Return to compressor</a>
-  and select them again.</p>
+<div class="notice status-note note-checking"><span class="icon icon-info" aria-hidden="true"></span><p>Don't start a new /compress yet. This page checks again by itself until Discord confirms.</p></div>
+<div class="notice status-note note-stalled"><span class="icon icon-info" aria-hidden="true"></span><p>Checking only asks for the status. It never sends your clips again.</p></div>
+<button type="button" id="check-again" class="btn btn-primary btn-lg" hidden>Check status again</button>
+<div id="reselect" hidden>
+  <p>That upload did not complete. Videos held by the previous page cannot be
+    restored. Return to the compressor and select them again.</p>
+  <a href="" id="return-to-compressor" class="btn btn-primary btn-lg">Return to compressor</a>
+</div>
 __REVIEW_PROMPT__
-<p class="privacy"><a href="/privacy">Privacy Policy</a></p>
+<div class="support-actions status-support">
+  <a href="mailto:professorcompressor.support@gmail.com?subject=Professor%20Compressor%20contact">__MAIL_ICON__Contact us</a>
+  <a href="https://discord.com/invite/32RWwNWyEH">__DISCORD_ICON__Join our server</a>
+  <p>Please don't share private videos or session links.</p>
+</div>
+<p id="diagnostic-reference" class="reference" hidden></p>
+</main>
+__SESSION_FOOTER__
 <script type="application/json" id="delivery-config">__CONFIG_JSON__</script>
 <script type="module">
 import("/brand/delivery-status.js").catch(() => {

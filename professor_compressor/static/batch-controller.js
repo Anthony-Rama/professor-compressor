@@ -597,6 +597,8 @@ export function startBatchController(config, modules) {
     reportProgress("started");
     cancelled = false;
     running = true;
+    const recoveryNotice = document.getElementById("recovery-notice");
+    if (recoveryNotice) recoveryNotice.hidden = true;
     setProcessingView(true);
     pageHeading.focus({ preventScroll: true });
     document.querySelector("main").scrollIntoView({ block: "start" });
@@ -739,7 +741,7 @@ export function startBatchController(config, modules) {
       setRunDetail("Complete");
       setPhase("done", "Delivered to Discord", response.message);
       showMessage(
-        "You can close this page and return to Discord. To upload more videos, run /compress again.",
+        "You can close this page and return to Discord.\nTo upload more videos, run /compress again.",
         "success",
       );
       deliveryComplete = true;
