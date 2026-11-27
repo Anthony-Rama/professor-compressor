@@ -1,0 +1,11 @@
+Copyright (c) 2026 Anthony Rama. All rights reserved.
+
+This repository is published for viewing and review only. All rights in the
+original project code and documentation are reserved. No license is granted
+to reuse, modify, distribute, or commercially exploit the original code.
+Contact professorcompressor.support@gmail.com for permission. Rights granted
+by applicable law or GitHub's terms remain unaffected.
+
+Third-party components retain their own licenses. In particular, the FFmpeg
+WebAssembly cores declare GPL-2.0-or-later. See THIRD_PARTY_NOTICES.md for
+versions, license texts, source references, and distribution details.
