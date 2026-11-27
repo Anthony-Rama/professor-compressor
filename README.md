@@ -4,10 +4,6 @@
 
 <h1 align="center">Professor Compressor</h1>
 
-Operator session history and performance tracking are documented in
-[Session observability](docs/observability.md). The protected `/ops` dashboard
-requires explicit configuration; diagnostic reporting never blocks delivery.
-
 <p align="center">Browser-based video compression with automatic delivery to Discord.</p>
 
 <p align="center">
@@ -43,11 +39,12 @@ The Discord bot token stays on the server. Videos that need conversion remain on
 
 - **Browser-side video work.** FFmpeg WebAssembly does the expensive encoding on the user's device. Files are processed sequentially to limit browser memory use; a single-thread fallback covers browsers where the multithreaded core is unavailable.
 - **Format-aware conversion.** FFmpeg probes the source rather than relying on the browser's ability to preview it. File signatures are checked instead of trusting extensions or MIME types. Duration-aware bitrate targeting aims below Discord's reported limit and retries oversized results.
-- **Bounded delivery.** The relay applies per-address rate limits, upload concurrency limits, a queue limit, and an in-memory byte budget. Authenticated status polling and short-lived delivery receipts recover lost responses without resending an accepted batch. Prepared files can be saved or retried without recompression after a relay failure.
+- **Bounded delivery.** The relay applies per-address rate limits, upload concurrency limits, a queue limit, and an in-memory byte budget. Authenticated status polling and short-lived delivery receipts recover lost responses without resending an accepted batch. After a refresh during delivery, the status page backs off when the relay is unreachable or busy, then offers **Check status again**, which only reads the status and never resends clips. Prepared files can be saved or retried without recompression after a relay failure.
 - **Short-lived access.** Upload links are random, expire, and can be claimed once. A short-lived, secure browser cookie permits same-browser refresh without making the claimed link public. Upload requests use a separate secret; refreshing revokes the previous page's secret. Active encoding renews a bounded session lease; idle links still expire.
-- **Operational visibility.** Health and aggregate process metrics support monitoring without recording filenames or user, channel, server, or IP identifiers in the metrics. Private operator alerts include server details and the Discord username and user ID for compression sessions and outcomes. An owner-only `/botstats` command can show live server information in a configured private server.
+- **Operational visibility.** Health and aggregate process metrics support monitoring without recording filenames or user, channel, server, or IP identifiers in the metrics. Private operator alerts include server details and the Discord username and user ID for compression sessions and outcomes; alerts are optional and a failed alert cannot fail an upload or delivery. An owner-only `/botstats` command can show live server information in a configured private server.
+- **Light and dark themes.** Website and session pages follow the device's light or dark setting by default. A header menu offers System, Light, and Dark; the choice is saved only in that browser's `localStorage` (key `pc-theme`), is never sent to the server, and uses no cookie.
 
-The [architecture notes](docs/architecture.md) cover the request lifecycle, code boundaries, failure behavior, and scaling tradeoffs.
+The [architecture notes](docs/architecture.md) cover the request lifecycle, code boundaries, failure behavior, and scaling tradeoffs. Operator session history and performance tracking are documented in [Session observability](docs/observability.md); the protected `/ops` dashboard requires explicit configuration, and diagnostic reporting never blocks delivery.
 
 ## Supported media and limits
 
@@ -57,7 +54,7 @@ The selection limit is 10 videos. Browser memory, CPU, and background-tab thrott
 
 ## Verification
 
-The repository includes Python tests for configuration, session and delivery behavior, HTTP routes, MP4 validation, and notifications. Browser tests run real FFmpeg WebAssembly against sample videos and cover conversion, the single-thread fallback, 10-file batches, drag and drop, invalid inputs, retries, and narrow layouts; an opt-in encoder stress suite (`RUN_ENCODER_STRESS=1`) exercises longer encodes. GitHub Actions runs these checks, Python and browser lint and formatting, type checks, dependency audits, coverage reporting, and a production-container smoke test.
+The repository includes Python tests for configuration, session and delivery behavior, HTTP routes, MP4 validation, and notifications. Browser tests run real FFmpeg WebAssembly against sample videos and cover conversion, the single-thread fallback, 10-file batches, drag and drop, invalid inputs, retries, delivery-status recovery, both colour themes and the theme menu, and narrow layouts; an opt-in encoder stress suite (`RUN_ENCODER_STRESS=1`) exercises longer encodes. GitHub Actions runs five jobs: lint (Python and browser lint and formatting, type checks), dependency audits, unit and integration tests with a coverage floor, browser tests, and a production-container smoke test.
 
 For maintainers, the test commands and development workflow are in [DEVELOPMENT.md](DEVELOPMENT.md). Local integration uses a separate development Discord application and a private `.env` with `DISCORD_TOKEN`. Browser tests simulate Discord delivery; a live `/compress` test is still needed to check deployed Discord permissions and delivery.
 
@@ -68,16 +65,22 @@ For maintainers, the test commands and development workflow are in [DEVELOPMENT.
 | `professor_compressor/app/` | Runtime composition, startup, shutdown, and background tasks |
 | `professor_compressor/bot/` | Discord commands, gateway events, channel delivery, and operator messages |
 | `professor_compressor/sessions/` | In-memory upload sessions, delivery receipts, and expiry |
-| `professor_compressor/web/` | Route table, session and report routes, security headers, health, and pages |
+| `professor_compressor/web/` | Route table, session and report routes, security headers, and health |
+| `professor_compressor/web/pages/` | Website, legal, and private session page rendering, shared header/footer, and theme markup |
 | `professor_compressor/relay/` | Upload admission, MP4 validation, and the delivery queue worker |
 | `professor_compressor/observability/` | Diagnostic event contract, SQLite writer, dashboard queries, and metrics |
 | `professor_compressor/integrations/` | Optional listing statistics and webhook alerts |
 | `professor_compressor/config.py`, `domain.py`, `branding.py`, `paths.py` | Settings, domain models, public identity, and packaged file locations |
-| `professor_compressor/templates/` | Page markup |
+| `professor_compressor/templates/` | Page markup and stylesheets |
 | `professor_compressor/static/compressor.js` | Private page entry point; loads the browser modules |
 | `professor_compressor/static/batch-controller.js`, `compressor-view.js` | Batch workflow and page rendering |
-| `professor_compressor/static/file-selection.js`, `video-encoder.js`, `relay-client.js` | Local file preparation, encoding, and delivery recovery |
+| `professor_compressor/static/file-selection.js`, `input-preservation.js` | File picker and temporary browser-local copies of selected clips |
+| `professor_compressor/static/video-encoder.js`, `encoder-client.js` | FFmpeg lifecycle, probing, size-targeted encoding, and the worker transport |
+| `professor_compressor/static/relay-client.js`, `delivery-status.js` | Upload, delivery polling, and the refreshed delivery-status page |
+| `professor_compressor/static/theme-toggle.js` | System, Light, and Dark theme menu |
+| `professor_compressor/static/dashboard.js` | Private operator dashboard |
 | `tests/unit/`, `tests/integration/`, `tests/browser/` | Module, HTTP, and browser regression tests |
+| `tests/harness/` | Credential-free loopback server for browser tests and the container storage check |
 | `.github/workflows/ci.yml` | Lint, type checks, audits, tests, and the container smoke test |
 
 ## Source and licensing
