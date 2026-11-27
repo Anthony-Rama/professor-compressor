@@ -28,9 +28,6 @@ function saveChoice(choice) {
 function showChoice(choice) {
   if (choice === "system") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = choice;
-  for (const input of document.querySelectorAll(".theme-switch input")) {
-    input.checked = input.value === choice;
-  }
   const label = "Theme: " + NAMES[choice];
   for (const button of document.querySelectorAll(".theme-menu-button")) {
     button.dataset.choice = choice;
@@ -45,13 +42,6 @@ function showChoice(choice) {
 function choose(choice) {
   saveChoice(choice);
   showChoice(choice);
-}
-
-function setUpSwitch(group) {
-  group.addEventListener("change", (event) => {
-    if (event.target.checked && NAMES[event.target.value]) choose(event.target.value);
-  });
-  group.hidden = false;
 }
 
 // Menu button pattern: Enter, Space, click or Down Arrow opens the menu on the
@@ -118,7 +108,6 @@ function setUpMenu(menu) {
 
 try {
   showChoice(savedChoice());
-  for (const group of document.querySelectorAll(".theme-switch")) setUpSwitch(group);
   for (const menu of document.querySelectorAll(".theme-menu")) setUpMenu(menu);
   // Keep other open pages of this site in step with a change made elsewhere.
   window.addEventListener("storage", (event) => {

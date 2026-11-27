@@ -169,23 +169,6 @@
     .icon-theme-system { --icon: var(--i-theme-system); }
     .icon-theme-light { --icon: var(--i-theme-light); }
     .icon-theme-dark { --icon: var(--i-theme-dark); }
-    /* Theme radio group (session page footers). */
-    .theme-switch { display: inline-flex; gap: 2px; margin: 0; padding: 3px;
-                    border: 1px solid var(--border-strong); border-radius: 12px;
-                    background: var(--surface); }
-    .theme-switch label { position: relative; display: grid; place-items: center;
-                          width: 44px; height: 36px; border-radius: 9px;
-                          color: var(--muted); cursor: pointer; }
-    /* The transparent radio covers its segment, padded to a 44px tall hit area. */
-    .theme-switch input { position: absolute; inset: -4px 0; width: 100%;
-                          height: calc(100% + 8px); margin: 0; opacity: 0; cursor: pointer;
-                          z-index: 1; }
-    .theme-switch label:hover { color: var(--text); }
-    .theme-switch label:has(input:checked) { background: var(--accent-tint);
-                                             color: var(--text); }
-    .theme-switch label:has(input:focus-visible) { outline: 3px solid var(--focus);
-                                                   outline-offset: 1px; }
-    .theme-switch .icon { width: 18px; height: 18px; pointer-events: none; }
     /* Theme menu button (website header). */
     .theme-menu { position: relative; flex: none; }
     .theme-menu-button { display: grid; place-items: center; width: 44px; height: 44px;

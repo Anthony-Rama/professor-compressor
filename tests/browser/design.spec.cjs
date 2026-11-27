@@ -144,6 +144,7 @@ test("the shared footer stays available on the compressor and completed delivery
       "Website",
       "Privacy Policy",
       "Terms of Service",
+      "Third-party notices",
       "Contact Support",
       "Support Discord",
     ]);
