@@ -53,7 +53,7 @@ the security or privacy impact, and how the change was verified.
 
 - Never commit `.env`, credentials, webhook URLs, private keys, production IP
   addresses, user content, or private upload links.
-- Diagnostic history must follow [the observability schema](docs/observability.md):
+- Diagnostic history must follow [the observability schema](observability.md):
   allowlisted numeric media measurements and keyed user/server pseudonyms only.
   Never add media contents, filenames, captions, raw identifiers, IPs, credentials,
   private links, or raw errors. Existing private operator alerts have a separate
@@ -67,7 +67,7 @@ the security or privacy impact, and how the change was verified.
 - Treat filenames, HTTP headers, Discord names, and uploaded bytes as untrusted.
 
 Security reports must be sent privately, not in public issues. See
-[SECURITY.md](SECURITY.md) for the email address and reporting instructions.
+[SECURITY.md](../SECURITY.md) for the email address and reporting instructions.
 
 ## Private development configuration
 
